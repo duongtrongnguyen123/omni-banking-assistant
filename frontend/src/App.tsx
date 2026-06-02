@@ -121,6 +121,12 @@ export default function App() {
   const onCancelContact = (draftId: string) =>
     sendDraftAction(() => api.cancelContact(draftId), "Huỷ lưu danh bạ");
 
+  const onConfirmSchedule = (draftId: string) =>
+    sendDraftAction(() => api.confirmSchedule(draftId), "Tạo lịch");
+
+  const onCancelSchedule = (draftId: string) =>
+    sendDraftAction(() => api.cancelSchedule(draftId), "Huỷ đặt lịch");
+
   return (
     <div className="page">
       <div className="phone">
@@ -147,6 +153,8 @@ export default function App() {
               onSelectCandidate={onSelectCandidate}
               onConfirmContact={onConfirmContact}
               onCancelContact={onCancelContact}
+              onConfirmSchedule={onConfirmSchedule}
+              onCancelSchedule={onCancelSchedule}
               busy={busy}
             />
           ))}

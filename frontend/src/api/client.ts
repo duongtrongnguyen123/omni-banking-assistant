@@ -46,4 +46,12 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/contacts/${draftId}/cancel`, {
       method: "POST",
     }),
+  confirmSchedule: (draftId: string) =>
+    jsonFetch<OmniResponse>(`/api/schedules/${draftId}/confirm`, {
+      method: "POST",
+    }),
+  cancelSchedule: (draftId: string) =>
+    jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
+      method: "POST",
+    }),
 };

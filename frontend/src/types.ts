@@ -90,11 +90,23 @@ export interface Schedule {
   active: boolean;
 }
 
+export interface ScheduleDraft {
+  id: string;
+  recipient: Contact;
+  amount: number;
+  description: string;
+  cron: string;
+  cron_label: string;
+  next_run: string;
+  flags: SafetyFlag[];
+}
+
 export interface OmniResponse {
   intent: Intent;
   text: string;
   draft: TransactionDraft | null;
   contact_draft: ContactDraft | null;
+  schedule_draft: ScheduleDraft | null;
   history: HistoryResult | null;
   balance: BalanceResult | null;
   schedule: Schedule | null;

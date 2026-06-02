@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ..banking.service import create_schedule, get_balance, get_history
+from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
 from ..models.schemas import (
@@ -18,16 +18,18 @@ from ..models.schemas import (
     NLUResult,
     OmniResponse,
     SafetyFlag,
+    ScheduleDraft,
     TransactionDraft,
 )
 from ..nlp.amount import format_vnd
+from ..nlp.entities import normalize_alias
 from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
 from ..safety.rules import evaluate, is_blocked, requires_step_up
-from ..store import get_store, new_id
+from ..store import get_store, new_id, now
 
-_CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet)\b|^xác nhận", re.IGNORECASE)
-_CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop)\b", re.IGNORECASE)
+_CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
+_CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
 
 
 def _is_confirm(text: str) -> bool:
@@ -38,6 +40,19 @@ def _is_cancel(text: str) -> bool:
     return bool(_CANCEL_RE.search(text.strip().lower()))
 
 
+# A4: temporal-reference → history period. Strip diacritics so both
+# "tháng trước" and "thang truoc" map correctly.
+def _period_from_temporal(temporal_ref: Optional[str]) -> str:
+    if not temporal_ref:
+        return "this_month"
+    folded = normalize_alias(temporal_ref)
+    if "thang truoc" in folded or "lan truoc" in folded:
+        return "last_month"
+    if "tuan truoc" in folded or "hom qua" in folded or "vua roi" in folded:
+        return "recent_30d"
+    return "this_month"
+
+
 def handle_message(user_id: str, text: str) -> OmniResponse:
     text = text.strip()
     session = session_for(user_id)
@@ -46,9 +61,30 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
     # user message.
     history_msgs = session.conversation_messages()
 
-    # Direct continuation of an in-flight draft (confirm / cancel / select)
+    # Direct continuation paths — for any in-flight draft, "xác nhận"/"huỷ"
+    # acts on the matching draft rather than spawning a new NLU round.
     if session.current_draft is not None:
         cont = _try_continue_draft(user_id, text, session.current_draft)
+        if cont is not None:
+            session.append("user", text)
+            session.append("omni", cont.text)
+            return cont
+
+    # A1: contact draft can be confirmed/cancelled by chat keyword.
+    if session.current_contact_draft is not None:
+        cont = _try_continue_contact_draft(
+            user_id, text, session.current_contact_draft
+        )
+        if cont is not None:
+            session.append("user", text)
+            session.append("omni", cont.text)
+            return cont
+
+    # A2: same for schedule draft.
+    if session.current_schedule_draft is not None:
+        cont = _try_continue_schedule_draft(
+            user_id, text, session.current_schedule_draft
+        )
         if cont is not None:
             session.append("user", text)
             session.append("omni", cont.text)
@@ -239,12 +275,34 @@ def _handle_history(
             contact_id = candidates[0].contact.id
             contact_name = candidates[0].contact.display_name
 
-    period = "this_month"
-    if nlu.entities.temporal_reference and "tháng trước" in nlu.entities.temporal_reference.lower():
-        period = "last_month"
+    # A4: normalize temporal phrasing (handles "thang truoc" no-diacritic too).
+    user_asked_specific_period = nlu.entities.temporal_reference is not None
+    period = _period_from_temporal(nlu.entities.temporal_reference)
 
     hist = get_history(user_id=user_id, contact_id=contact_id, period=period)
-    period_label = "tháng này" if period == "this_month" else "tháng trước"
+
+    # A3: if the user didn't ask for a specific period and this_month is empty,
+    # silently fall back to last_month (with a note in the reply).
+    fell_back = False
+    if (
+        not user_asked_specific_period
+        and period == "this_month"
+        and hist["count"] == 0
+    ):
+        last_hist = get_history(
+            user_id=user_id, contact_id=contact_id, period="last_month"
+        )
+        if last_hist["count"] > 0:
+            hist = last_hist
+            period = "last_month"
+            fell_back = True
+
+    period_label = {
+        "this_month": "tháng này",
+        "last_month": "tháng trước",
+        "recent_30d": "30 ngày gần đây",
+    }.get(period, period)
+
     if hist["count"] == 0:
         body = f"Bạn chưa có giao dịch nào {period_label}"
         if contact_name:
@@ -269,6 +327,7 @@ def _handle_history(
             "average": hist["average"],
             "by_category": hist["by_category"],
             "by_recipient": hist["by_recipient"],
+            "fell_back_from_this_month": fell_back,
             "descriptions": [
                 {
                     "recipient": t["contact"]["display_name"],
@@ -279,7 +338,17 @@ def _handle_history(
                 for t in hist["items"]
             ],
         }
-        body = llm_phrase(nlu.raw_text, facts, history=history_msgs) or fallback
+        # When we silently fell back from an empty this_month, the LLM sometimes
+        # latches onto the "not enough info" stock answer despite FACTS being
+        # populated. Use the deterministic template in that case — it reads
+        # cleanly and never apologises for data we actually have.
+        if fell_back:
+            body = (
+                "Tháng này bạn chưa có giao dịch nào, mình lấy dữ liệu tháng trước nhé. "
+                + fallback
+            )
+        else:
+            body = llm_phrase(nlu.raw_text, facts, history=history_msgs) or fallback
     return OmniResponse(intent="history", text=body, history=hist)
 
 
@@ -304,23 +373,76 @@ def _handle_schedule(user_id: str, nlu: NLUResult) -> OmniResponse:
             text="Bạn nói rõ người nhận giúp mình nhé.",
         )
     recipient = candidates[0].contact
-    sched = create_schedule(
-        user_id=user_id,
+
+    # A2: stage a draft — persistence happens only on confirm.
+    draft = ScheduleDraft(
+        id=new_id("sd"),
         recipient=recipient,
         amount=e.amount,
-        cron=e.schedule_cron,
         description=e.description or "Định kỳ",
+        cron=e.schedule_cron,
+        cron_label=_cron_label(e.schedule_cron),
+        next_run=next_run_for(e.schedule_cron, now()),
     )
+    session_for(user_id).set_schedule_draft(draft)
     return OmniResponse(
         intent="schedule",
         text=(
-            f"Đã tạo lịch định kỳ: chuyển {format_vnd(e.amount)} cho "
-            f"{recipient.display_name} ({recipient.bank}). "
-            f"Lần kế: {sched.next_run.strftime('%d/%m/%Y')}. "
-            "Mình sẽ nhắc bạn xác nhận trước mỗi lần."
+            f"Mình sẽ đặt lịch chuyển {format_vnd(draft.amount)} cho "
+            f"{recipient.display_name} ({recipient.bank}) — "
+            f"{draft.cron_label}. Lần đầu tiên: "
+            f"{draft.next_run.strftime('%d/%m/%Y')}. Xác nhận giúp mình nhé."
         ),
-        schedule=sched,
+        schedule_draft=draft,
     )
+
+
+def _cron_label(cron: str) -> str:
+    """Pretty-print the cron expressions we generate in the entity extractor."""
+    parts = cron.split()
+    if len(parts) == 5:
+        _, _, dom, _, dow = parts
+        if dom.isdigit():
+            return f"vào ngày {int(dom)} hàng tháng"
+        if dow.isdigit():
+            names = ["thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ Nhật"]
+            return f"vào {names[int(dow) % 7]} hàng tuần"
+    return "định kỳ"
+
+
+def confirm_schedule_draft(user_id: str, draft_id: str) -> OmniResponse:
+    session = session_for(user_id)
+    draft = session.current_schedule_draft
+    if draft is None or draft.id != draft_id:
+        return OmniResponse(intent="unknown", text="Không tìm thấy lịch chờ xác nhận.")
+
+    sched = create_schedule(
+        user_id=user_id,
+        recipient=draft.recipient,
+        amount=draft.amount,
+        cron=draft.cron,
+        description=draft.description,
+    )
+    session.clear_schedule_draft()
+    text = (
+        f"Đã tạo lịch định kỳ: chuyển {format_vnd(draft.amount)} cho "
+        f"{draft.recipient.display_name} ({draft.recipient.bank}). "
+        f"Lần kế: {sched.next_run.strftime('%d/%m/%Y')}. "
+        "Mình sẽ nhắc bạn xác nhận trước mỗi lần."
+    )
+    session.append("user", "Xác nhận lịch định kỳ")
+    session.append("omni", text)
+    return OmniResponse(intent="schedule", text=text, schedule=sched)
+
+
+def cancel_schedule_draft(user_id: str, draft_id: str) -> OmniResponse:
+    session = session_for(user_id)
+    if session.current_schedule_draft and session.current_schedule_draft.id == draft_id:
+        session.clear_schedule_draft()
+    text = "Đã huỷ đặt lịch."
+    session.append("user", "Huỷ đặt lịch")
+    session.append("omni", text)
+    return OmniResponse(intent="schedule", text=text)
 
 
 def _handle_add_contact(user_id: str, nlu: NLUResult) -> OmniResponse:
@@ -402,20 +524,23 @@ def confirm_contact_draft(user_id: str, draft_id: str) -> OmniResponse:
     )
     get_store().add_contact(contact)
     session.clear_contact_draft()
-    return OmniResponse(
-        intent="add_contact",
-        text=(
-            f"Đã thêm {contact.display_name} ({contact.bank} {contact.account_masked}) "
-            "vào danh bạ. Lần sau bạn chỉ cần nhắc tên là mình tìm được."
-        ),
+    text = (
+        f"Đã thêm {contact.display_name} ({contact.bank} {contact.account_masked}) "
+        "vào danh bạ. Lần sau bạn chỉ cần nhắc tên là mình tìm được."
     )
+    session.append("user", "Lưu danh bạ")
+    session.append("omni", text)
+    return OmniResponse(intent="add_contact", text=text)
 
 
 def cancel_contact_draft(user_id: str, draft_id: str) -> OmniResponse:
     session = session_for(user_id)
     if session.current_contact_draft and session.current_contact_draft.id == draft_id:
         session.clear_contact_draft()
-    return OmniResponse(intent="add_contact", text="Đã huỷ thêm danh bạ.")
+    text = "Đã huỷ thêm danh bạ."
+    session.append("user", "Huỷ lưu danh bạ")
+    session.append("omni", text)
+    return OmniResponse(intent="add_contact", text=text)
 
 
 def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
@@ -511,6 +636,26 @@ def _try_continue_draft(
     return None
 
 
+def _try_continue_contact_draft(
+    user_id: str, text: str, draft: ContactDraft
+) -> Optional[OmniResponse]:
+    if _is_cancel(text):
+        return cancel_contact_draft(user_id, draft.id)
+    if _is_confirm(text):
+        return confirm_contact_draft(user_id, draft.id)
+    return None
+
+
+def _try_continue_schedule_draft(
+    user_id: str, text: str, draft: ScheduleDraft
+) -> Optional[OmniResponse]:
+    if _is_cancel(text):
+        return cancel_schedule_draft(user_id, draft.id)
+    if _is_confirm(text):
+        return confirm_schedule_draft(user_id, draft.id)
+    return None
+
+
 def _match_candidate(text: str, candidates: list[Contact]) -> Optional[Contact]:
     from ..context.alias import _fold  # local import to avoid leaking helper
 
@@ -535,12 +680,32 @@ def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
     if draft is None or draft.id != draft_id:
         return OmniResponse(intent="unknown", text="Không tìm thấy giao dịch chờ xác nhận.")
 
+    # B7: re-run safety with fresh balance/history, not the stale snapshot
+    # captured at draft creation time.
+    store = get_store()
+    txs = store.transactions_of(user_id)
+    account = store.primary_account(user_id)
+    fresh_flags = evaluate(
+        amount=draft.amount,
+        recipient_candidates=[],
+        recipient=draft.recipient,
+        transactions=txs,
+        account=account,
+    )
+    draft.flags = fresh_flags
+    draft.requires_step_up = requires_step_up(fresh_flags)
+
     if is_blocked(draft.flags):
         msg = " ".join(f.message for f in draft.flags if f.severity == "block")
+        session.append("user", "Xác nhận giao dịch")
+        session.append("omni", msg)
         return OmniResponse(intent="transfer", text=msg, draft=draft)
 
     if draft.recipient is None or draft.amount is None:
-        return OmniResponse(intent="transfer", text="Giao dịch còn thiếu thông tin.", draft=draft)
+        text = "Giao dịch còn thiếu thông tin."
+        session.append("user", "Xác nhận giao dịch")
+        session.append("omni", text)
+        return OmniResponse(intent="transfer", text=text, draft=draft)
 
     from ..banking.service import execute_transfer
 
@@ -552,24 +717,31 @@ def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
             description=draft.description,
         )
     except ValueError as e:
-        return OmniResponse(intent="transfer", text=f"Giao dịch thất bại: {e}", draft=draft)
+        text = f"Giao dịch thất bại: {e}"
+        session.append("user", "Xác nhận giao dịch")
+        session.append("omni", text)
+        return OmniResponse(intent="transfer", text=text, draft=draft)
 
     session.clear_draft()
-    return OmniResponse(
-        intent="transfer",
-        text=(
-            f"Đã chuyển {format_vnd(tx.amount)} cho {draft.recipient.display_name} "
-            f"({draft.recipient.bank}). Mã giao dịch: {tx.id}."
-        ),
-        draft=draft,
+    text = (
+        f"Đã chuyển {format_vnd(tx.amount)} cho {draft.recipient.display_name} "
+        f"({draft.recipient.bank}). Mã giao dịch: {tx.id}."
     )
+    # B5: record this turn so follow-up questions ("Mình vừa chuyển bao
+    # nhiêu?") can be answered from context.
+    session.append("user", "Xác nhận giao dịch")
+    session.append("omni", text)
+    return OmniResponse(intent="transfer", text=text, draft=draft)
 
 
 def cancel_draft(user_id: str, draft_id: str) -> OmniResponse:
     session = session_for(user_id)
     if session.current_draft and session.current_draft.id == draft_id:
         session.clear_draft()
-    return OmniResponse(intent="transfer", text="Đã huỷ giao dịch.")
+    text = "Đã huỷ giao dịch."
+    session.append("user", "Huỷ giao dịch")
+    session.append("omni", text)
+    return OmniResponse(intent="transfer", text=text)
 
 
 def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniResponse:
@@ -600,6 +772,8 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
     session.set_draft(draft)
 
     text = _compose_transfer_text(draft, None)
+    session.append("user", f"Chọn {chosen.display_name}")
+    session.append("omni", text)
     return OmniResponse(intent="transfer", text=text, draft=draft)
 
 
@@ -649,4 +823,6 @@ __all__ = [
     "select_candidate",
     "confirm_contact_draft",
     "cancel_contact_draft",
+    "confirm_schedule_draft",
+    "cancel_schedule_draft",
 ]

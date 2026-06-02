@@ -7,8 +7,10 @@ from ..models.schemas import OmniResponse
 from ..services.orchestrator import (
     cancel_contact_draft,
     cancel_draft,
+    cancel_schedule_draft,
     confirm_contact_draft,
     confirm_draft,
+    confirm_schedule_draft,
     handle_message,
     select_candidate,
 )
@@ -66,3 +68,16 @@ def confirm_contact(draft_id: str, user_id: str = Depends(current_user)) -> Omni
 @router.post("/contacts/{draft_id}/cancel", response_model=OmniResponse)
 def cancel_contact(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     return cancel_contact_draft(user_id, draft_id)
+
+
+@router.post("/schedules/{draft_id}/confirm", response_model=OmniResponse)
+def confirm_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+    resp = confirm_schedule_draft(user_id, draft_id)
+    if resp.intent == "unknown":
+        raise HTTPException(status_code=404, detail=resp.text)
+    return resp
+
+
+@router.post("/schedules/{draft_id}/cancel", response_model=OmniResponse)
+def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+    return cancel_schedule_draft(user_id, draft_id)

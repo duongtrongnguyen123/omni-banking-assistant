@@ -143,12 +143,14 @@ def create_schedule(
     return store.add_schedule(sched)
 
 
-def _next_run_for(cron: str, ref: datetime) -> datetime:
-    """Compute next run for a tiny subset of cron we use."""
-    # Supported forms (set by NLP entity extractor):
-    #   "0 9 1 * *"   -> 9am on day-1 of each month
-    #   "0 9 D * *"   -> 9am on day-D of each month
-    #   "0 9 * * 1"   -> 9am every Monday
+def next_run_for(cron: str, ref: datetime) -> datetime:
+    """Compute next run for the cron subset we generate in entities.py.
+
+    Supports:
+      "0 9 D * *"   -> hour H on day-D of each month
+      "0 9 * * w"   -> hour H every weekday w (1=Mon..7=Sun)
+    Falls back to ref+30d if the expression doesn't match.
+    """
     parts = cron.split()
     if len(parts) != 5:
         return ref + timedelta(days=30)
@@ -157,18 +159,31 @@ def _next_run_for(cron: str, ref: datetime) -> datetime:
 
     if dom.isdigit():
         day = int(dom)
-        candidate = ref.replace(day=min(day, 28), hour=h, minute=0, second=0, microsecond=0)
+        candidate = _safe_day_in_month(ref.year, ref.month, day, h)
         if candidate <= ref:
-            month = candidate.month + 1
-            year = candidate.year + (1 if month > 12 else 0)
-            month = ((month - 1) % 12) + 1
-            candidate = candidate.replace(year=year, month=month)
+            year, month = (ref.year + 1, 1) if ref.month == 12 else (ref.year, ref.month + 1)
+            candidate = _safe_day_in_month(year, month, day, h)
         return candidate
 
     if dow.isdigit():
         target = int(dow) % 7
         days_ahead = (target - ref.weekday()) % 7
         days_ahead = days_ahead or 7
-        return (ref + timedelta(days=days_ahead)).replace(hour=h, minute=0, second=0, microsecond=0)
+        return (ref + timedelta(days=days_ahead)).replace(
+            hour=h, minute=0, second=0, microsecond=0
+        )
 
     return ref + timedelta(days=30)
+
+
+def _safe_day_in_month(year: int, month: int, day: int, hour: int) -> datetime:
+    """B1: clamp `day` to the month's max so February etc. don't ValueError."""
+    import calendar
+
+    last_day = calendar.monthrange(year, month)[1]
+    return datetime(year, month, min(day, last_day), hour, 0, 0).astimezone()
+
+
+# Keep the old name as a private alias for any callers that still reference it
+# in the banking module.
+_next_run_for = next_run_for

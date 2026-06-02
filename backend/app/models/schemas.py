@@ -131,11 +131,23 @@ class ContactDraft(BaseModel):
     flags: list[SafetyFlag] = Field(default_factory=list)
 
 
+class ScheduleDraft(BaseModel):
+    id: str
+    recipient: Contact
+    amount: int
+    description: str = ""
+    cron: str
+    cron_label: str = ""  # human-readable, e.g. "mùng 1 hàng tháng"
+    next_run: datetime
+    flags: list[SafetyFlag] = Field(default_factory=list)
+
+
 class OmniResponse(BaseModel):
     intent: Intent
     text: str
     draft: Optional[TransactionDraft] = None
     contact_draft: Optional[ContactDraft] = None
+    schedule_draft: Optional[ScheduleDraft] = None
     history: Optional[dict] = None
     balance: Optional[dict] = None
     schedule: Optional[Schedule] = None

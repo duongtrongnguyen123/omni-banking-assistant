@@ -103,6 +103,15 @@ INPUT: "Chuyển cho Minh 500k"
 INPUT: "Tháng này mình gửi mẹ bao nhiêu rồi?"
 {"intent":"history","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
 
+INPUT: "Tháng này mình tiêu bao nhiêu rồi?"
+{"intent":"history","confidence":0.9,"entities":{}}
+
+INPUT: "Số dư còn bao nhiêu?"
+{"intent":"balance","confidence":0.95,"entities":{}}
+
+NOTE: "tiêu/chi/đã gửi/đã chuyển bao nhiêu" → history (spending question).
+"Số dư/còn bao nhiêu trong tài khoản" → balance.
+
 INPUT: "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng"
 {"intent":"schedule","confidence":0.95,"entities":{"recipient_text":"mẹ","amount":2000000,"amount_text":"2tr","schedule_cron":"0 9 1 * *"}}
 

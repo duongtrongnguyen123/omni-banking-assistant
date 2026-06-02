@@ -6,6 +6,7 @@ import { HistoryCard } from "./HistoryCard";
 import { BalanceCard } from "./BalanceCard";
 import { ScheduleCard } from "./ScheduleCard";
 import { ContactDraftCard } from "./ContactDraftCard";
+import { ScheduleDraftCard } from "./ScheduleDraftCard";
 
 interface Props {
   message: ChatMessage;
@@ -14,6 +15,8 @@ interface Props {
   onSelectCandidate: (draftId: string, contact: Contact) => void;
   onConfirmContact: (draftId: string) => void;
   onCancelContact: (draftId: string) => void;
+  onConfirmSchedule: (draftId: string) => void;
+  onCancelSchedule: (draftId: string) => void;
   busy?: boolean;
 }
 
@@ -24,6 +27,8 @@ export const Message = ({
   onSelectCandidate,
   onConfirmContact,
   onCancelContact,
+  onConfirmSchedule,
+  onCancelSchedule,
   busy,
 }: Props) => {
   if (message.role === "user") {
@@ -65,6 +70,14 @@ export const Message = ({
             draft={r.contact_draft}
             onConfirm={() => onConfirmContact(r.contact_draft!.id)}
             onCancel={() => onCancelContact(r.contact_draft!.id)}
+            disabled={busy}
+          />
+        )}
+        {r?.schedule_draft && (
+          <ScheduleDraftCard
+            draft={r.schedule_draft}
+            onConfirm={() => onConfirmSchedule(r.schedule_draft!.id)}
+            onCancel={() => onCancelSchedule(r.schedule_draft!.id)}
             disabled={busy}
           />
         )}

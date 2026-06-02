@@ -9,13 +9,14 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from ..models.schemas import ContactDraft, TransactionDraft
+from ..models.schemas import ContactDraft, ScheduleDraft, TransactionDraft
 
 
 class ConversationMemory:
     def __init__(self) -> None:
         self.current_draft: Optional[TransactionDraft] = None
         self.current_contact_draft: Optional[ContactDraft] = None
+        self.current_schedule_draft: Optional[ScheduleDraft] = None
         self.history: list[dict] = []
 
     def set_draft(self, draft: TransactionDraft) -> None:
@@ -29,6 +30,22 @@ class ConversationMemory:
 
     def clear_contact_draft(self) -> None:
         self.current_contact_draft = None
+
+    def set_schedule_draft(self, draft: ScheduleDraft) -> None:
+        self.current_schedule_draft = draft
+
+    def clear_schedule_draft(self) -> None:
+        self.current_schedule_draft = None
+
+    def has_any_draft(self) -> bool:
+        return any(
+            d is not None
+            for d in (
+                self.current_draft,
+                self.current_contact_draft,
+                self.current_schedule_draft,
+            )
+        )
 
     def append(self, role: str, content: str) -> None:
         self.history.append({"role": role, "content": content})
