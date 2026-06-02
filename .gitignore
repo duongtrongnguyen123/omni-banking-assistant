@@ -1,0 +1,14 @@
+backend/.venv/
+backend/.env
+backend/**/__pycache__/
+backend/**/*.pyc
+
+frontend/node_modules/
+frontend/dist/
+
+.DS_Store
+.vscode/
+.idea/
+
+# Slide deck — kept locally, not pushed
+*.pdf

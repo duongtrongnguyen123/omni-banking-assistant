@@ -1,0 +1,72 @@
+[
+  {
+    "id": "t_001",
+    "owner_id": "u_an",
+    "contact_id": "c_lan",
+    "amount": 5000000,
+    "description": "Tiền sinh hoạt tháng 10",
+    "category": "family",
+    "status": "completed",
+    "created_at": "2026-04-02T08:14:00+07:00"
+  },
+  {
+    "id": "t_002",
+    "owner_id": "u_an",
+    "contact_id": "c_lan",
+    "amount": 1500000,
+    "description": "Mua thuốc cho mẹ",
+    "category": "family",
+    "status": "completed",
+    "created_at": "2026-04-15T19:02:00+07:00"
+  },
+  {
+    "id": "t_003",
+    "owner_id": "u_an",
+    "contact_id": "c_lan",
+    "amount": 2000000,
+    "description": "Tiền sinh hoạt bổ sung",
+    "category": "family",
+    "status": "completed",
+    "created_at": "2026-05-14T07:30:00+07:00"
+  },
+  {
+    "id": "t_004",
+    "owner_id": "u_an",
+    "contact_id": "c_minh_mb",
+    "amount": 1200000,
+    "description": "Tiền ăn tháng 4",
+    "category": "friends",
+    "status": "completed",
+    "created_at": "2026-04-20T12:35:00+07:00"
+  },
+  {
+    "id": "t_005",
+    "owner_id": "u_an",
+    "contact_id": "c_minh_mb",
+    "amount": 800000,
+    "description": "Cafe + ăn trưa",
+    "category": "friends",
+    "status": "completed",
+    "created_at": "2026-05-05T13:01:00+07:00"
+  },
+  {
+    "id": "t_006",
+    "owner_id": "u_an",
+    "contact_id": "c_thao",
+    "amount": 350000,
+    "description": "Trả tiền sách",
+    "category": "friends",
+    "status": "completed",
+    "created_at": "2026-05-12T20:18:00+07:00"
+  },
+  {
+    "id": "t_007",
+    "owner_id": "u_an",
+    "contact_id": "c_minh_tcb",
+    "amount": 500000,
+    "description": "Góp tiền quà sinh nhật sếp",
+    "category": "work",
+    "status": "completed",
+    "created_at": "2026-05-01T15:45:00+07:00"
+  }
+]

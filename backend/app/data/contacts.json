@@ -1,0 +1,62 @@
+[
+  {
+    "id": "c_lan",
+    "owner_id": "u_an",
+    "display_name": "Nguyễn Thị Lan",
+    "bank": "Vietcombank",
+    "account_number": "0123456456",
+    "account_masked": "*456",
+    "aliases": ["mẹ", "me", "mom", "má"],
+    "label": "Mẹ",
+    "verified": true,
+    "frequent": true
+  },
+  {
+    "id": "c_minh_mb",
+    "owner_id": "u_an",
+    "display_name": "Nguyễn Văn Minh",
+    "bank": "MB Bank",
+    "account_number": "9990000789",
+    "account_masked": "*789",
+    "aliases": ["minh", "anh minh", "anh Minh"],
+    "label": "Bạn",
+    "verified": true,
+    "frequent": true
+  },
+  {
+    "id": "c_minh_tcb",
+    "owner_id": "u_an",
+    "display_name": "Trần Hoàng Minh",
+    "bank": "Techcombank",
+    "account_number": "9990000234",
+    "account_masked": "*234",
+    "aliases": ["minh", "hoàng minh"],
+    "label": "Đồng nghiệp",
+    "verified": true,
+    "frequent": false
+  },
+  {
+    "id": "c_hung",
+    "owner_id": "u_an",
+    "display_name": "Trần Quốc Hùng",
+    "bank": "ACB",
+    "account_number": "9990001234",
+    "account_masked": "*234",
+    "aliases": ["hùng"],
+    "label": null,
+    "verified": false,
+    "frequent": false
+  },
+  {
+    "id": "c_thao",
+    "owner_id": "u_an",
+    "display_name": "Lê Thị Thảo",
+    "bank": "Techcombank",
+    "account_number": "0000111222",
+    "account_masked": "*222",
+    "aliases": ["thảo", "em thảo"],
+    "label": "Bạn",
+    "verified": true,
+    "frequent": false
+  }
+]
