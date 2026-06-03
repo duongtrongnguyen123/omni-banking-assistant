@@ -1,0 +1,8 @@
+{
+  "description": "Backend-compatible outgoing sample derived from banking_simulation_6M",
+  "demo_end_date": "2026-06-02",
+  "source_maximum_at": "2025-06-29T23:00:00",
+  "shift_days": 338,
+  "contacts": 1000,
+  "outgoing_transactions": 1888
+}

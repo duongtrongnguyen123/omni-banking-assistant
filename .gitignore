@@ -2,6 +2,8 @@ backend/.venv/
 backend/.env
 backend/**/__pycache__/
 backend/**/*.pyc
+data/**/__pycache__/
+data/**/*.pyc
 
 frontend/node_modules/
 frontend/dist/
@@ -12,3 +14,6 @@ frontend/dist/
 
 # Slide deck — kept locally, not pushed
 *.pdf
+
+# Large source-derived dataset — regenerate locally with data/transform_banking_dataset.py
+/data/generated/

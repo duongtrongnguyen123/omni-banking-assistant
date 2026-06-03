@@ -1,0 +1,152 @@
+{
+  "source_records": 591659,
+  "unique_counterparties": 1000,
+  "date_range": {
+    "from": "2025-01-02T00:00:00",
+    "to": "2025-06-29T23:00:00"
+  },
+  "signed_amount_range_vnd": {
+    "minimum": -8295000,
+    "maximum": 39980000
+  },
+  "direction_counts": {
+    "incoming": 70358,
+    "neutral": 1121,
+    "outgoing": 520180
+  },
+  "month_counts": {
+    "2025-01": 109748,
+    "2025-02": 89974,
+    "2025-03": 101725,
+    "2025-04": 95000,
+    "2025-05": 93118,
+    "2025-06": 102094
+  },
+  "top_notes": [
+    {
+      "note": "dang ky tra gop",
+      "count": 18098
+    },
+    {
+      "note": "tra no the",
+      "count": 17689
+    },
+    {
+      "note": "tra no thau chi",
+      "count": 17683
+    },
+    {
+      "note": "tra gop thang",
+      "count": 17526
+    },
+    {
+      "note": "tt the",
+      "count": 17461
+    },
+    {
+      "note": "thanh toan the tin dung",
+      "count": 17339
+    },
+    {
+      "note": "tien sinh hoat",
+      "count": 11947
+    },
+    {
+      "note": "ung luong",
+      "count": 11938
+    },
+    {
+      "note": "gia dinh gui tien",
+      "count": 11676
+    },
+    {
+      "note": "phu cap",
+      "count": 11672
+    },
+    {
+      "note": "tro cap",
+      "count": 11661
+    },
+    {
+      "note": "ck",
+      "count": 5499
+    },
+    {
+      "note": "qwe",
+      "count": 5446
+    },
+    {
+      "note": "hehe",
+      "count": 5422
+    },
+    {
+      "note": "chuyen tien",
+      "count": 5413
+    },
+    {
+      "note": "test",
+      "count": 5405
+    },
+    {
+      "note": "aaaaa",
+      "count": 5400
+    },
+    {
+      "note": "a",
+      "count": 5382
+    },
+    {
+      "note": "t ck",
+      "count": 5356
+    },
+    {
+      "note": "bao nuoi",
+      "count": 5350
+    },
+    {
+      "note": "tra nghiep",
+      "count": 5347
+    },
+    {
+      "note": "done",
+      "count": 5341
+    },
+    {
+      "note": "ne",
+      "count": 5340
+    },
+    {
+      "note": "nha",
+      "count": 5340
+    },
+    {
+      "note": "donate",
+      "count": 5339
+    },
+    {
+      "note": "<3",
+      "count": 5315
+    },
+    {
+      "note": "hihi",
+      "count": 5276
+    },
+    {
+      "note": "ok",
+      "count": 5275
+    },
+    {
+      "note": "...",
+      "count": 5271
+    },
+    {
+      "note": "asdf",
+      "count": 5207
+    }
+  ],
+  "generated_at": "2026-06-03T00:10:20+07:00",
+  "demo": {
+    "end_date": "2026-06-02",
+    "outgoing_transactions": 1888
+  }
+}

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     demo_user_id: str = "u_an"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    banking_data_dir: str = ""
 
     @property
     def cors_list(self) -> list[str]:
@@ -20,7 +21,12 @@ class Settings(BaseSettings):
 
     @property
     def data_dir(self) -> Path:
-        return Path(__file__).parent / "data"
+        if not self.banking_data_dir:
+            return Path(__file__).parent / "data"
+        path = Path(self.banking_data_dir).expanduser()
+        if path.is_absolute():
+            return path
+        return (Path(__file__).parent.parent / path).resolve()
 
 
 @lru_cache
