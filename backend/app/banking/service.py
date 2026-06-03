@@ -17,9 +17,14 @@ def execute_transfer(
     recipient: Contact,
     amount: int,
     description: str = "",
+    source_account_id: str | None = None,
 ) -> Transaction:
     store = get_store()
-    acc = store.primary_account(user_id)
+    acc = (
+        store.account_by_id(user_id, source_account_id)
+        if source_account_id
+        else store.primary_account(user_id)
+    )
     if amount > acc.balance:
         raise ValueError("insufficient_balance")
     store.update_balance(user_id, acc.id, -amount)
@@ -128,12 +133,14 @@ def create_schedule(
     amount: int,
     cron: str,
     description: str = "",
+    source_account_id: str | None = None,
 ) -> Schedule:
     store = get_store()
     sched = Schedule(
         id=new_id("s"),
         owner_id=user_id,
         contact_id=recipient.id,
+        source_account_id=source_account_id,
         amount=amount,
         description=description,
         cron=cron,

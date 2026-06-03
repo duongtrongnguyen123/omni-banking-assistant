@@ -11,6 +11,8 @@ frontend/dist/
 .DS_Store
 .vscode/
 .idea/
+*.log
+.tmp_pdf_text/
 
 # Slide deck — kept locally, not pushed
 *.pdf

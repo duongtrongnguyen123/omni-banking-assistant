@@ -1,54 +1,121 @@
+import { useState } from "react";
 import type { ScheduleDraft } from "../types";
 import { formatVND, formatDate } from "../format";
 
 interface Props {
   draft: ScheduleDraft;
-  onConfirm: () => void;
+  onConfirm: (otp: string, sourceAccountId?: string) => void;
   onCancel: () => void;
   disabled?: boolean;
+  actionable?: boolean;
 }
 
-export const ScheduleDraftCard = ({ draft, onConfirm, onCancel, disabled }: Props) => (
-  <div className="tx-card">
-    <div className="tx-card__label">LỊCH ĐỊNH KỲ MỚI</div>
-    <div className="tx-card__amount">
-      <div className="tx-card__amount-value">{formatVND(draft.amount)}</div>
-    </div>
-    <div className="tx-row">
-      <span className="tx-row__label">Người nhận</span>
-      <div className="tx-row__value">
-        <div className="tx-recipient__name">{draft.recipient.display_name}</div>
-        <div className="tx-recipient__meta">
-          {draft.recipient.bank} · {draft.recipient.account_masked}
+export const ScheduleDraftCard = ({
+  draft,
+  onConfirm,
+  onCancel,
+  disabled,
+  actionable = true,
+}: Props) => {
+  const [otpOpen, setOtpOpen] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [sourceAccountId, setSourceAccountId] = useState(
+    draft.source_account_id ?? draft.source_accounts[0]?.id ?? "",
+  );
+  const cleanOtp = otp.replace(/\D/g, "").slice(0, 6);
+
+  const handleConfirm = () => {
+    if (!otpOpen) {
+      setOtpOpen(true);
+      return;
+    }
+    onConfirm(cleanOtp, sourceAccountId || undefined);
+  };
+
+  return (
+    <div className={`tx-card ${!actionable ? "tx-card--done" : ""}`}>
+      <div className="tx-card__label">LỊCH ĐỊNH KỲ MỚI</div>
+      <div className="tx-card__amount">
+        <div className="tx-card__amount-value">{formatVND(draft.amount)}</div>
+      </div>
+      <div className="tx-row">
+        <span className="tx-row__label">Người nhận</span>
+        <div className="tx-row__value">
+          <div className="tx-recipient__name">{draft.recipient.display_name}</div>
+          <div className="tx-recipient__meta">
+            {draft.recipient.bank} · {draft.recipient.account_masked}
+          </div>
         </div>
       </div>
-    </div>
-    <div className="tx-row">
-      <span className="tx-row__label">Tần suất</span>
-      <span className="tx-row__value">{draft.cron_label}</span>
-    </div>
-    <div className="tx-row">
-      <span className="tx-row__label">Lần đầu</span>
-      <span className="tx-row__value">{formatDate(draft.next_run)}</span>
-    </div>
-    {draft.description && (
       <div className="tx-row">
-        <span className="tx-row__label">Nội dung</span>
-        <span className="tx-row__value">{draft.description}</span>
+        <span className="tx-row__label">Tài khoản nguồn</span>
+        <div className="tx-row__value">
+          <select
+            className="account-select"
+            value={sourceAccountId}
+            onChange={(e) => setSourceAccountId(e.target.value)}
+            disabled={disabled || !actionable}
+          >
+            {draft.source_accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.primary ? "Chính" : "Phụ"} · {account.bank} · ••••
+                {account.number.slice(-4)} · {formatVND(account.balance)}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
-    )}
-    <div className="tx-flags">
-      <div className="tx-flag">
-        ℹ️ Trước mỗi lần đến hạn, mình sẽ hỏi lại để bạn quyết định gửi hay tạm dừng.
+      <div className="tx-row">
+        <span className="tx-row__label">Tần suất</span>
+        <span className="tx-row__value">{draft.cron_label}</span>
       </div>
+      <div className="tx-row">
+        <span className="tx-row__label">Lần đầu</span>
+        <span className="tx-row__value">{formatDate(draft.next_run)}</span>
+      </div>
+      {draft.description && (
+        <div className="tx-row">
+          <span className="tx-row__label">Nội dung</span>
+          <span className="tx-row__value">{draft.description}</span>
+        </div>
+      )}
+      <div className="tx-flags">
+        <div className="tx-flag">
+          ℹ️ Tạo lịch cần OTP. Trước mỗi lần đến hạn, Omni sẽ nhắc bạn xác nhận.
+        </div>
+      </div>
+      {actionable && otpOpen && (
+        <div className="otp-panel">
+          <div className="otp-panel__copy">
+            Nhập OTP để xác minh lịch định kỳ. Mã demo: <strong>123456</strong>
+          </div>
+          <input
+            className="otp-input"
+            value={cleanOtp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="••••••"
+            autoFocus
+          />
+        </div>
+      )}
+      {actionable ? (
+        <div className="tx-actions">
+          <button className="btn btn--ghost" onClick={onCancel} disabled={disabled}>
+            Huỷ
+          </button>
+          <button
+            className={`btn ${otpOpen ? "btn--warn" : "btn--primary"}`}
+            onClick={handleConfirm}
+            disabled={disabled || (otpOpen && cleanOtp.length !== 6)}
+          >
+            {otpOpen ? "Xác minh & tạo lịch" : "Tạo lịch"}
+          </button>
+        </div>
+      ) : (
+        <div className="tx-status">Lịch định kỳ này đã được xử lý.</div>
+      )}
     </div>
-    <div className="tx-actions">
-      <button className="btn btn--ghost" onClick={onCancel} disabled={disabled}>
-        Huỷ
-      </button>
-      <button className="btn btn--primary" onClick={onConfirm} disabled={disabled}>
-        Tạo lịch
-      </button>
-    </div>
-  </div>
-);
+  );
+};

@@ -193,7 +193,11 @@ def _modify_transfer_draft(
     store = get_store()
     contacts = store.contacts_of(user_id)
     txs = store.transactions_of(user_id)
-    account = store.primary_account(user_id)
+    account = (
+        store.account_by_id(user_id, draft.source_account_id)
+        if draft.source_account_id
+        else store.primary_account(user_id)
+    )
     e = nlu.entities
 
     if e.amount is not None and e.amount != draft.amount:
@@ -373,11 +377,14 @@ def _handle_schedule(user_id: str, nlu: NLUResult) -> OmniResponse:
             text="Bạn nói rõ người nhận giúp mình nhé.",
         )
     recipient = candidates[0].contact
+    account = store.primary_account(user_id)
 
     # A2: stage a draft — persistence happens only on confirm.
     draft = ScheduleDraft(
         id=new_id("sd"),
         recipient=recipient,
+        source_account_id=account.id,
+        source_accounts=store.get_user(user_id).accounts,
         amount=e.amount,
         description=e.description or "Định kỳ",
         cron=e.schedule_cron,
@@ -410,11 +417,36 @@ def _cron_label(cron: str) -> str:
     return "định kỳ"
 
 
-def confirm_schedule_draft(user_id: str, draft_id: str) -> OmniResponse:
+def confirm_schedule_draft(
+    user_id: str,
+    draft_id: str,
+    otp: str | None = None,
+    source_account_id: str | None = None,
+) -> OmniResponse:
     session = session_for(user_id)
     draft = session.current_schedule_draft
     if draft is None or draft.id != draft_id:
         return OmniResponse(intent="unknown", text="Không tìm thấy lịch chờ xác nhận.")
+
+    if source_account_id:
+        try:
+            get_store().account_by_id(user_id, source_account_id)
+        except KeyError:
+            return OmniResponse(intent="schedule", text="Tài khoản nguồn không hợp lệ.", schedule_draft=draft)
+        draft.source_account_id = source_account_id
+        session.set_schedule_draft(draft)
+
+    if otp is None:
+        text = "Vui lòng nhập OTP để xác minh lịch chuyển định kỳ. Mã demo: 123456."
+        session.append("user", "Xác nhận lịch định kỳ")
+        session.append("omni", text)
+        return OmniResponse(intent="schedule", text=text, schedule_draft=draft)
+
+    if otp.strip() != "123456":
+        text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
+        session.append("user", "Xác minh OTP lịch định kỳ")
+        session.append("omni", text)
+        return OmniResponse(intent="schedule", text=text, schedule_draft=draft)
 
     sched = create_schedule(
         user_id=user_id,
@@ -422,6 +454,7 @@ def confirm_schedule_draft(user_id: str, draft_id: str) -> OmniResponse:
         amount=draft.amount,
         cron=draft.cron,
         description=draft.description,
+        source_account_id=draft.source_account_id,
     )
     session.clear_schedule_draft()
     text = (
@@ -593,6 +626,8 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         id=new_id("d"),
         recipient=chosen,
         candidates=[c.contact for c in candidates] if chosen is None else [],
+        source_account_id=account.id,
+        source_accounts=store.get_user(user_id).accounts,
         amount=amount,
         description=description,
         source_text=nlu.raw_text,
@@ -627,6 +662,9 @@ def _try_continue_draft(
     if _is_confirm(text):
         return confirm_draft(user_id, draft.id)
 
+    if re.fullmatch(r"\d{6}", text.strip()):
+        return confirm_draft(user_id, draft.id, otp=text.strip())
+
     # "Chọn Trần Hoàng Minh" / "Trần Hoàng Minh"
     if draft.recipient is None and draft.candidates:
         candidate = _match_candidate(text, draft.candidates)
@@ -653,6 +691,8 @@ def _try_continue_schedule_draft(
         return cancel_schedule_draft(user_id, draft.id)
     if _is_confirm(text):
         return confirm_schedule_draft(user_id, draft.id)
+    if re.fullmatch(r"\d{6}", text.strip()):
+        return confirm_schedule_draft(user_id, draft.id, otp=text.strip())
     return None
 
 
@@ -674,7 +714,12 @@ def _match_candidate(text: str, candidates: list[Contact]) -> Optional[Contact]:
 # ---------------------------------------------------------------------------
 
 
-def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
+def confirm_draft(
+    user_id: str,
+    draft_id: str,
+    otp: str | None = None,
+    source_account_id: str | None = None,
+) -> OmniResponse:
     session = session_for(user_id)
     draft = session.current_draft
     if draft is None or draft.id != draft_id:
@@ -684,7 +729,18 @@ def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
     # captured at draft creation time.
     store = get_store()
     txs = store.transactions_of(user_id)
-    account = store.primary_account(user_id)
+    if source_account_id:
+        try:
+            store.account_by_id(user_id, source_account_id)
+        except KeyError:
+            return OmniResponse(intent="transfer", text="Tài khoản nguồn không hợp lệ.", draft=draft)
+        draft.source_account_id = source_account_id
+        session.set_draft(draft)
+    account = (
+        store.account_by_id(user_id, draft.source_account_id)
+        if draft.source_account_id
+        else store.primary_account(user_id)
+    )
     fresh_flags = evaluate(
         amount=draft.amount,
         recipient_candidates=[],
@@ -707,6 +763,20 @@ def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
+    # MVP step-up auth: every transfer must pass an OTP check before execution.
+    # In production this would call the bank's OTP/soft-token service.
+    if otp is None:
+        text = "Vui lòng nhập OTP để xác minh giao dịch. Mã demo: 123456."
+        session.append("user", "Xác nhận giao dịch")
+        session.append("omni", text)
+        return OmniResponse(intent="transfer", text=text, draft=draft)
+
+    if otp.strip() != "123456":
+        text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
+        session.append("user", "Xác minh OTP")
+        session.append("omni", text)
+        return OmniResponse(intent="transfer", text=text, draft=draft)
+
     from ..banking.service import execute_transfer
 
     try:
@@ -715,6 +785,7 @@ def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
             recipient=draft.recipient,
             amount=draft.amount,
             description=draft.description,
+            source_account_id=draft.source_account_id,
         )
     except ValueError as e:
         text = f"Giao dịch thất bại: {e}"
@@ -731,7 +802,7 @@ def confirm_draft(user_id: str, draft_id: str) -> OmniResponse:
     # nhiêu?") can be answered from context.
     session.append("user", "Xác nhận giao dịch")
     session.append("omni", text)
-    return OmniResponse(intent="transfer", text=text, draft=draft)
+    return OmniResponse(intent="transfer", text=text)
 
 
 def cancel_draft(user_id: str, draft_id: str) -> OmniResponse:
@@ -756,7 +827,11 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
 
     store = get_store()
     txs = store.transactions_of(user_id)
-    account = store.primary_account(user_id)
+    account = (
+        store.account_by_id(user_id, draft.source_account_id)
+        if draft.source_account_id
+        else store.primary_account(user_id)
+    )
     flags = evaluate(
         amount=draft.amount,
         recipient_candidates=[],

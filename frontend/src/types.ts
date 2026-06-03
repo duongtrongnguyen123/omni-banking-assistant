@@ -41,6 +41,8 @@ export interface TransactionDraft {
   id: string;
   recipient: Contact | null;
   candidates: Contact[];
+  source_account_id: string | null;
+  source_accounts: Account[];
   amount: number | null;
   description: string;
   source_text: string;
@@ -82,6 +84,7 @@ export interface BalanceResult {
 
 export interface Schedule {
   id: string;
+  source_account_id: string | null;
   contact_id: string;
   amount: number;
   description: string;
@@ -93,6 +96,8 @@ export interface Schedule {
 export interface ScheduleDraft {
   id: string;
   recipient: Contact;
+  source_account_id: string | null;
+  source_accounts: Account[];
   amount: number;
   description: string;
   cron: string;

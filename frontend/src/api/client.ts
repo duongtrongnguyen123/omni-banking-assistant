@@ -25,9 +25,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
-  confirm: (draftId: string) =>
+  confirm: (draftId: string, otp: string, sourceAccountId?: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/confirm`, {
       method: "POST",
+      body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
     }),
   cancel: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {
@@ -46,9 +47,10 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/contacts/${draftId}/cancel`, {
       method: "POST",
     }),
-  confirmSchedule: (draftId: string) =>
+  confirmSchedule: (draftId: string, otp: string, sourceAccountId?: string) =>
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/confirm`, {
       method: "POST",
+      body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
     }),
   cancelSchedule: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {

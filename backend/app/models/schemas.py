@@ -61,6 +61,7 @@ class Schedule(BaseModel):
     id: str
     owner_id: str
     contact_id: str
+    source_account_id: Optional[str] = None
     amount: int
     description: str = ""
     cron: str
@@ -112,6 +113,8 @@ class TransactionDraft(BaseModel):
     id: str
     recipient: Optional[Contact] = None
     candidates: list[Contact] = Field(default_factory=list)
+    source_account_id: Optional[str] = None
+    source_accounts: list[Account] = Field(default_factory=list)
     amount: Optional[int] = None
     description: str = ""
     source_text: str = ""
@@ -134,6 +137,8 @@ class ContactDraft(BaseModel):
 class ScheduleDraft(BaseModel):
     id: str
     recipient: Contact
+    source_account_id: Optional[str] = None
+    source_accounts: list[Account] = Field(default_factory=list)
     amount: int
     description: str = ""
     cron: str

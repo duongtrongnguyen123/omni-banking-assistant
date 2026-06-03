@@ -10,14 +10,16 @@ import { ScheduleDraftCard } from "./ScheduleDraftCard";
 
 interface Props {
   message: ChatMessage;
-  onConfirm: (draftId: string) => void;
+  onConfirm: (draftId: string, otp: string, sourceAccountId?: string) => void;
   onCancel: (draftId: string) => void;
   onSelectCandidate: (draftId: string, contact: Contact) => void;
   onConfirmContact: (draftId: string) => void;
   onCancelContact: (draftId: string) => void;
-  onConfirmSchedule: (draftId: string) => void;
+  onConfirmSchedule: (draftId: string, otp: string, sourceAccountId?: string) => void;
   onCancelSchedule: (draftId: string) => void;
   busy?: boolean;
+  actionableDraftIds?: Set<string>;
+  actionableScheduleDraftIds?: Set<string>;
 }
 
 export const Message = ({
@@ -30,6 +32,8 @@ export const Message = ({
   onConfirmSchedule,
   onCancelSchedule,
   busy,
+  actionableDraftIds,
+  actionableScheduleDraftIds,
 }: Props) => {
   if (message.role === "user") {
     return (
@@ -57,9 +61,10 @@ export const Message = ({
         {r?.draft && r.draft.recipient && (
           <TransactionCard
             draft={r.draft}
-            onConfirm={() => onConfirm(r.draft!.id)}
+            onConfirm={(otp, sourceAccountId) => onConfirm(r.draft!.id, otp, sourceAccountId)}
             onCancel={() => onCancel(r.draft!.id)}
             disabled={busy}
+            actionable={actionableDraftIds?.has(r.draft.id) ?? true}
           />
         )}
         {r?.history && <HistoryCard history={r.history} />}
@@ -76,9 +81,12 @@ export const Message = ({
         {r?.schedule_draft && (
           <ScheduleDraftCard
             draft={r.schedule_draft}
-            onConfirm={() => onConfirmSchedule(r.schedule_draft!.id)}
+            onConfirm={(otp, sourceAccountId) =>
+              onConfirmSchedule(r.schedule_draft!.id, otp, sourceAccountId)
+            }
             onCancel={() => onCancelSchedule(r.schedule_draft!.id)}
             disabled={busy}
+            actionable={actionableScheduleDraftIds?.has(r.schedule_draft.id) ?? true}
           />
         )}
       </div>

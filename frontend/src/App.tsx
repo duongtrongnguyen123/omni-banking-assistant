@@ -18,6 +18,8 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
+  const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -76,6 +78,13 @@ export default function App() {
       setBusy(true);
       try {
         const resp = await api.chat(trimmed);
+        if (resp.draft) {
+          setClosedDraftIds((prev) => {
+            const next = new Set(prev);
+            next.delete(resp.draft!.id);
+            return next;
+          });
+        }
         resolveOmni(pendingId, resp);
       } catch (e) {
         failOmni(pendingId, e);
@@ -89,12 +98,16 @@ export default function App() {
   const sendDraftAction = async (
     action: () => Promise<OmniResponse>,
     actionLabel: string,
+    closeDraftId?: string,
   ) => {
     appendUser(actionLabel);
     const pendingId = appendOmniPending();
     setBusy(true);
     try {
       const resp = await action();
+      if (closeDraftId && !resp.draft) {
+        setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
+      }
       resolveOmni(pendingId, resp);
     } catch (e) {
       failOmni(pendingId, e);
@@ -103,11 +116,15 @@ export default function App() {
     }
   };
 
-  const onConfirm = (draftId: string) =>
-    sendDraftAction(() => api.confirm(draftId), "Xác nhận");
+  const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) =>
+    sendDraftAction(
+      () => api.confirm(draftId, otp, sourceAccountId),
+      "Xác minh OTP",
+      draftId,
+    );
 
   const onCancel = (draftId: string) =>
-    sendDraftAction(() => api.cancel(draftId), "Huỷ");
+    sendDraftAction(() => api.cancel(draftId), "Huỷ", draftId);
 
   const onSelectCandidate = (draftId: string, contact: Contact) =>
     sendDraftAction(
@@ -115,17 +132,48 @@ export default function App() {
       `Chọn ${contact.display_name}`,
     );
 
+  const actionableDraftIds = new Set<string>();
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const draft = messages[i].response?.draft;
+    if (draft && draft.recipient && !closedDraftIds.has(draft.id)) {
+      actionableDraftIds.add(draft.id);
+      break;
+    }
+  }
+
   const onConfirmContact = (draftId: string) =>
     sendDraftAction(() => api.confirmContact(draftId), "Lưu danh bạ");
 
   const onCancelContact = (draftId: string) =>
     sendDraftAction(() => api.cancelContact(draftId), "Huỷ lưu danh bạ");
 
-  const onConfirmSchedule = (draftId: string) =>
-    sendDraftAction(() => api.confirmSchedule(draftId), "Tạo lịch");
+  const onConfirmSchedule = (
+    draftId: string,
+    otp: string,
+    sourceAccountId?: string,
+  ) =>
+    sendDraftAction(
+      async () => {
+        const resp = await api.confirmSchedule(draftId, otp, sourceAccountId);
+        if (!resp.schedule_draft) {
+          setClosedScheduleDraftIds((prev) => new Set(prev).add(draftId));
+        }
+        return resp;
+      },
+      "Xác minh OTP",
+    );
 
   const onCancelSchedule = (draftId: string) =>
     sendDraftAction(() => api.cancelSchedule(draftId), "Huỷ đặt lịch");
+
+  const actionableScheduleDraftIds = new Set<string>();
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const draft = messages[i].response?.schedule_draft;
+    if (draft && !closedScheduleDraftIds.has(draft.id)) {
+      actionableScheduleDraftIds.add(draft.id);
+      break;
+    }
+  }
 
   return (
     <div className="page">
@@ -156,6 +204,8 @@ export default function App() {
               onConfirmSchedule={onConfirmSchedule}
               onCancelSchedule={onCancelSchedule}
               busy={busy}
+              actionableDraftIds={actionableDraftIds}
+              actionableScheduleDraftIds={actionableScheduleDraftIds}
             />
           ))}
         </div>

@@ -27,14 +27,28 @@ class SelectCandidateRequest(BaseModel):
     contact_id: str
 
 
+class ConfirmTransactionRequest(BaseModel):
+    otp: str | None = None
+    source_account_id: str | None = None
+
+
 @router.post("/chat", response_model=OmniResponse)
 def chat(req: ChatRequest, user_id: str = Depends(current_user)) -> OmniResponse:
     return handle_message(user_id, req.message)
 
 
 @router.post("/transactions/{draft_id}/confirm", response_model=OmniResponse)
-def confirm(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
-    resp = confirm_draft(user_id, draft_id)
+def confirm(
+    draft_id: str,
+    req: ConfirmTransactionRequest | None = None,
+    user_id: str = Depends(current_user),
+) -> OmniResponse:
+    resp = confirm_draft(
+        user_id,
+        draft_id,
+        otp=req.otp if req else None,
+        source_account_id=req.source_account_id if req else None,
+    )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
     return resp
@@ -71,8 +85,17 @@ def cancel_contact(draft_id: str, user_id: str = Depends(current_user)) -> OmniR
 
 
 @router.post("/schedules/{draft_id}/confirm", response_model=OmniResponse)
-def confirm_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
-    resp = confirm_schedule_draft(user_id, draft_id)
+def confirm_schedule(
+    draft_id: str,
+    req: ConfirmTransactionRequest | None = None,
+    user_id: str = Depends(current_user),
+) -> OmniResponse:
+    resp = confirm_schedule_draft(
+        user_id,
+        draft_id,
+        otp=req.otp if req else None,
+        source_account_id=req.source_account_id if req else None,
+    )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
     return resp

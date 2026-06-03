@@ -190,6 +190,7 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
   box-shadow: 0 6px 16px -10px rgba(15,17,58,0.18);
 }
 .tx-card--warn { border-color: #fcd34d; background: #fffbeb; }
+.tx-card--done { opacity: 0.72; }
 .tx-card--disambig { padding: 6px; }
 
 .tx-card__amount { margin-bottom: 10px; }
@@ -229,6 +230,48 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
 
 .tx-actions {
   display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end;
+}
+
+.account-select {
+  width: 100%; border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 10px; background: #f9f8ff; color: var(--ink);
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  outline: none;
+}
+
+.account-select:focus {
+  border-color: var(--user); box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+.account-select__hint {
+  margin-top: 6px; color: var(--bad); font-size: 12.5px; line-height: 1.35;
+}
+
+.tx-status {
+  margin-top: 12px; padding: 9px 10px; border-radius: 10px;
+  background: #f4f3fa; color: var(--muted); font-size: 13px; font-weight: 600;
+  text-align: center;
+}
+
+.otp-panel {
+  margin-top: 12px; padding: 10px; border-radius: 12px;
+  background: white; border: 1px dashed #f59e0b;
+  display: grid; gap: 8px;
+}
+
+.otp-panel__copy {
+  font-size: 12.5px; color: #92400e;
+}
+
+.otp-input {
+  width: 100%; border: 1px solid var(--line); border-radius: 10px;
+  padding: 11px 12px; font-family: inherit; font-size: 20px;
+  font-weight: 800; letter-spacing: 0.28em; text-align: center;
+  color: var(--ink); background: #fffaf0; outline: none;
+}
+
+.otp-input:focus {
+  border-color: var(--warn); box-shadow: 0 0 0 3px rgba(245,158,11,.16);
 }
 
 /* -------- disambiguation -------- */

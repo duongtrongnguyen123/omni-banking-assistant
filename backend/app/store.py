@@ -69,6 +69,12 @@ class Store:
                 return acc
         return self.users[user_id].accounts[0]
 
+    def account_by_id(self, user_id: str, account_id: str):
+        for acc in self.users[user_id].accounts:
+            if acc.id == account_id:
+                return acc
+        raise KeyError(account_id)
+
     def add_schedule(self, sched: Schedule) -> Schedule:
         with self._lock:
             self.schedules[sched.id] = sched

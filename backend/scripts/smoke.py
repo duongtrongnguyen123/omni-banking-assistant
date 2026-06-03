@@ -53,7 +53,7 @@ def main() -> None:
     # KB01 — Giao dịch thông thường
     def confirm_after(resp):
         if resp.draft and not any(f.severity == "block" for f in resp.draft.flags):
-            r2 = confirm_draft(USER, resp.draft.id)
+            r2 = confirm_draft(USER, resp.draft.id, otp="123456")
             _line(f"Omni (confirm): {r2.text}")
 
     case(
