@@ -13,7 +13,10 @@ router = APIRouter(prefix="/api", tags=["banking"])
 
 @router.get("/me")
 def me(user_id: str = Depends(current_user)):
-    return get_store().get_user(user_id).model_dump()
+    user = get_store().get_user_or_none(user_id)
+    if user is None:
+        return {"id": user_id, "display_name": user_id, "accounts": [], "phone": ""}
+    return user.model_dump()
 
 
 @router.get("/contacts")
