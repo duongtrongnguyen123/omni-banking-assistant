@@ -136,6 +136,8 @@ _STOP_LOOKAHEAD = (
     r"|đã\b|da\b"
     r"|là\s|la\s"        # "mẹ là bao nhiêu" — stop at "là"
     r"|thì\s|thi\s"      # "anh thì khoẻ không" — stop at "thì"
+    r"|từ\s+trước|tu\s+truoc"  # "gửi bố từ trước đến giờ" — stop at "từ trước"
+    r"|từ\s+xưa|tu\s+xua"
     r"|$"
     r"|[,.?!\n]"
 )

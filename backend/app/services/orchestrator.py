@@ -296,6 +296,27 @@ def _handle_history(
             contact_id = candidates[0].contact.id
             contact_name = candidates[0].contact.display_name
 
+    # History-only fallback: when no verb/prep led the NLU extractor to
+    # a recipient (e.g. "PT bao nhiêu tháng trước"), scan the raw message
+    # for any contact alias as a whole word. Matching keeps the original
+    # diacritics so "bảo" (Vũ Quốc Bảo) doesn't fold into "bao" of "bao
+    # nhiêu" and match the wrong contact.
+    if contact_id is None and not e.recipient_text:
+        msg_lower = nlu.raw_text.lower()
+        best: Optional[tuple[int, Contact]] = None
+        for c in contacts:
+            for alias in c.aliases:
+                a = alias.lower()
+                # Require the alias to appear as a whole word in the message.
+                if re.search(rf"(?<!\w){re.escape(a)}(?!\w)", msg_lower):
+                    # Prefer the longest alias (more specific).
+                    if best is None or len(a) > best[0]:
+                        best = (len(a), c)
+                    break
+        if best is not None:
+            contact_id = best[1].id
+            contact_name = best[1].display_name
+
     # A4: normalize temporal phrasing (handles "thang truoc" no-diacritic too).
     # Specific month / all_time override the temporal reference.
     user_asked_specific_period = (
@@ -328,6 +349,9 @@ def _handle_history(
         limit=e.limit,
         semantic_filter=e.semantic_filter,
     )
+    # get_history may have promoted the period (specific month, all_time);
+    # sync our local var so the label matches what was actually queried.
+    period = hist.get("period", period)
 
     # A3: if the user didn't ask for a specific period and this_month is empty,
     # silently fall back to last_month (with a note in the reply).
@@ -353,6 +377,11 @@ def _handle_history(
         "recent_30d": "30 ngày gần đây",
         "all_time": "tất cả thời gian",
     }.get(period, period)
+    # Specific-month labels are emitted as YYYY-MM by get_history; render
+    # them as "Tháng M/YYYY" so the reply reads naturally.
+    if re.fullmatch(r"\d{4}-\d{2}", period):
+        y, m = period.split("-")
+        period_label = f"tháng {int(m)}/{y}"
 
     if hist["count"] == 0:
         body = f"Bạn chưa có giao dịch nào {period_label}"
