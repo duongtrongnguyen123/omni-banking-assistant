@@ -4,6 +4,7 @@ import type { ChatMessage, Contact, OmniResponse } from "./types";
 import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
+import { VoiceButton } from "./components/VoiceButton";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -211,6 +212,10 @@ export default function App() {
         </div>
 
         <div className="phone__input">
+          <VoiceButton
+            onTranscript={(t) => setInput(t)}
+            disabled={busy}
+          />
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
