@@ -14,6 +14,7 @@ from ..banking.service import create_schedule, get_balance, get_history, next_ru
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
 from ..ml.amount_predictor import predict_amount
+from ..ml.category import predict_category
 from ..ml.insights import anomalies, forecast, month_over_month, subscriptions
 from ..models.schemas import (
     Contact,
@@ -46,6 +47,31 @@ def _is_cancel(text: str) -> bool:
 
 # A4: temporal-reference → history period. Strip diacritics so both
 # "tháng trước" and "thang truoc" map correctly.
+def _annotate_predicted_category(item: dict) -> dict:
+    """Attach a ``predicted_category`` hint to a history facts entry when
+    the row is bucketed as ``other`` and KNN clears the confidence floor.
+
+    Pure decoration: the original ``category`` field is preserved so any
+    aggregation that already keyed on it (``by_category``, ``top_category``)
+    keeps its meaning. Embedding lookups are best-effort — any exception
+    inside the predictor (no embedding model, no labeled corpus) just leaves
+    the row untouched. We never want a history reply to break on ML.
+    """
+    if item.get("category") != "other":
+        return item
+    try:
+        guess = predict_category(item.get("description", ""))
+    except Exception:
+        return item
+    if not guess:
+        return item
+    return {
+        **item,
+        "predicted_category": guess["category"],
+        "predicted_confidence": guess["confidence"],
+    }
+
+
 def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     if not temporal_ref:
         return "this_month"
@@ -693,13 +719,15 @@ def _handle_history(
             "semantic_filter": e.semantic_filter,
             "limit_applied": e.limit,
             "descriptions": [
-                {
-                    "recipient": t["contact"]["display_name"],
-                    "amount": t["amount"],
-                    "description": t["description"],
-                    "category": t["category"],
-                    "created_at": t["created_at"],
-                }
+                _annotate_predicted_category(
+                    {
+                        "recipient": t["contact"]["display_name"],
+                        "amount": t["amount"],
+                        "description": t["description"],
+                        "category": t["category"],
+                        "created_at": t["created_at"],
+                    }
+                )
                 for t in hist["items"]
             ],
         }
