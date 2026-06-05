@@ -56,6 +56,18 @@ We also explore three things beyond the slide brief:
 | + | Suggestion strip | Top-5 next-recipient chips above input | `frontend/src/components/SuggestionStrip.tsx` |
 | + | Success animation | Card flip + confetti burst on confirmed transfer | `frontend/src/components/TransactionCard.tsx` |
 | + | Repeat-last CTA | One-tap "Lặp lại lần trước" after first transfer | `frontend/src/components/RepeatLastCTA.tsx` |
+| + | Metrics | 7 Prometheus series via `/api/metrics`, live dashboard `?metrics=1` | `backend/app/services/metrics.py`, `frontend/src/components/MetricsCard.tsx` |
+| + | A/B + Thompson bandit | 4 weight arms, online learning, winner `tree_freq` (67.55%) | `backend/app/ml/abtest.py`, `backend/app/ml/bandit.py` |
+| + | Health probes | `/health/{live,ready,version}` + lifespan shutdown + k8s hints | `backend/app/routes/health.py`, `docs/deploy/k8s-hints.yaml` |
+| + | Budgets + goals | Monthly envelopes + savings tracker, 4 new intents | `backend/app/banking/budgets.py`, `backend/app/routes/budgets.py` |
+| + | Privacy mode | `OMNI_PRIVACY_MODE={off,redact,local-only}`, redactor + LLM audit | `backend/app/nlp/redactor.py`, `backend/app/nlp/privacy.py` |
+| + | Toast events | 6 WS event kinds, per-user `asyncio.Queue`, 64-entry backlog | `backend/app/services/events.py`, `frontend/src/components/ToastStack.tsx` |
+| + | Slash commands + autocomplete | `/transfer /balance /history /repeat /insights /help`, Cmd+K/Cmd+/, `@-mention` | `frontend/src/components/SlashPalette.tsx`, `frontend/src/hooks/useKeyboard.ts` |
+| + | Categorizer | TF-IDF + rules tx categorizer (13 categories, P=0.95, <2ms) | `backend/app/ml/categorizer.py` |
+| + | Exports | CSV / sao kê HTML / tax-year JSON | `backend/app/routes/exports.py`, `frontend/src/components/ExportMenu.tsx` |
+| + | a11y | WCAG 2.1 AA, focus ring, reduced-motion, jest-axe harness | `frontend/src/lib/axe.ts`, `docs/a11y-audit.md` |
+| + | Demo resilience | `OMNI_OFFLINE_DEMO=1` + telemetry overlay + scenario recorder | `backend/app/routes/demo.py`, `docs/offline-demo.md` |
+| + | Redis sessions | `OMNI_SESSION_BACKEND={memory,redis,fake-redis}` + draft/session TTLs | `backend/app/context/session_store.py`, `docs/persistence.md` |
 
 The orchestrator (`backend/app/services/orchestrator.py:handle_message`)
 threads everything together: continuation paths (xác nhận / huỷ / OTP) →
