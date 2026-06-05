@@ -642,6 +642,173 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
 .insights-delta--up { color: var(--bad); }
 .insights-delta--down { color: var(--good); }
 
+/* -------- TTS toggle in phone header -------- */
+
+.phone__tts-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: #f4f3fa; color: var(--ink);
+  border: 1px solid var(--line);
+  cursor: pointer; font-size: 16px; line-height: 1;
+  display: grid; place-items: center;
+  transition: background .15s, transform .05s, border-color .15s;
+  font-family: inherit;
+  margin-right: 4px;
+}
+.phone__tts-btn:hover { background: #ebe9f4; transform: translateY(-1px); }
+.phone__tts-btn--on {
+  background: var(--orange-soft); color: var(--orange);
+  border-color: #fbcb96;
+}
+
+/* -------- Animated transfer success state -------- */
+
+.tx-success {
+  position: relative;
+  margin-top: 8px;
+  padding: 22px 16px 16px;
+  border-radius: var(--radius);
+  background: linear-gradient(160deg, #ecfdf5 0%, #d1fae5 60%, #a7f3d0 100%);
+  border: 1px solid #6ee7b7;
+  box-shadow: 0 12px 28px -14px rgba(16,185,129,0.45);
+  overflow: hidden;
+  animation: txCardFlip 520ms cubic-bezier(.2,.8,.2,1) both;
+  transform-origin: center top;
+}
+
+@keyframes txCardFlip {
+  0%   { transform: perspective(800px) rotateX(-92deg); opacity: 0; }
+  60%  { transform: perspective(800px) rotateX(12deg); opacity: 1; }
+  100% { transform: perspective(800px) rotateX(0deg); opacity: 1; }
+}
+
+.tx-success__hero {
+  position: relative; z-index: 2;
+  display: grid; gap: 6px; place-items: center; text-align: center;
+}
+.tx-success__check {
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--good); color: white;
+  display: grid; place-items: center;
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45);
+  animation: checkPop 520ms cubic-bezier(.2,.8,.2,1) 120ms both,
+             checkPulse 1.6s ease-out 640ms 2;
+}
+@keyframes checkPop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes checkPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5); }
+  100% { box-shadow: 0 0 0 18px rgba(22, 163, 74, 0); }
+}
+.tx-success__title {
+  font-weight: 700; font-size: 15px; color: #065f46; margin-top: 6px;
+  letter-spacing: 0.01em;
+}
+.tx-success__amount {
+  font-weight: 800; font-size: 28px; color: #064e3b;
+  animation: amountFade 480ms ease-out 220ms both;
+}
+@keyframes amountFade {
+  from { transform: translateY(6px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.tx-success__meta {
+  font-size: 12.5px; color: #047857;
+}
+.tx-success__actions {
+  position: relative; z-index: 2;
+  display: flex; gap: 8px; justify-content: center;
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px dashed rgba(5, 150, 105, 0.35);
+}
+.tx-success__action {
+  appearance: none; border: 1px solid #6ee7b7;
+  background: white; color: #065f46;
+  padding: 7px 12px; border-radius: 999px;
+  font-family: inherit; font-weight: 600; font-size: 12.5px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  transition: background .15s, transform .05s;
+}
+.tx-success__action:hover { background: #ecfdf5; transform: translateY(-1px); }
+
+/* Confetti burst — pure CSS, fire-and-forget */
+.tx-success__confetti {
+  position: absolute; inset: 0; pointer-events: none;
+  z-index: 1; overflow: hidden;
+}
+.tx-confetti {
+  position: absolute; top: 18px; left: 50%;
+  width: 8px; height: 12px; border-radius: 2px;
+  transform-origin: center;
+  opacity: 0;
+  animation: confettiBurst 1400ms cubic-bezier(.2,.8,.3,1) forwards;
+}
+.tx-confetti--0 { background: #f59e0b; animation-delay: 0ms;   --tx: -160px; --ty:  220px; --rot:  720deg; }
+.tx-confetti--1 { background: #ef4444; animation-delay: 40ms;  --tx:  140px; --ty:  240px; --rot: -540deg; }
+.tx-confetti--2 { background: #3b82f6; animation-delay: 80ms;  --tx:  -80px; --ty:  300px; --rot:  480deg; }
+.tx-confetti--3 { background: #10b981; animation-delay: 120ms; --tx:  100px; --ty:  180px; --rot: -360deg; }
+.tx-confetti--4 { background: #8b5cf6; animation-delay: 60ms;  --tx: -220px; --ty:  160px; --rot:  640deg; }
+.tx-confetti--5 { background: #ec4899; animation-delay: 100ms; --tx:  200px; --ty:  120px; --rot: -460deg; }
+.tx-confetti--6 { background: #facc15; animation-delay: 20ms;  --tx:    0px; --ty:  260px; --rot:  900deg; }
+@keyframes confettiBurst {
+  0%   { transform: translate(-50%, 0) rotate(0deg);                              opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--tx)), var(--ty)) rotate(var(--rot)); opacity: 0; }
+}
+
+/* Compact receipt shown after the celebration auto-collapses */
+.tx-receipt {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 8px; padding: 10px 12px;
+  background: white; border: 1px solid #bbf7d0; border-left: 4px solid var(--good);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px -8px rgba(15,17,58,0.18);
+  animation: receiptFadeIn 320ms ease-out both;
+}
+@keyframes receiptFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.tx-receipt__check {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--good); color: white;
+  display: grid; place-items: center; flex: 0 0 26px;
+}
+.tx-receipt__body { display: grid; gap: 1px; min-width: 0; flex: 1; }
+.tx-receipt__line { font-size: 13.5px; color: var(--ink); }
+.tx-receipt__time { font-size: 11.5px; color: var(--muted); }
+
+/* -------- Floating "Lặp lại lần trước" CTA -------- */
+
+.repeat-cta {
+  display: flex; justify-content: center;
+  padding: 6px 14px 0;
+  background: linear-gradient(180deg, transparent 0%, #fff 60%);
+  pointer-events: none;
+}
+.repeat-cta__btn {
+  pointer-events: auto;
+  appearance: none; border: 1px solid var(--orange);
+  background: white; color: var(--orange);
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 999px;
+  font-family: inherit; font-weight: 600; font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: 0 6px 14px -8px rgba(245,130,32,0.55);
+  animation: repeatCtaPop 280ms ease-out both;
+  transition: background .15s, color .15s, transform .05s;
+}
+.repeat-cta__btn:hover:not(:disabled) {
+  background: var(--orange); color: white; transform: translateY(-1px);
+}
+.repeat-cta__btn:disabled { opacity: 0.55; cursor: not-allowed; }
+@keyframes repeatCtaPop {
+  from { transform: translateY(8px) scale(0.96); opacity: 0; }
+  to   { transform: translateY(0)   scale(1);    opacity: 1; }
+}
+
 .quick-scenarios { background: white; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
 .quick-scenarios__title { font-weight: 700; color: var(--navy); margin-bottom: 10px; }
 .quick-scenarios__list { display: flex; flex-wrap: wrap; gap: 8px; }

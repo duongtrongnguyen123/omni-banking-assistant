@@ -12,7 +12,8 @@ const SCENARIOS: Scenario[] = [
   { label: "KB6 · Định kỳ", text: "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng" },
   { label: "KB7 · Thêm danh bạ", text: "Lưu Lê Mai STK 0123987654 Vietcombank tên gọi tắt chị Mai" },
   { label: "KB8 · Theo chủ đề", text: "Tháng này tôi tiêu vào những chủ đề nào?" },
-  { label: "KB9 · Lặp lại lần trước", text: "Lặp lại giao dịch vừa rồi" },
+  // KB9 ("Lặp lại lần trước") is now a permanent floating CTA above the
+  // input bar — see RepeatLastCTA.
 ];
 
 export const QuickScenarios = ({ onPick }: { onPick: (text: string) => void }) => (

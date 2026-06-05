@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ChatMessage, Contact } from "../types";
 import { OmniAvatar } from "./OmniAvatar";
 import { TransactionCard } from "./TransactionCard";
@@ -8,6 +9,7 @@ import { ScheduleCard } from "./ScheduleCard";
 import { ContactDraftCard } from "./ContactDraftCard";
 import { ScheduleDraftCard } from "./ScheduleDraftCard";
 import { RecurringList } from "./RecurringList";
+import { speak } from "../lib/tts";
 
 interface Props {
   message: ChatMessage;
@@ -22,6 +24,7 @@ interface Props {
   busy?: boolean;
   actionableDraftIds?: Set<string>;
   actionableScheduleDraftIds?: Set<string>;
+  ttsEnabled?: boolean;
 }
 
 export const Message = ({
@@ -37,7 +40,29 @@ export const Message = ({
   busy,
   actionableDraftIds,
   actionableScheduleDraftIds,
+  ttsEnabled,
 }: Props) => {
+  // Only speak when this is a FRESH Omni reply. We detect freshness by
+  // watching the pending → resolved transition: every real reply starts
+  // as `pending: true`, then flips to `false` with text. The WELCOME and
+  // any history-style replays never carry a `pending` flag at all, so
+  // they're naturally skipped.
+  const spokenRef = useRef(false);
+  const wasPendingRef = useRef(message.pending === true);
+  useEffect(() => {
+    if (!ttsEnabled) return;
+    if (message.role !== "omni") return;
+    if (spokenRef.current) return;
+    const justResolved =
+      wasPendingRef.current && !message.pending && !!message.text;
+    if (!justResolved) {
+      wasPendingRef.current = message.pending === true;
+      return;
+    }
+    spokenRef.current = true;
+    speak(message.text);
+  }, [ttsEnabled, message.role, message.pending, message.text]);
+
   if (message.role === "user") {
     return (
       <div className="msg msg--user">

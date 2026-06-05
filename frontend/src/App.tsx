@@ -8,6 +8,19 @@ import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
+import { RepeatLastCTA } from "./components/RepeatLastCTA";
+import { cancelSpeech, isSpeechSupported } from "./lib/tts";
+
+const TTS_STORAGE_KEY = "omni.tts.enabled";
+
+const readStoredTtsPref = (): boolean => {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(TTS_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -27,8 +40,22 @@ export default function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   // Bumped after every executed transfer so the suggestion strip re-ranks.
   const [suggestRefresh, setSuggestRefresh] = useState(0);
+  // Counts confirmed transfers this session — gates the "Lặp lại lần
+  // trước" CTA so it only appears once there's something to repeat.
+  const [confirmedTransfers, setConfirmedTransfers] = useState(0);
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readStoredTtsPref());
+  const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TTS_STORAGE_KEY, ttsEnabled ? "1" : "0");
+    } catch {
+      /* ignore quota / private mode */
+    }
+    if (!ttsEnabled) cancelSpeech();
+  }, [ttsEnabled]);
 
   const pickRecipient = (text: string) => {
     setInput(text);
@@ -124,6 +151,14 @@ export default function App() {
         // strip so the freshly-paid contact moves up or out.
         if (resp.intent === "transfer") {
           setSuggestRefresh((n) => n + 1);
+          // Only count CONFIRMED transfers (not cancellations) toward
+          // gating the "Lặp lại lần trước" CTA. The orchestrator
+          // returns intent="transfer" for both paths, so we rely on
+          // the action label: cancel uses "Huỷ", confirm uses
+          // "Xác minh OTP".
+          if (!resp.draft && actionLabel !== "Huỷ") {
+            setConfirmedTransfers((n) => n + 1);
+          }
         }
       }
       resolveOmni(pendingId, resp);
@@ -205,6 +240,17 @@ export default function App() {
               <span className="online-dot" /> Trợ lý đang trực tuyến
             </div>
           </div>
+          {ttsSupported && (
+            <button
+              type="button"
+              className={`phone__tts-btn ${ttsEnabled ? "phone__tts-btn--on" : ""}`}
+              onClick={() => setTtsEnabled((v) => !v)}
+              aria-label={ttsEnabled ? "Tắt giọng đọc" : "Bật giọng đọc"}
+              title={ttsEnabled ? "Đang đọc to (vi-VN)" : "Đọc to câu trả lời"}
+            >
+              {ttsEnabled ? "🔊" : "🔇"}
+            </button>
+          )}
           <div className="user-pill">AN</div>
         </header>
 
@@ -228,6 +274,7 @@ export default function App() {
               busy={busy}
               actionableDraftIds={actionableDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
+              ttsEnabled={ttsEnabled}
             />
           ))}
         </div>
@@ -236,6 +283,12 @@ export default function App() {
           refreshKey={suggestRefresh}
           busy={busy}
           onPick={pickRecipient}
+        />
+
+        <RepeatLastCTA
+          visible={confirmedTransfers > 0}
+          busy={busy}
+          onClick={() => send("Lặp lại giao dịch vừa rồi")}
         />
 
         <div className="phone__input">
