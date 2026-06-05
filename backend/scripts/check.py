@@ -120,6 +120,15 @@ def check_endpoints() -> None:
     except Exception as e:
         fail("recurring.detect_recurring callable", str(e))
 
+    # Toast events (feat/toast-events merge)
+    try:
+        from app.services.events import publish, Event, get_bus  # noqa: F401
+        # Just verify import; publishing requires an event loop.
+        ok("events module importable", "publish + Event available")
+    except Exception as e:
+        # Soft-fail: toast events are a UX enhancement, not load-bearing.
+        print(f"  {DIM}~{RESET} events module: {e}")
+
 
 def check_scenarios() -> None:
     section("KB scenarios — rule fallback only")
