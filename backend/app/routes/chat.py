@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+
 from pydantic import BaseModel, Field
 
 from ..models.schemas import OmniResponse
 from ..context.session import session_for
 from ..services.orchestrator import (
+    begin_telemetry,
     cancel_contact_draft,
     cancel_draft,
     cancel_schedule_draft,
     confirm_contact_draft,
     confirm_draft,
     confirm_schedule_draft,
+    end_telemetry,
     handle_message,
     select_candidate,
 )
@@ -34,8 +37,18 @@ class ConfirmTransactionRequest(BaseModel):
 
 
 @router.post("/chat", response_model=OmniResponse)
-def chat(req: ChatRequest, user_id: str = Depends(current_user)) -> OmniResponse:
-    return handle_message(user_id, req.message)
+def chat(
+    req: ChatRequest,
+    user_id: str = Depends(current_user),
+    dev: int = Query(default=0, description="Set dev=1 to populate response.telemetry"),
+) -> OmniResponse:
+    if dev:
+        begin_telemetry()
+    try:
+        return handle_message(user_id, req.message)
+    finally:
+        if dev:
+            end_telemetry()
 
 
 @router.post("/transactions/{draft_id}/confirm", response_model=OmniResponse)

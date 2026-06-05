@@ -1043,3 +1043,103 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
   from { transform: translateY(0);     opacity: 1; }
   to   { transform: translateY(-12px); opacity: 0; }
 }
+
+/* ---------------------------------------------------------------------
+ * Telemetry overlay (?dev=1) — fixed bottom-left HUD.
+ * Production users never see this; only mounted when the URL flag is on
+ * or Cmd/Ctrl+Shift+D toggles it.
+ * ------------------------------------------------------------------ */
+.telem {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 9000;
+  width: 220px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+.telem__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+.telem__close {
+  background: transparent;
+  border: 0;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.telem__close:hover { color: #e2e8f0; }
+.telem__rows { display: flex; flex-direction: column; gap: 2px; }
+.telem__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+}
+.telem__row:last-child { border-bottom: 0; }
+.telem__k { color: #94a3b8; }
+.telem__v { color: #f1f5f9; text-align: right; }
+.telem__src { color: #64748b; font-size: 10px; }
+.telem__metric--good .telem__v { color: #4ade80; }
+.telem__metric--warn .telem__v { color: #facc15; }
+.telem__metric--bad  .telem__v { color: #f87171; }
+.telem__row--ok .telem__v  { color: #4ade80; }
+.telem__row--bad .telem__v { color: #f87171; }
+.telem__row--meta .telem__v { color: #64748b; font-size: 10px; }
+
+/* ---------------------------------------------------------------------
+ * Demo recorder (?demo=1) — small toolbar floating top-right of phone.
+ * ------------------------------------------------------------------ */
+.demo-rec {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.demo-rec__btn {
+  background: rgba(15, 23, 42, 0.85);
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.demo-rec__btn:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.3); }
+.demo-rec__btn:disabled { opacity: 0.5; cursor: progress; }
+.demo-rec__btn--rec { color: #f87171; border-color: rgba(248, 113, 113, 0.45); }
+.demo-rec__btn--file { display: inline-flex; }
+.demo-rec__status {
+  font-size: 10px;
+  color: #475569;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 180px;
+  text-align: right;
+}

@@ -34,8 +34,16 @@ class _Provider:
 
 
 def _enabled_providers() -> list[_Provider]:
-    """Priority order: Groq first (fastest), Gemini fallback if Groq is down."""
+    """Priority order: Groq first (fastest), Gemini fallback if Groq is down.
+
+    Offline-demo mode returns an empty list unconditionally — the caller
+    falls through to the rule-based extractor. This is the survival path
+    when the pitch laptop has no wifi (see ``docs/offline-demo.md``).
+    """
     s = get_settings()
+    if s.offline_demo:
+        log.debug("offline_demo=1 — skipping LLM providers")
+        return []
     out: list[_Provider] = []
     if s.groq_api_key:
         out.append(

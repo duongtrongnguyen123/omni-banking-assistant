@@ -63,6 +63,18 @@ const isToastEvent = (raw: unknown): raw is ToastEvent => {
  * without prop-drilling. Keeps `App.tsx` to a single hook call.
  */
 export const TOAST_EVENT_NAME = "omni:toast";
+// Fired with `{channel: "events", status: "connected"|"disconnected"}` so
+// the telemetry overlay can render a live WS-status pill.
+export const WS_STATUS_EVENT_NAME = "omni:ws-status";
+
+const dispatchWsStatus = (status: "connected" | "disconnected") => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(WS_STATUS_EVENT_NAME, {
+      detail: { channel: "events", status },
+    }),
+  );
+};
 
 export function useEventStream(
   userId: string,
@@ -104,6 +116,7 @@ export function useEventStream(
       ws.onopen = () => {
         // Reset the backoff on a successful connection.
         retryDelayMs = 1000;
+        dispatchWsStatus("connected");
       };
 
       ws.onmessage = (msg) => {
@@ -117,6 +130,7 @@ export function useEventStream(
 
       ws.onclose = () => {
         ws = null;
+        dispatchWsStatus("disconnected");
         scheduleRetry();
       };
 

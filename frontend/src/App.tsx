@@ -10,6 +10,8 @@ import { VoiceButton } from "./components/VoiceButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
 import { ToastStack } from "./components/ToastStack";
+import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
+import { DemoRecorder } from "./components/DemoRecorder";
 import { useEventStream } from "./hooks/useEventStream";
 import {
   SlashPalette,
@@ -151,6 +153,19 @@ export default function App() {
             next.delete(resp.draft!.id);
             return next;
           });
+        }
+        // Surface telemetry to the dev overlay (no-op if ?dev=1 wasn't set
+        // — the backend leaves `telemetry` null in that case).
+        if (resp.telemetry) {
+          try {
+            window.dispatchEvent(
+              new CustomEvent(TELEMETRY_EVENT, {
+                detail: { telemetry: resp.telemetry },
+              }),
+            );
+          } catch {
+            /* noop */
+          }
         }
         resolveOmni(pendingId, resp);
       } catch (e) {
@@ -477,8 +492,10 @@ export default function App() {
 
   return (
     <div className="page">
+      <TelemetryOverlay />
       <div className="phone">
         <ToastStack />
+        <DemoRecorder />
         <div className="phone__statusbar">9:41</div>
         <header className="phone__header">
           <OmniAvatar size={40} />

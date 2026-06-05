@@ -175,3 +175,8 @@ class OmniResponse(BaseModel):
     # The orchestrator dumps RecurringPattern via model_dump() before attach.
     recurring_patterns: Optional[list[dict]] = None
     needs_disambiguation: bool = False
+    # Populated only when the ``?dev=1`` query param flags the request as
+    # a telemetry-overlay client. ``None`` in the default UI path so
+    # judges never see internal latency numbers leak into a serialized
+    # response.
+    telemetry: Optional[dict] = None

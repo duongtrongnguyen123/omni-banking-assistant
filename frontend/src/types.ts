@@ -123,6 +123,17 @@ export interface RecurringPattern {
   recipient_bank: string | null;
 }
 
+export interface TelemetryPayload {
+  nlu_latency_ms?: number;
+  nlu_source?: "llm" | "rule";
+  intent?: string;
+  intent_confidence?: number;
+  total_latency_ms?: number;
+  safety_flags?: number;
+  safety_codes?: string[];
+  suggester_ms?: number;
+}
+
 export interface OmniResponse {
   intent: Intent;
   text: string;
@@ -134,6 +145,7 @@ export interface OmniResponse {
   schedule: Schedule | null;
   recurring_patterns: RecurringPattern[] | null;
   needs_disambiguation: boolean;
+  telemetry?: TelemetryPayload | null;
 }
 
 export interface MoMEntry {

@@ -56,10 +56,26 @@ function prefillChatInput(text: string) {
   el.focus();
 }
 
+export const TOAST_QUEUE_EVENT_NAME = "omni:toast-queue";
+
 export function ToastStack() {
   const [toasts, setToasts] = useState<RenderedToast[]>([]);
   // Per-toast timer handles so we can cancel on manual dismiss.
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Broadcast the queue depth so the dev telemetry overlay can show it.
+  // Fires on every state change, including drops past MAX_VISIBLE.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(TOAST_QUEUE_EVENT_NAME, {
+          detail: { depth: toasts.length },
+        }),
+      );
+    } catch {
+      /* noop */
+    }
+  }, [toasts.length]);
 
   // Clean up all timers on unmount — prevents setState-on-unmounted
   // React dev warnings during fast HMR cycles.
