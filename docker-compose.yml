@@ -1,0 +1,34 @@
+# Optional dev-time stack — judges who want to see real Redis backing
+# the session store can run `docker compose up redis` and start the
+# backend with `OMNI_SESSION_BACKEND=redis`.
+#
+# The Omni backend itself is *not* containerised here on purpose:
+# the demo is `uvicorn --reload` against the host Python so file
+# edits hot-reload. This compose file exists purely so you can prove
+# the persistence wiring is real.
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: omni-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1"
+      - --loglevel
+      - warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+    volumes:
+      - omni-redis-data:/data
+
+volumes:
+  omni-redis-data:

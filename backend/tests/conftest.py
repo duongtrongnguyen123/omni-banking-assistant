@@ -44,6 +44,12 @@ def _bootstrap_test_env() -> None:
     # downloads ~120MB on first run.
     os.environ["OMNI_SKIP_EMBED_BACKFILL"] = "1"
 
+    # Default to the in-memory session backend so we don't accidentally
+    # talk to a Redis instance configured in the dev shell. Tests that
+    # need to exercise the Redis wire path construct
+    # ``FakeRedisSessionStore`` directly.
+    os.environ.setdefault("OMNI_SESSION_BACKEND", "memory")
+
     # Isolate the runtime SQLite database so tests can't clobber the dev
     # seed. The `bootstrap` module honours BANKING_DATA_DIR for both the
     # JSON seed location and the omni.db file.
