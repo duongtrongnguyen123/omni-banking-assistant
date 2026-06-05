@@ -13,6 +13,7 @@ import { ToastStack } from "./components/ToastStack";
 import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
 import { DemoRecorder } from "./components/DemoRecorder";
 import { ExportMenu } from "./components/ExportMenu";
+import { PrivacyBadge } from "./components/PrivacyBadge";
 import { useEventStream } from "./hooks/useEventStream";
 import {
   SlashPalette,
@@ -522,6 +523,7 @@ export default function App() {
               <span className="online-dot" aria-hidden="true" /> Trợ lý đang trực tuyến
             </div>
           </div>
+          <PrivacyBadge />
           {ttsSupported && (
             <button
               type="button"

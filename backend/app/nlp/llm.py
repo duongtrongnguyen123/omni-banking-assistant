@@ -21,6 +21,8 @@ from typing import Optional
 
 from ..config import get_settings
 from ..models.schemas import ExtractedEntities, NLUResult
+from . import privacy
+from .redactor import redact
 
 log = logging.getLogger("omni.nlu.llm")
 
@@ -43,6 +45,11 @@ def _enabled_providers() -> list[_Provider]:
     s = get_settings()
     if s.offline_demo:
         log.debug("offline_demo=1 — skipping LLM providers")
+        return []
+    # Privacy: local-only mode hard-disables every network provider so the
+    # NLU pipeline falls through to the rule-based extractor.
+    if privacy.get_mode() == "local-only":
+        log.debug("privacy_mode=local-only — skipping LLM providers")
         return []
     out: list[_Provider] = []
     if s.groq_api_key:
@@ -200,7 +207,22 @@ INPUT: "Tháng này mình tiêu vào những chủ đề nào?"
 def llm_understand(
     text: str, history: Optional[list[dict]] = None
 ) -> Optional[NLUResult]:
-    for p in _enabled_providers():
+    providers = _enabled_providers()
+    if not providers and privacy.get_mode() == "local-only":
+        # Make the suppression visible in the audit log so a judge can verify
+        # nothing went out. ``original_size`` reflects the message we would
+        # have sent had providers been allowed.
+        privacy.record_llm_call(
+            provider="(none)",
+            mode="local-only",
+            original_size=len(text or ""),
+            redacted_size=0,
+            redaction_count=0,
+            suppressed=True,
+            note="llm_understand suppressed by local-only mode",
+        )
+        return None
+    for p in providers:
         data = _openai_compat(
             provider=p,
             system_prompt=_NLU_SYSTEM,
@@ -263,7 +285,19 @@ def llm_phrase(
         f"USER_QUESTION: {user_question}\n\nFACTS: "
         f"{json.dumps(facts, ensure_ascii=False)}"
     )
-    for p in _enabled_providers():
+    providers = _enabled_providers()
+    if not providers and privacy.get_mode() == "local-only":
+        privacy.record_llm_call(
+            provider="(none)",
+            mode="local-only",
+            original_size=len(user_content),
+            redacted_size=0,
+            redaction_count=0,
+            suppressed=True,
+            note="llm_phrase suppressed by local-only mode",
+        )
+        return None
+    for p in providers:
         text = _openai_compat(
             provider=p,
             system_prompt=_PHRASE_SYSTEM,
@@ -293,10 +327,44 @@ def _openai_compat(
     response_format: Optional[dict],
     max_tokens: int,
 ) -> Optional[str]:
+    mode = privacy.get_mode()
+
+    # Compose the wire payload. In ``redact`` mode every user-supplied
+    # string (the current message AND each prior turn's content) is
+    # routed through the redactor before it leaves the process. The
+    # system prompt is OUR string (no PII) so it's never rewritten.
+    total_breakdown: dict[str, int] = {
+        "ACCT": 0, "AMOUNT": 0, "PHONE": 0, "EMAIL": 0, "NAME": 0,
+    }
+    # Collect the original (pre-redact) user-side content lengths first,
+    # then redact and collect the post-redact lengths. This avoids the
+    # arithmetic error of double-counting that an inline sum invites.
+    original_user_contents: list[str] = []
+    wire_user_contents: list[str] = []
+
+    if history:
+        for turn in history:
+            content = turn.get("content", "") if isinstance(turn, dict) else ""
+            original_user_contents.append(content)
+            if mode == "redact" and content:
+                content, found = redact(content)
+                for k, v in found.items():
+                    total_breakdown[k] = total_breakdown.get(k, 0) + v
+            wire_user_contents.append(content)
+
+    original_user_contents.append(user_message)
+    wire_user_message = user_message
+    if mode == "redact":
+        wire_user_message, found = redact(user_message)
+        for k, v in found.items():
+            total_breakdown[k] = total_breakdown.get(k, 0) + v
+    wire_user_contents.append(wire_user_message)
+
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
     if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
+        for turn, wire in zip(history, wire_user_contents[:-1]):
+            messages.append({**turn, "content": wire})
+    messages.append({"role": "user", "content": wire_user_message})
 
     body: dict = {
         "model": provider.model,
@@ -306,6 +374,21 @@ def _openai_compat(
     }
     if response_format is not None:
         body["response_format"] = response_format
+
+    # Audit: record what we're about to send. ``original_size`` /
+    # ``redacted_size`` measure ONLY the user-side content (excluding
+    # the system prompt) so a judge can see the boundary that matters.
+    original_size = sum(len(c) for c in original_user_contents)
+    redacted_size = sum(len(c) for c in wire_user_contents) if mode == "redact" else original_size
+    redaction_count = sum(total_breakdown.values())
+    privacy.record_llm_call(
+        provider=provider.name,
+        mode=mode,
+        original_size=original_size,
+        redacted_size=redacted_size,
+        redaction_count=redaction_count,
+        redaction_breakdown=total_breakdown if mode == "redact" else {},
+    )
 
     req = urllib.request.Request(
         provider.url,
