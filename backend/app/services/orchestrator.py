@@ -511,8 +511,20 @@ def _handle_insights(
                 pace_phrase = f" — nhanh hơn tháng trước {pace:.1f}×"
             elif pace <= 0.85:
                 pace_phrase = f" — chậm hơn tháng trước {pace:.1f}×"
+        # Lead with the budget/overdraft warning when present — it's the
+        # most actionable bit and easy to bury otherwise.
+        prefix = ""
+        if fcast.get("overdraft_risk"):
+            prefix = (
+                "Cảnh báo: với đà này tài khoản sẽ âm trước cuối tháng — "
+                "bạn cân nhắc giảm chi tiêu nhé. "
+            )
+        elif fcast.get("over_budget"):
+            prefix = "Cảnh báo: đang tiêu vượt mức tháng trước rõ rệt. "
+        elif fcast.get("under_budget"):
+            prefix = "Đang tiêu tiết kiệm hơn tháng trước. "
         lines.append(
-            f"Với đà {format_vnd(fcast['daily_rate'])}/ngày, "
+            f"{prefix}Với đà {format_vnd(fcast['daily_rate'])}/ngày, "
             f"dự kiến cuối tháng tiêu {format_vnd(fcast['projected_total'])} "
             f"(đến giờ {format_vnd(fcast['spent_so_far'])}, "
             f"ngày {fcast['days_elapsed']}/{fcast['days_in_month']}){pace_phrase}. "

@@ -296,8 +296,17 @@ def forecast(user_id: str, when: datetime) -> Optional[dict]:
     projected_eom_balance = current_balance - projected_remaining_spend
 
     pace_ratio: Optional[float] = None
+    over_budget = False
+    under_budget = False
     if last_month_total > 0:
         pace_ratio = round(projected_total / last_month_total, 2)
+        # ±20% band around last month's total — tight enough to flag a real
+        # change of habit, loose enough that month-length variance (29 vs 31
+        # days) doesn't fire on its own.
+        over_budget = pace_ratio >= 1.20
+        under_budget = pace_ratio <= 0.80
+
+    overdraft_risk = projected_eom_balance < 0
 
     return {
         "days_elapsed": days_elapsed,
@@ -310,6 +319,9 @@ def forecast(user_id: str, when: datetime) -> Optional[dict]:
         "projected_eom_balance": int(projected_eom_balance),
         "last_month_total": int(last_month_total),
         "pace_vs_last_month": pace_ratio,
+        "over_budget": over_budget,
+        "under_budget": under_budget,
+        "overdraft_risk": overdraft_risk,
     }
 
 
