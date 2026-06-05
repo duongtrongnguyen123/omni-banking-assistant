@@ -18,6 +18,11 @@ smoke:
 check:
 	cd backend && .venv/bin/python scripts/check.py
 
+# Panic button for pitch day. Wipes runtime DB, re-seeds, pre-trains the
+# suggester, verifies all KB scenarios route correctly. ~10s warm, ~30s cold.
+reset:
+	cd backend && .venv/bin/python scripts/reset_demo.py
+
 # Adversarial NLU corpus — exercises the rule-based fallback that runs
 # when Groq/Gemini are rate-limited. See backend/tests/test_nlu_corpus.py.
 # `-s` lets the end-of-session per-category accuracy report reach stdout.
