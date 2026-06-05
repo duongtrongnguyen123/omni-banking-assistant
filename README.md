@@ -30,23 +30,34 @@ Five layers, exactly as proposed on slide 5:
 
 ## Empirical results
 
-Next-recipient suggester evaluated against the contest dataset and
-against a synthetic proof-of-learning seed (full writeup in
-[`docs/eval.md`](docs/eval.md)):
+Evaluated on **three** datasets so the same models get scored against the
+contest brief AND against real-world public data (full method:
+[`docs/eval.md`](docs/eval.md), [`docs/eval-real-data.md`](docs/eval-real-data.md),
+honest framing: [`docs/honest-pitch.md`](docs/honest-pitch.md)):
 
-- **Hit@K on the contest-supplied 520k-tx dataset** (2,000-row
-  time-ordered hold-out, 1,000 candidate contacts):
-  Hit@1 = 0.002, Hit@3 = 0.005, Hit@5 = 0.007 — at uniform-random
-  baseline. The contest data has no per-counterparty temporal pattern
-  for the model to learn from (every contact is sampled ~equally across
-  the 6 months).
-- **Inflection point** — when the candidate pool is restricted to the
-  user's top-20 most-frequent recipients (the realistic banking-app
-  case), the tree beats the frequency baseline by ~35% relative
-  (Hit@1 0.054 vs 0.040).
-- **On pattern-rich synthetic (proof-of-learning)** (225 tx, 14
-  contacts with weekly / monthly cadence): Hit@1 = 0.36, Hit@3 = 0.82,
-  Hit@5 = 0.89 — the tree+freq hybrid clearly learns the patterns.
+### Suggester — next-recipient ranking
+
+| Dataset | Hit@1 | Hit@5 | Note |
+|---|---|---|---|
+| Contest 520k (uniform 1000-counterparty) | 0.002 | 0.007 | At random baseline — dataset has no learnable temporal signal |
+| **BankSim 594k (real merchant labels)** | **0.81** | **0.97** | Public real-world, non-circular — this is the deployable number |
+| Inflection (top-20 candidate pool) | 0.054 vs 0.040 freq | — | Tree beats freq baseline by ~35% relative |
+
+### Recurring-payment detector
+
+| Dataset | Precision | Recall | F1 |
+|---|---|---|---|
+| **Czech PKDD'99 (real bank, ground-truth `permanent_orders`)** | **0.69** | **0.80** | **0.74** |
+
+Across 5 demo accounts / 2 488 tx / 25 ground-truth orders. The detector
+independently rediscovered 20/25 customer-registered orders from the
+transaction stream alone.
+
+### Fraud Isolation Forest (BankSim 7 200 labelled fraud cases)
+
+- Median anomaly score on fraud rows = **0.58**, on legit rows = **0.22**
+- At threshold 0.5 → **recall 0.75 · precision 0.14 · FP-rate-on-legit 0.11**
+- Strong enough to drive **OTP step-up**, not strong enough to autoblock
 
 Eval runs in <20 s on the full 520k-row contest DB (in-memory after the
 initial SELECT — no per-call SQL).
