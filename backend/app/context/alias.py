@@ -103,6 +103,17 @@ def resolve_recipient(
     #    through to a lexical token-overlap scorer that runs in pure
     #    Python with no network. Both yield a list of candidates the
     #    orchestrator can confirm or ambiguate.
+    #
+    #    GUARD: only run for descriptive queries (≥ 2 meaningful tokens).
+    #    Single-token misses ("ny", "boss" that the user hasn't saved as an
+    #    alias) are typos or unknown aliases — guessing is worse than
+    #    saying "I don't know who that is".
+    meaningful = [
+        t for t in query_stripped.split() if t and t not in _STOP_TOKENS
+    ]
+    if len(meaningful) < 2:
+        return []
+
     rag = _embedding_match(surface, contacts) or _lexical_match(surface, contacts)
     return _dedupe(rag)
 

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routes import banking, chat, ws
+from .routes import banking, chat, suggestions, ws
 
 log = logging.getLogger("omni.main")
 
@@ -29,6 +29,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(banking.router)
+app.include_router(suggestions.router)
 app.include_router(ws.router)
 
 
@@ -53,6 +54,12 @@ def _backfill_embeddings() -> None:
                 "Embedded %s contacts, %s transactions",
                 filled["contacts"], filled["transactions"],
             )
+        # Train the per-user suggester for the demo user. Cheap (<100ms on
+        # 35 rows) — keeps the first /api/suggestions/recipients warm.
+        from .ml.suggester import train_for
+        from .config import get_settings
+
+        train_for(get_settings().demo_user_id)
     except Exception as e:
         log.warning("Embedding backfill skipped: %s", e)
 

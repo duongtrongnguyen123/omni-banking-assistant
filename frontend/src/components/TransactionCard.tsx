@@ -31,8 +31,12 @@ export const TransactionCard = ({
   const warned = draft.flags.some((f) => f.severity === "warn");
   const r = draft.recipient;
   const selectedAccount = draft.source_accounts.find((a) => a.id === sourceAccountId);
+  // Only flag "không đủ số dư" when we know the amount AND it really exceeds
+  // the selected account's balance. Without an amount it's a missing-info
+  // issue, not a balance issue — the missing_amount safety flag below will
+  // surface that separately.
   const selectedBalanceBlocks =
-    selectedAccount && draft.amount != null ? draft.amount > selectedAccount.balance : blocked;
+    !!selectedAccount && draft.amount != null && draft.amount > selectedAccount.balance;
   const canSubmit =
     actionable && !disabled && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
   const cleanOtp = otp.replace(/\D/g, "").slice(0, 6);

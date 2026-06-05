@@ -959,6 +959,16 @@ def _execute_and_record(
         f"({draft.recipient.bank}){otp_note}. Mã giao dịch: {tx.id}."  # type: ignore[union-attr]
     )
     session.append("omni", text)
+
+    # Retrain the next-recipient suggester so the sidebar reflects this
+    # transfer immediately. Lightweight — fully trained on 35 rows in ~50ms.
+    try:
+        from ..ml.suggester import train_for
+
+        train_for(user_id)
+    except Exception:  # never block on the suggestion side-effect
+        pass
+
     return OmniResponse(intent="transfer", text=text)
 
 

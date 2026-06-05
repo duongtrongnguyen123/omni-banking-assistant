@@ -1,4 +1,4 @@
-import type { OmniResponse } from "../types";
+import type { OmniResponse, RecipientSuggestion } from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -56,4 +56,8 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
+  suggestions: (limit = 5) =>
+    jsonFetch<RecipientSuggestion[]>(
+      `/api/suggestions/recipients?limit=${limit}`,
+    ),
 };

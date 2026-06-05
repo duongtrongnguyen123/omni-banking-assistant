@@ -54,6 +54,13 @@ _DESC_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Drop these as a description — they're question/agreement particles, not
+# transaction content ("được ko" / "được không" / "nhé" / "nha" / "nhỉ").
+_DESC_PARTICLE_RE = re.compile(
+    r"^(?:được\s+(?:không|ko|hong|hk)|được|không|ko|nhé|nha|nhỉ|nhe|nha)\s*\??$",
+    re.IGNORECASE,
+)
+
 _CRON_DAY_OF_MONTH = re.compile(
     r"(?:mùng|mung|ngày|ngay)\s*(\d{1,2})\s*(?:hàng|hang|mỗi|moi)\s*tháng",
     re.IGNORECASE,
@@ -136,8 +143,11 @@ _STOP_LOOKAHEAD = (
     r"|đã\b|da\b"
     r"|là\s|la\s"        # "mẹ là bao nhiêu" — stop at "là"
     r"|thì\s|thi\s"      # "anh thì khoẻ không" — stop at "thì"
-    r"|từ\s+trước|tu\s+truoc"  # "gửi bố từ trước đến giờ" — stop at "từ trước"
+    r"|từ\s+trước|tu\s+truoc"  # "gửi bố từ trước đến giờ"
     r"|từ\s+xưa|tu\s+xua"
+    r"|ít\s+tiền|it\s+tien"    # "chuyển ny ít tiền" — qualifier, not part of name
+    r"|một\s+ít|mot\s+it|vài\s+|vai\s+"
+    r"|chút\s|chut\s"
     r"|$"
     r"|[,.?!\n]"
 )
@@ -193,7 +203,13 @@ def extract(text: str) -> ExtractedEntities:
     m = _DESC_RE.search(text)
     if m:
         desc = m.group(1).strip(" ,.;-?!")
-        if not re.search(r"\d", desc):
+        # Reject question / agreement particles ("được ko", "nhé", "nha"…)
+        # and digit-only spans.
+        if (
+            desc
+            and not re.search(r"\d", desc)
+            and not _DESC_PARTICLE_RE.match(desc)
+        ):
             out.description = desc
 
     m = _RECIPIENT_PREP_RE.search(text)

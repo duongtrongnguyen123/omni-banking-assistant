@@ -4,6 +4,7 @@ import type { ChatMessage, Contact, OmniResponse } from "./types";
 import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
+import { SuggestionsPanel } from "./components/SuggestionsPanel";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -20,6 +21,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
+  const [suggestionsKey, setSuggestionsKey] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -118,7 +120,16 @@ export default function App() {
 
   const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) =>
     sendDraftAction(
-      () => api.confirm(draftId, otp, sourceAccountId),
+      async () => {
+        const resp = await api.confirm(draftId, otp, sourceAccountId);
+        // Refresh the suggestion panel — the model retrains on the
+        // backend after every executed transfer, so we bump the key
+        // to refetch and reflect the new ranking.
+        if (!resp.draft || !resp.draft.recipient) {
+          setSuggestionsKey((k) => k + 1);
+        }
+        return resp;
+      },
       "Xác minh OTP",
       draftId,
     );
@@ -242,6 +253,7 @@ export default function App() {
           Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng — Team One
           Last Token.
         </p>
+        <SuggestionsPanel onPick={(t) => setInput(t)} refreshKey={suggestionsKey} />
         <QuickScenarios onPick={send} />
         <div className="sidebar__legend">
           <div>
