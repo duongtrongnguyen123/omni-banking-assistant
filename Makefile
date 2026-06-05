@@ -1,4 +1,4 @@
-.PHONY: install backend frontend smoke check test-nlu dev clean
+.PHONY: install backend frontend smoke check reset test-nlu test verify dev clean
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
@@ -32,6 +32,21 @@ test-nlu:
 # Full backend test suite — NLU corpus + multi-turn integration + sessions.
 test:
 	cd backend && .venv/bin/python -m pytest tests/ -v
+
+# Full pre-pitch verification — check + tests + frontend build, in order.
+# Exits non-zero on first red. Use this before any demo, before any merge,
+# before any push. Total wall time: ~45s warm.
+verify:
+	@echo "[1/3] make check (KB scenarios + safety contract)"
+	@$(MAKE) -s check
+	@echo ""
+	@echo "[2/3] make test (NLU corpus + multi-turn integration)"
+	@cd backend && GROQ_API_KEY= GEMINI_API_KEY= .venv/bin/python -m pytest tests/ -q --tb=line
+	@echo ""
+	@echo "[3/3] frontend build"
+	@cd frontend && npm run build --silent
+	@echo ""
+	@echo "All checks green. Safe to demo."
 
 dev:
 	@echo "Run 'make backend' and 'make frontend' in two terminals."
