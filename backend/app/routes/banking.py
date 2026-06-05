@@ -53,7 +53,7 @@ def schedules(user_id: str = Depends(current_user)):
 
 
 def _summary(contact_id: str) -> dict:
-    c = get_store().contacts.get(contact_id)
+    c = get_store().get_contact(contact_id)
     if not c:
         return {}
     return {

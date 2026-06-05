@@ -19,3 +19,6 @@ frontend/dist/
 
 # Large source-derived dataset — regenerate locally with data/transform_banking_dataset.py
 /data/generated/
+/backend/app/data/omni.db
+/backend/app/data/omni.db-*
+

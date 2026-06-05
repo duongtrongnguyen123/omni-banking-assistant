@@ -628,7 +628,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
                 description = referenced_tx.description
             # If recipient was implied but not matched, take it from the past tx.
             if chosen is None and not candidates:
-                chosen = store.contacts.get(referenced_tx.contact_id)
+                chosen = store.get_contact(referenced_tx.contact_id)
 
     flags = evaluate(
         amount=amount,

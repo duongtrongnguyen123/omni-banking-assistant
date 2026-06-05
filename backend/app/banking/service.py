@@ -114,7 +114,7 @@ def get_history(
 
 def _contact_summary(contact_id: str) -> dict:
     store = get_store()
-    c = store.contacts.get(contact_id)
+    c = store.get_contact(contact_id)
     if not c:
         return {}
     return {
