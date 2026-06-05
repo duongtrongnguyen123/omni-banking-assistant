@@ -5,20 +5,34 @@
     "phone": "0912345678",
     "accounts": [
       {
-        "id": "acc_an_main",
-        "bank": "Omni Bank",
+        "id": "acc_an_vcb",
+        "bank": "Vietcombank",
         "number": "1234567890",
         "balance": 24350000,
         "currency": "VND",
-        "primary": true
+        "primary": true,
+        "kind": "checking",
+        "label": "Thanh toán"
       },
       {
-        "id": "acc_an_savings",
-        "bank": "Omni Bank",
+        "id": "acc_an_tcb",
+        "bank": "Techcombank",
         "number": "1234567891",
-        "balance": 50000000,
+        "balance": 85000000,
         "currency": "VND",
-        "primary": false
+        "primary": false,
+        "kind": "savings",
+        "label": "Tiết kiệm"
+      },
+      {
+        "id": "acc_an_vpb",
+        "bank": "VPBank",
+        "number": "1234567892",
+        "balance": 12500000,
+        "currency": "VND",
+        "primary": false,
+        "kind": "salary",
+        "label": "Lương"
       }
     ]
   }

@@ -135,7 +135,7 @@ def evaluate(
 
 
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
-    """Whether OTP / step-up auth is required to proceed."""
+    """Whether ANY extra auth (biometric or biometric+OTP) is needed."""
     return any(
         f.code in ("large_amount", "new_recipient_large_amount", "amount_above_average")
         and f.severity == "warn"
@@ -143,18 +143,38 @@ def requires_step_up(flags: list[SafetyFlag]) -> bool:
     )
 
 
-def auth_policy(flags: list[SafetyFlag]) -> list[str]:
-    """Risk-based auth policy for MVP.
+# Tiered step-up:
+#  - Tier-0: plain confirm — small known-recipient transfer.
+#  - Tier-1: biometric only — small new-recipient or single warn flag.
+#  - Tier-2: biometric + OTP — large new-recipient or multiple warn flags.
+TIER2_BIO_OTP_THRESHOLD = 20_000_000  # ≥20M → both methods
 
-    Normal transfer: OTP.
-    Warn-level risky transfer: OTP + mock biometric.
-    Blocked transfer: no auth path until the user fixes the blocked state.
+
+def auth_policy(
+    flags: list[SafetyFlag], amount: int | None = None
+) -> list[str]:
+    """Risk-based auth policy.
+
+    Tier 1 (biometric): small new-recipient or single warn flag.
+      Faster — one tap.
+    Tier 2 (biometric + OTP): large amount with warn flag (≥20M),
+      OR multiple warn flags layered.
+      Slower but auditable.
+    Blocked transfer → no auth path until the block is cleared.
     """
     if is_blocked(flags):
         return []
-    if requires_step_up(flags):
-        return ["otp", "biometric"]
-    return ["otp"]
+
+    warn_flags = [f for f in flags if f.severity == "warn"]
+    if not warn_flags:
+        # Plain confirm — no step-up. The UI still asks for a tap.
+        return []
+
+    big_amount = amount is not None and amount >= TIER2_BIO_OTP_THRESHOLD
+    multi_warn = len(warn_flags) >= 2
+    if big_amount or multi_warn:
+        return ["biometric", "otp"]
+    return ["biometric"]
 
 
 def is_blocked(flags: list[SafetyFlag]) -> bool:

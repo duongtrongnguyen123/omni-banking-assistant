@@ -104,6 +104,71 @@ _ACCOUNT_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Source-account hints in the user's utterance.
+# Bank-name forms: "từ tài khoản Vietcombank", "từ VCB", "trừ vào VPBank"
+# Account-kind forms: "từ tài khoản tiết kiệm", "từ savings", "lấy từ lương"
+_SOURCE_BANK_RE = re.compile(
+    r"(?:từ|tu|trừ\s+vào|tru\s+vao|lấy\s+từ|lay\s+tu|dùng|dung)\s+"
+    r"(?:tài\s+khoản|tai\s+khoan|tk|account)?\s*"
+    r"(vietcombank|vcb|techcombank|tcb|vpbank|vpb|mb\s*bank|mbbank|mb|bidv|"
+    r"agribank|acb|tpbank|tp\s*bank|sacombank|vietinbank|ctg)",
+    re.IGNORECASE,
+)
+_SOURCE_KIND_RE = re.compile(
+    r"(?:từ|tu|trừ\s+vào|tru\s+vao|lấy\s+từ|lay\s+tu|dùng|dung)\s+"
+    r"(?:tài\s+khoản|tai\s+khoan|tk|account|tiền|tien)?\s*"
+    r"(tiết\s*kiệm|tiet\s*kiem|savings?|saving|"
+    r"lương|luong|salary|"
+    r"thanh\s*toán|thanh\s*toan|chính|chinh|checking|main)",
+    re.IGNORECASE,
+)
+_INTERNAL_TRANSFER_RE = re.compile(
+    r"chuyển\s+nội\s+bộ|chuyen\s+noi\s+bo|"
+    r"chuyển\s+(?:qua|sang)\s+(?:tài\s+khoản|tai\s+khoan|tk)\s+(?:của\s+mình|cua\s+minh)|"
+    r"chuyển\s+(?:giữa|qua\s+lại)\s+tài\s+khoản|"
+    r"internal\s+transfer",
+    re.IGNORECASE,
+)
+
+
+def _normalize_source_hint(raw: str) -> str:
+    """Map a matched surface form to a canonical key.
+
+    Bank names → lowercase canonical slug (vietcombank, techcombank, vpbank, …).
+    Account kinds → "savings" | "salary" | "checking".
+    """
+    s = raw.lower().strip()
+    s = re.sub(r"\s+", "", s)
+    # diacritic fold for matching
+    folded = _strip_diacritics(s).replace(" ", "")
+    if folded in ("vcb", "vietcombank"):
+        return "vietcombank"
+    if folded in ("tcb", "techcombank"):
+        return "techcombank"
+    if folded in ("vpb", "vpbank"):
+        return "vpbank"
+    if folded in ("mb", "mbbank"):
+        return "mb bank"
+    if folded == "bidv":
+        return "bidv"
+    if folded == "agribank":
+        return "agribank"
+    if folded == "acb":
+        return "acb"
+    if folded in ("tp", "tpbank"):
+        return "tpbank"
+    if folded == "sacombank":
+        return "sacombank"
+    if folded in ("vietinbank", "ctg"):
+        return "vietinbank"
+    if folded in ("tietkiem", "saving", "savings"):
+        return "savings"
+    if folded in ("luong", "salary"):
+        return "salary"
+    if folded in ("thanhtoan", "chinh", "checking", "main"):
+        return "checking"
+    return folded
+
 
 def _clean_recipient(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
@@ -146,6 +211,19 @@ def extract(text: str) -> ExtractedEntities:
     m = _ACCOUNT_HINT_RE.search(text)
     if m:
         out.account_hint = m.group(1)
+
+    # Source-account hints. Bank match wins over kind match because banks are
+    # more specific (3 banks vs ~3 kinds).
+    m = _SOURCE_BANK_RE.search(text)
+    if m:
+        out.source_account_hint = _normalize_source_hint(m.group(1))
+    else:
+        m = _SOURCE_KIND_RE.search(text)
+        if m:
+            out.source_account_hint = _normalize_source_hint(m.group(1))
+
+    if _INTERNAL_TRANSFER_RE.search(text):
+        out.internal_transfer = True
 
     m = _CRON_DAY_OF_MONTH.search(text)
     if m:

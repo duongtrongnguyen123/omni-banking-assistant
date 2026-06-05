@@ -13,6 +13,7 @@ from ..banking.service import create_schedule, get_balance, get_history, next_ru
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint, resolve_by_account_hint
 from ..models.schemas import (
+    Account,
     AuditEvent,
     Contact,
     ContactDraft,
@@ -77,6 +78,67 @@ def _record_audit(
 def _default_transfer_description(user_id: str) -> str:
     user = get_store().get_user(user_id)
     return f"{user.display_name} chuyển tiền"
+
+
+LARGE_AMOUNT_PREFERS_SAVINGS = 10_000_000
+
+
+def _bank_slug(name: str) -> str:
+    return normalize_alias(name).replace(" ", "")
+
+
+def pick_source_account(
+    *,
+    accounts: list[Account],
+    recipient: Optional[Contact],
+    amount: Optional[int],
+    hint: Optional[str],
+) -> tuple[Optional[Account], str]:
+    """Choose the best source account for the transfer.
+
+    Returns (account, reason). Reason is a short human-readable label.
+    Precedence:
+      1. Explicit hint ("từ Vietcombank", "từ tiết kiệm") — always wins.
+      2. Same-bank route — if recipient bank matches one of the user's accounts.
+      3. Large amount (>= 10M) → savings account (kind == "savings").
+      4. Primary checking account.
+    """
+    if not accounts:
+        return None, "no_accounts"
+
+    primary = next((a for a in accounts if a.primary), accounts[0])
+
+    if hint:
+        # Try bank match first
+        hint_slug = _bank_slug(hint)
+        for acc in accounts:
+            if _bank_slug(acc.bank) == hint_slug:
+                return acc, f"user_hint_bank:{acc.bank}"
+        # Then account-kind match
+        for acc in accounts:
+            if acc.kind == hint:
+                return acc, f"user_hint_kind:{acc.kind}"
+
+    if recipient is not None:
+        recipient_slug = _bank_slug(recipient.bank)
+        same_bank = [a for a in accounts if _bank_slug(a.bank) == recipient_slug]
+        # Prefer a same-bank account that also has the funds.
+        if same_bank:
+            if amount is not None:
+                funded = [a for a in same_bank if a.balance >= amount]
+                if funded:
+                    # Among funded same-bank accounts, prefer primary if available.
+                    funded.sort(key=lambda a: (not a.primary,))
+                    return funded[0], "same_bank_no_fee"
+            same_bank.sort(key=lambda a: (not a.primary,))
+            return same_bank[0], "same_bank_no_fee"
+
+    if amount is not None and amount >= LARGE_AMOUNT_PREFERS_SAVINGS:
+        savings = [a for a in accounts if a.kind == "savings"]
+        if savings:
+            return savings[0], "large_amount_uses_savings"
+
+    return primary, "default_primary"
 
 
 def _period_from_temporal(temporal_ref: Optional[str]) -> str:
@@ -260,10 +322,15 @@ def _modify_transfer_draft(
         account=account,
     )
     draft.requires_step_up = requires_step_up(draft.flags)
-    draft.auth_required = auth_policy(draft.flags)
+    draft.auth_required = auth_policy(draft.flags, amount=draft.amount)
     draft.auth_completed = [
         a for a in draft.auth_completed if a in draft.auth_required
     ]
+    draft.same_bank = (
+        draft.recipient is not None
+        and account is not None
+        and _bank_slug(draft.recipient.bank) == _bank_slug(account.bank)
+    )
 
     session_for(user_id).set_draft(draft)
     return OmniResponse(
@@ -621,7 +688,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
     txs = store.transactions_of(user_id)
-    account = store.primary_account(user_id)
+    user = store.get_user(user_id)
     e = nlu.entities
 
     candidates = (
@@ -664,6 +731,21 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     if not description:
         description = _default_transfer_description(user_id)
 
+    # Smart source-account auto-pick (slide deck multi-account feature).
+    picked, pick_reason = pick_source_account(
+        accounts=user.accounts,
+        recipient=chosen,
+        amount=amount,
+        hint=e.source_account_hint,
+    )
+    account = picked or store.primary_account(user_id)
+
+    same_bank = (
+        chosen is not None
+        and account is not None
+        and _bank_slug(chosen.bank) == _bank_slug(account.bank)
+    )
+
     flags = evaluate(
         amount=amount,
         recipient_candidates=candidates,
@@ -687,14 +769,14 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
                 ),
             )
         )
-    required_auth = auth_policy(flags)
+    required_auth = auth_policy(flags, amount=amount)
 
     draft = TransactionDraft(
         id=new_id("d"),
         recipient=chosen,
         candidates=[c.contact for c in candidates] if chosen is None else [],
-        source_account_id=account.id,
-        source_accounts=store.get_user(user_id).accounts,
+        source_account_id=account.id if account else None,
+        source_accounts=user.accounts,
         amount=amount,
         description=description,
         source_text=nlu.raw_text,
@@ -702,6 +784,9 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         flags=flags,
         requires_step_up=requires_step_up(flags),
         auth_required=required_auth,
+        same_bank=same_bank,
+        internal_transfer=e.internal_transfer,
+        auto_pick_reason=pick_reason,
     )
 
     session = session_for(user_id)
@@ -829,10 +914,15 @@ def confirm_draft(
     )
     draft.flags = fresh_flags
     draft.requires_step_up = requires_step_up(fresh_flags)
-    draft.auth_required = auth_policy(fresh_flags)
+    draft.auth_required = auth_policy(fresh_flags, amount=draft.amount)
     draft.auth_completed = [
         a for a in draft.auth_completed if a in draft.auth_required
     ]
+    draft.same_bank = (
+        draft.recipient is not None
+        and account is not None
+        and _bank_slug(draft.recipient.bank) == _bank_slug(account.bank)
+    )
 
     if is_blocked(draft.flags):
         msg = " ".join(f.message for f in draft.flags if f.severity == "block")
@@ -964,10 +1054,15 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
     draft.candidates = []
     draft.flags = flags
     draft.requires_step_up = requires_step_up(flags)
-    draft.auth_required = auth_policy(flags)
+    draft.auth_required = auth_policy(flags, amount=draft.amount)
     draft.auth_completed = [
         a for a in draft.auth_completed if a in draft.auth_required
     ]
+    draft.same_bank = (
+        chosen is not None
+        and account is not None
+        and _bank_slug(chosen.bank) == _bank_slug(account.bank)
+    )
     session.set_draft(draft)
 
     text = _compose_transfer_text(draft, None)
@@ -1012,9 +1107,13 @@ def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
         )
 
     if draft.recipient is not None and draft.amount is not None:
+        suffix = ""
+        if draft.same_bank:
+            suffix = " Cùng ngân hàng — miễn phí giao dịch."
         return (
             f"Đã hiểu! Xác nhận chuyển {format_vnd(draft.amount)} cho "
             f"{draft.recipient.display_name} ({draft.recipient.bank})."
+            + suffix
         )
 
     return "Mình cần thêm thông tin để hoàn tất giao dịch."

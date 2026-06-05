@@ -53,6 +53,9 @@ export interface TransactionDraft {
   requires_step_up: boolean;
   auth_required: AuthMethod[];
   auth_completed: AuthMethod[];
+  same_bank: boolean;
+  internal_transfer: boolean;
+  auto_pick_reason: string | null;
 }
 
 export interface HistoryItem {
@@ -71,6 +74,8 @@ export interface HistoryResult {
   items: HistoryItem[];
 }
 
+export type AccountKind = "checking" | "savings" | "salary" | "other";
+
 export interface Account {
   id: string;
   bank: string;
@@ -78,6 +83,8 @@ export interface Account {
   balance: number;
   currency: string;
   primary: boolean;
+  kind?: AccountKind;
+  label?: string | null;
 }
 
 export interface BalanceResult {

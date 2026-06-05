@@ -17,6 +17,9 @@ Intent = Literal[
 ]
 
 
+AccountKind = Literal["checking", "savings", "salary", "other"]
+
+
 class Account(BaseModel):
     id: str
     bank: str
@@ -24,6 +27,8 @@ class Account(BaseModel):
     balance: int
     currency: str = "VND"
     primary: bool = False
+    kind: AccountKind = "checking"
+    label: Optional[str] = None  # human label e.g. "Lương", "Tiết kiệm"
 
 
 class User(BaseModel):
@@ -80,6 +85,9 @@ class ExtractedEntities(BaseModel):
     # Used by add_contact intent
     bank_name: Optional[str] = None
     alias: Optional[str] = None
+    # Source-account selection via natural language
+    source_account_hint: Optional[str] = None  # "savings" | "checking" | "salary" | bank slug
+    internal_transfer: bool = False  # "chuyển nội bộ" — same-bank intra-account move
 
 
 class NLUResult(BaseModel):
@@ -126,6 +134,9 @@ class TransactionDraft(BaseModel):
     requires_step_up: bool = False
     auth_required: list[Literal["otp", "biometric"]] = Field(default_factory=list)
     auth_completed: list[Literal["otp", "biometric"]] = Field(default_factory=list)
+    same_bank: bool = False  # source bank == recipient bank → no inter-bank fee
+    internal_transfer: bool = False
+    auto_pick_reason: Optional[str] = None  # why this source was chosen
 
 
 class ContactDraft(BaseModel):
