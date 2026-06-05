@@ -25,6 +25,7 @@ def execute_transfer(
     amount: int,
     description: str = "",
     source_account_id: str | None = None,
+    category: str | None = None,
 ) -> Transaction:
     store = get_store()
     acc = (
@@ -40,13 +41,21 @@ def execute_transfer(
         )
         raise ValueError("insufficient_balance")
     store.update_balance(user_id, acc.id, -amount)
+    # Auto-categorise from description when the caller didn't already
+    # decide. Falls back to the legacy "omni" placeholder when the
+    # classifier abstains so existing analytics queries keep working.
+    if category is None:
+        from ..ml.categorizer import categorize as _categorize
+
+        cat, conf = _categorize(description or "Chuyển khoản")
+        category = cat if (cat != "other" and conf >= 0.5) else "omni"
     tx = Transaction(
         id=new_id("t"),
         owner_id=user_id,
         contact_id=recipient.id,
         amount=amount,
         description=description or "Chuyển khoản",
-        category="omni",
+        category=category,
         status="completed",
         created_at=now(),
     )

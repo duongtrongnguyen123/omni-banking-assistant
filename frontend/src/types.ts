@@ -51,6 +51,7 @@ export interface TransactionDraft {
   flags: SafetyFlag[];
   requires_step_up: boolean;
   predicted_amount?: boolean;
+  category?: string | null;
 }
 
 export interface HistoryItem {

@@ -43,6 +43,7 @@ from ..banking.service import create_schedule, get_balance, get_history, next_ru
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
 from ..ml.amount_predictor import predict_amount
+from ..ml.categorizer import categorize as categorize_description
 from ..models.schemas import (
     Contact,
     ContactDraft,
@@ -331,6 +332,9 @@ def _modify_transfer_draft(
         draft.predicted_amount = False
     if e.description:
         draft.description = e.description
+        # Description changed — re-categorise.
+        cat, conf = categorize_description(e.description)
+        draft.category = cat if (cat != "other" and conf >= 0.5) else None
 
     if e.recipient_text:
         candidates = resolve_recipient(e.recipient_text, contacts)
@@ -974,6 +978,17 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         user_id=user_id,
     )
 
+    # Auto-categorise from the description (or, when blank, the raw
+    # user utterance) so the UI can render a category chip and the saved
+    # transaction is grouped correctly in history. Confidence floor of
+    # 0.5 keeps weak TF-IDF guesses from polluting the dataset.
+    category: Optional[str] = None
+    cat_source = description or nlu.raw_text
+    if cat_source:
+        cat, conf = categorize_description(cat_source)
+        if cat != "other" and conf >= 0.5:
+            category = cat
+
     draft = TransactionDraft(
         id=new_id("d"),
         recipient=chosen,
@@ -987,6 +1002,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         flags=flags,
         requires_step_up=requires_step_up(flags),
         predicted_amount=prediction is not None,
+        category=category,
     )
 
     session = session_for(user_id)
@@ -1188,6 +1204,7 @@ def _execute_and_record(
             amount=draft.amount,  # type: ignore[arg-type]
             description=draft.description,
             source_account_id=draft.source_account_id,
+            category=draft.category,
         )
     except ValueError as e:
         text = f"Giao dịch thất bại: {e}"

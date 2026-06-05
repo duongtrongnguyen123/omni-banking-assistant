@@ -136,6 +136,12 @@ class TransactionDraft(BaseModel):
     # extracted from the user's utterance. The UI surfaces this as a chip so
     # the user knows it's a suggestion they can override.
     predicted_amount: bool = False
+    # Auto-inferred category for the draft, derived from the description
+    # text by ``app.ml.categorizer``. ``None`` when no description was
+    # provided or the classifier abstained. The UI renders this as a small
+    # chip below the amount; the value is also stamped onto the Transaction
+    # row when the draft is executed (see banking/service.execute_transfer).
+    category: Optional[str] = None
 
 
 class ContactDraft(BaseModel):

@@ -2,6 +2,54 @@ import { useEffect, useRef, useState } from "react";
 import type { TransactionDraft } from "../types";
 import { formatVND } from "../format";
 
+// Visual metadata for the auto-categoriser chip. Keys must match the
+// categories emitted by `backend/app/ml/categorizer.py:CATEGORIES`.
+// Unknown categories fall back to a neutral grey chip with a generic icon.
+const CATEGORY_META: Record<
+  string,
+  { label: string; emoji: string; bg: string; fg: string }
+> = {
+  food:          { label: "Ăn uống",       emoji: "🍜", bg: "#fff1e6", fg: "#b25a13" },
+  transport:     { label: "Di chuyển",     emoji: "🚗", bg: "#e6f0ff", fg: "#1a4fb0" },
+  groceries:     { label: "Đi chợ",        emoji: "🛒", bg: "#e9f7e6", fg: "#2f7a25" },
+  entertainment: { label: "Giải trí",      emoji: "🎬", bg: "#f3e6ff", fg: "#6b1fb0" },
+  health:        { label: "Sức khoẻ",      emoji: "🩺", bg: "#ffe6ea", fg: "#b01a3a" },
+  rent:          { label: "Nhà cửa",       emoji: "🏠", bg: "#fff4e0", fg: "#a55a00" },
+  utilities:     { label: "Hoá đơn",       emoji: "💡", bg: "#fff8d6", fg: "#7a6800" },
+  gifts:         { label: "Quà / Mừng",    emoji: "🎁", bg: "#ffe0ec", fg: "#b01a6a" },
+  savings:       { label: "Tiết kiệm",     emoji: "💰", bg: "#e0f5ee", fg: "#0f7a55" },
+  family:        { label: "Gia đình",      emoji: "👨‍👩‍👧", bg: "#fde6f4", fg: "#a01a78" },
+  friends:       { label: "Bạn bè",        emoji: "🧋", bg: "#e6f0f7", fg: "#1a5a78" },
+  work:          { label: "Công việc",     emoji: "💼", bg: "#eef0f4", fg: "#3a4255" },
+  other:         { label: "Khác",          emoji: "•",  bg: "#f1f2f4", fg: "#5a5f6a" },
+};
+
+const CategoryChip = ({ category }: { category: string }) => {
+  const meta = CATEGORY_META[category] ?? CATEGORY_META.other;
+  return (
+    <span
+      className="tx-card__category-chip"
+      title={`Tự nhận diện danh mục: ${meta.label}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        marginTop: 6,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 600,
+        background: meta.bg,
+        color: meta.fg,
+        lineHeight: 1.5,
+      }}
+    >
+      <span aria-hidden>{meta.emoji}</span>
+      {meta.label}
+    </span>
+  );
+};
+
 interface Props {
   draft: TransactionDraft;
   onConfirm: (otp: string, sourceAccountId?: string) => void;
@@ -186,6 +234,7 @@ export const TransactionCard = ({
               <span className="tx-card__predicted-chip">đề xuất từ lịch sử</span>
             )}
           </div>
+          {draft.category && <CategoryChip category={draft.category} />}
         </div>
       )}
       {r && (
