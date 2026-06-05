@@ -6,8 +6,37 @@ appropriate side-effects (draft creation, history lookup, schedule creation).
 
 from __future__ import annotations
 
+import contextvars
 import re
+import time
 from typing import Optional
+
+# Per-request telemetry bucket. The chat route sets this to {} when the
+# caller passes ``?dev=1``; the orchestrator and NLU layer fill it as
+# they go. ``None`` means telemetry is OFF — production default.
+_telemetry: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "omni_telemetry", default=None
+)
+
+
+def begin_telemetry() -> dict:
+    """Mark the current async task / request as a telemetry caller.
+
+    Returns the empty dict that will accumulate per-stage measurements.
+    Safe to call multiple times — overwrites any prior bucket.
+    """
+    bucket: dict = {}
+    _telemetry.set(bucket)
+    return bucket
+
+
+def get_telemetry() -> Optional[dict]:
+    """Return the telemetry bucket for the current task, or None."""
+    return _telemetry.get()
+
+
+def end_telemetry() -> None:
+    _telemetry.set(None)
 
 from ..banking.recurring import detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
@@ -82,6 +111,39 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
 
 
 def handle_message(user_id: str, text: str) -> OmniResponse:
+    overall_t0 = time.perf_counter()
+    resp = _handle_message_inner(user_id, text)
+    # Notify the demo recorder if a recording is active. Imported lazily
+    # to avoid a routes ↔ orchestrator cycle and to keep the production
+    # hot path free of an extra import when recorder is unused.
+    try:
+        from ..routes.demo import record_turn
+
+        record_turn(user_id, text, resp)
+    except Exception:  # pragma: no cover — recorder must never break chat
+        pass
+    # Attach telemetry only when the request context opted in.
+    bucket = get_telemetry()
+    if bucket is not None:
+        bucket["total_latency_ms"] = int(
+            (time.perf_counter() - overall_t0) * 1000
+        )
+        # Count safety flags on whatever draft came back.
+        flags = []
+        if resp.draft is not None:
+            flags = resp.draft.flags
+        elif resp.contact_draft is not None:
+            flags = resp.contact_draft.flags
+        elif resp.schedule_draft is not None:
+            flags = resp.schedule_draft.flags
+        bucket["safety_flags"] = len(flags)
+        bucket["safety_codes"] = [f.code for f in flags]
+        resp.telemetry = bucket
+    return resp
+
+
+def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
+    t0 = time.perf_counter()
     text = text.strip()
     session = session_for(user_id)
     # Snapshot history *before* we append the current turn so the LLM
@@ -142,7 +204,15 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
             session.append("omni", cont.text)
             return cont
 
+    nlu_t0 = time.perf_counter()
     nlu = understand(text, history=history_msgs)
+    nlu_ms = int((time.perf_counter() - nlu_t0) * 1000)
+    bucket = get_telemetry()
+    if bucket is not None:
+        bucket["nlu_latency_ms"] = nlu_ms
+        bucket["nlu_source"] = nlu.source
+        bucket["intent"] = nlu.intent
+        bucket["intent_confidence"] = nlu.confidence
 
     # Follow-up modify path: there's an active draft and the user is still
     # talking about transfer — treat as an edit, not a brand-new transaction.
