@@ -123,6 +123,10 @@ class TransactionDraft(BaseModel):
     flags: list[SafetyFlag] = Field(default_factory=list)
     requires_step_up: bool = False
     awaiting_otp: bool = False
+    # True when `amount` was filled in by the history predictor rather than
+    # extracted from the user's utterance. The UI surfaces this as a chip so
+    # the user knows it's a suggestion they can override.
+    predicted_amount: bool = False
 
 
 class ContactDraft(BaseModel):
