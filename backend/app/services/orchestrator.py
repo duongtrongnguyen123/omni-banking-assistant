@@ -379,7 +379,7 @@ def _handle_recurring(
                     "recipient_name": c.display_name if c else None,
                     "recipient_bank": c.bank if c else None,
                 }
-            )
+            ).model_dump(mode="json")
         )
 
     return OmniResponse(intent="recurring", text=body, recurring_patterns=enriched)

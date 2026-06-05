@@ -171,14 +171,7 @@ class OmniResponse(BaseModel):
     history: Optional[dict] = None
     balance: Optional[dict] = None
     schedule: Optional[Schedule] = None
-    recurring_patterns: Optional[list["RecurringPattern"]] = None
+    # Raw dicts to avoid a schemas ↔ banking.recurring ↔ store cycle.
+    # The orchestrator dumps RecurringPattern via model_dump() before attach.
+    recurring_patterns: Optional[list[dict]] = None
     needs_disambiguation: bool = False
-
-
-# Imported at module bottom to avoid a cycle: banking.recurring depends on
-# Transaction (defined above), and OmniResponse needs RecurringPattern for
-# the typed UI field. Re-export here so existing callers can keep importing
-# from app.models.schemas if they want.
-from ..banking.recurring import RecurringPattern  # noqa: E402
-
-OmniResponse.model_rebuild()

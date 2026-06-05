@@ -6,6 +6,5 @@ surface findings and predictions — spend deltas, anomalies, subscription-like
 recurring charges, recipient suggestions, amount predictions.
 """
 
-from .amount_predictor import predict_amount
-
-__all__ = ["predict_amount"]
+# Submodules import lazily — eager imports here would circular-trigger
+# store ↔ banking ↔ schemas on package init.
