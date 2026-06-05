@@ -22,6 +22,7 @@ from ..models.schemas import (
     Transaction,
 )
 from ..nlp.amount import format_vnd
+from .lookalike import detect_lookalike
 
 
 # Global fallback: only triggers when we don't have enough per-recipient
@@ -66,6 +67,7 @@ def evaluate(
     recipient: Optional[Contact],
     transactions: list[Transaction],
     account: Optional[Account],
+    contacts: Optional[list[Contact]] = None,
 ) -> list[SafetyFlag]:
     flags: list[SafetyFlag] = []
 
@@ -96,6 +98,24 @@ def evaluate(
                 message="Bạn muốn chuyển bao nhiêu tiền?",
             )
         )
+
+    # Look-alike check runs whenever we have a chosen recipient AND a contact
+    # list to compare against — independent of amount, since the homograph
+    # attack works at any amount (often a probe with a small one first).
+    if recipient and contacts:
+        twin = detect_lookalike(recipient, contacts)
+        if twin is not None:
+            flags.append(
+                SafetyFlag(
+                    code="lookalike_recipient",
+                    severity="warn",
+                    message=(
+                        f"Tên người nhận trông rất giống {twin.display_name} "
+                        f"({twin.bank}, {twin.account_masked}) — chắc bạn chọn "
+                        "đúng người chứ? Mình sẽ yêu cầu xác thực thêm."
+                    ),
+                )
+            )
 
     # If we have a chosen recipient + amount, run anomaly + balance checks.
     if recipient and amount:
@@ -176,7 +196,11 @@ def evaluate(
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
     """Whether OTP / step-up auth is required to proceed."""
     return any(
-        f.code in ("new_recipient_large_amount", "amount_above_average")
+        f.code in (
+            "new_recipient_large_amount",
+            "amount_above_average",
+            "lookalike_recipient",
+        )
         and f.severity == "warn"
         for f in flags
     )

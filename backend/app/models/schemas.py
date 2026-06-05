@@ -112,6 +112,7 @@ class SafetyFlag(BaseModel):
         "ambiguous_recipient",
         "new_recipient_large_amount",
         "amount_above_average",
+        "lookalike_recipient",
         "insufficient_balance",
         "ok",
     ]
