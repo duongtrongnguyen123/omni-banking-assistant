@@ -125,6 +125,19 @@ _MED: list[tuple[Intent, list[str]]] = [
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
 
+# Branch / ATM intent — substring matchers in the Tier-1 list miss
+# "chi nhánh BIDV gần nhất" / "atm acb o dau" because the bank token
+# sits between the two anchor words. Regex-based pre-check handles
+# arbitrary inter-token bank names and overrides the "gan nhat" /
+# "lan gan nhat" history triggers below.
+_ATM_FINDER_RE = re.compile(
+    r"\b(?:atm|cay\s+atm|may\s+atm|chi\s+nhanh|phong\s+giao\s+dich)"
+    r"\b[\w\s]{0,30}?"
+    r"\b(?:gan|o\s+dau|o\s+gan|gan\s+day|gan\s+nhat|quanh\s+day|nao\s+gan)\b"
+    r"|\btim\s+(?:atm|cay\s+atm|may\s+atm|chi\s+nhanh|phong\s+giao\s+dich)\b",
+    re.IGNORECASE,
+)
+
 
 def classify(text: str) -> tuple[Intent, float]:
     folded = _ascii_fold(text)
@@ -137,6 +150,12 @@ def classify(text: str) -> tuple[Intent, float]:
     # when both LLM providers are 429 (verifier audit 2026-06-06, H-1).
     if _LUU_STK_RE.search(folded):
         return "add_contact", 0.9
+
+    # ATM / branch finder with a bank token in the middle — must run
+    # before the Tier-1 loop so the history "gan nhat" / "lan gan nhat"
+    # keywords don't steal "chi nhánh BIDV gần nhất" away.
+    if _ATM_FINDER_RE.search(folded):
+        return "atm_finder", 0.9
 
     # Tier 1 — first match wins, no scoring needed.
     for intent, kws in _HIGH:
