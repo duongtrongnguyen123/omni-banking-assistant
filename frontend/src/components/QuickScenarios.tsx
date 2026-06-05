@@ -12,7 +12,15 @@ const SCENARIOS: Scenario[] = [
   { label: "KB6 · Định kỳ", text: "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng" },
   { label: "KB7 · Thêm danh bạ", text: "Lưu Lê Mai STK 0123987654 Vietcombank tên gọi tắt chị Mai" },
   { label: "KB8 · Theo chủ đề", text: "Tháng này tôi tiêu vào những chủ đề nào?" },
-  // KB9 ("Lặp lại lần trước") is now a permanent floating CTA above the
+  // Proactive analytics — exercises the insights handler (anomaly hits +
+  // MoM deltas + subscription audit, all rendered as a single Vietnamese
+  // reply with the per-recipient reason from the MAD detector).
+  { label: "KB9 · Phân tích chi tiêu", text: "Có giao dịch nào bất thường không?" },
+  // Goal progress — exercises the goal_status handler (lists every
+  // savings goal with an ASCII ▓░ % bar). Empty-state copy nudges the
+  // user to set_goal if no goals exist yet.
+  { label: "KB10 · Tiến độ mục tiêu", text: "Tiến độ mục tiêu của tôi" },
+  // KB11 ("Lặp lại lần trước") is the permanent floating CTA above the
   // input bar — see RepeatLastCTA.
 ];
 
