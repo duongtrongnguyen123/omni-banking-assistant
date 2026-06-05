@@ -22,6 +22,10 @@ Intent = Literal[
     "set_budget",
     "set_goal",
     "budget_status",
+    # "ATM gần nhất", "tìm cây ATM Vietcombank" — location-aware finder.
+    # Handler returns the OmniResponse.atms field populated from the
+    # mock seed in ``banking/atm.py``.
+    "atm_finder",
     "smalltalk",
     "unknown",
 ]
@@ -104,6 +108,10 @@ class ExtractedEntities(BaseModel):
     # Used by set_goal — the user-supplied name of the savings pot,
     # e.g. "Tết 2027" or "Mua xe".
     goal_name: Optional[str] = None
+    # Used by atm_finder — surface form of the bank the user mentioned
+    # ("Vietcombank", "VCB", "Techcom"). The handler normalises this and
+    # passes it to ``banking.atm.find_nearby``.
+    atm_bank: Optional[str] = None
 
 
 class NLUResult(BaseModel):
@@ -263,6 +271,9 @@ class OmniResponse(BaseModel):
     # The orchestrator dumps RecurringPattern via model_dump() before attach.
     recurring_patterns: Optional[list[dict]] = None
     budget_statuses: Optional[list[BudgetStatus]] = None
+    # Populated by the ``atm_finder`` intent. Each entry has the ATM seed
+    # fields plus ``distance_km`` when the user shared their location.
+    atms: Optional[list[dict]] = None
     needs_disambiguation: bool = False
     # Populated only when the ``?dev=1`` query param flags the request as
     # a telemetry-overlay client. ``None`` in the default UI path so

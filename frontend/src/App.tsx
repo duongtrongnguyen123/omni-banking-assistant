@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client";
-import type { BalanceResult, ChatMessage, Contact, OmniResponse } from "./types";
+import type { AtmHit, BalanceResult, ChatMessage, Contact, OmniResponse } from "./types";
 import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { InsightsCard } from "./components/InsightsCard";
@@ -94,6 +94,35 @@ export default function App() {
     setInput(text);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
+
+  // ATM finder — invoked by <AtmFinderButton /> after navigator.geolocation
+  // resolves. We synthesise an Omni message so the standard <Message /> ->
+  // <AtmCard /> render path picks it up; no extra UI plumbing needed.
+  const onAtmsFromButton = useCallback((atms: AtmHit[], note?: string) => {
+    const message: ChatMessage = {
+      id: newId(),
+      role: "omni",
+      text:
+        note ??
+        (atms.length > 0
+          ? `Tìm thấy ${atms.length} điểm ATM/chi nhánh quanh bạn.`
+          : "Mình chưa tìm được điểm ATM nào — bạn thử mở rộng phạm vi nhé."),
+      response: {
+        intent: "atm_finder",
+        text: "",
+        draft: null,
+        contact_draft: null,
+        schedule_draft: null,
+        history: null,
+        balance: null,
+        schedule: null,
+        recurring_patterns: null,
+        atms,
+        needs_disambiguation: false,
+      },
+    };
+    setMessages((prev) => [...prev, message]);
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -583,6 +612,7 @@ export default function App() {
           refreshKey={suggestRefresh}
           busy={busy}
           onPick={pickRecipient}
+          onAtms={onAtmsFromButton}
         />
 
         <RepeatLastCTA

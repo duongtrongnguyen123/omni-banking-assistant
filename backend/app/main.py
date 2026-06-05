@@ -7,6 +7,7 @@ from .config import get_settings
 from .nlp import privacy as _privacy
 from .routes import (
     admin,
+    atm,
     banking,
     budgets,
     chat,
@@ -73,6 +74,7 @@ app.include_router(ws.router)
 app.include_router(admin.router)
 app.include_router(metrics.router)
 app.include_router(health.router)
+app.include_router(atm.router)
 
 
 @app.on_event("startup")

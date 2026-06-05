@@ -1,0 +1,137 @@
+[
+  {
+    "id": "atm_hn_01",
+    "bank": "Vietcombank",
+    "name": "VCB Hoàn Kiếm",
+    "address": "23 Phan Chu Trinh, Hoàn Kiếm, Hà Nội",
+    "lat": 21.0245,
+    "lng": 105.8579,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hn_02",
+    "bank": "Vietcombank",
+    "name": "VCB Trần Quang Khải",
+    "address": "11B Trần Quang Khải, Hoàn Kiếm, Hà Nội",
+    "lat": 21.0337,
+    "lng": 105.8590,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hn_03",
+    "bank": "BIDV",
+    "name": "BIDV Hai Bà Trưng",
+    "address": "194 Trần Quang Khải, Hoàn Kiếm, Hà Nội",
+    "lat": 21.0316,
+    "lng": 105.8612,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hn_04",
+    "bank": "Techcombank",
+    "name": "TCB Lê Thái Tổ",
+    "address": "70-72 Bà Triệu, Hai Bà Trưng, Hà Nội",
+    "lat": 21.0184,
+    "lng": 105.8497,
+    "hours": "06:00 - 22:00"
+  },
+  {
+    "id": "atm_hn_05",
+    "bank": "MB Bank",
+    "name": "MB Cầu Giấy",
+    "address": "21 Cát Linh, Đống Đa, Hà Nội",
+    "lat": 21.0298,
+    "lng": 105.8329,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hn_06",
+    "bank": "VPBank",
+    "name": "VPB Láng Hạ",
+    "address": "89 Láng Hạ, Đống Đa, Hà Nội",
+    "lat": 21.0167,
+    "lng": 105.8175,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hn_07",
+    "bank": "Agribank",
+    "name": "Agribank Mỹ Đình",
+    "address": "Số 2 Phạm Hùng, Nam Từ Liêm, Hà Nội",
+    "lat": 21.0287,
+    "lng": 105.7799,
+    "hours": "07:00 - 21:00"
+  },
+  {
+    "id": "atm_hn_08",
+    "bank": "ACB",
+    "name": "ACB Nguyễn Chí Thanh",
+    "address": "39 Nguyễn Chí Thanh, Ba Đình, Hà Nội",
+    "lat": 21.0269,
+    "lng": 105.8132,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hcm_01",
+    "bank": "Vietcombank",
+    "name": "VCB Bến Thành",
+    "address": "29 Hàm Nghi, Quận 1, TP.HCM",
+    "lat": 10.7724,
+    "lng": 106.7000,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hcm_02",
+    "bank": "BIDV",
+    "name": "BIDV Lê Lợi",
+    "address": "117 Lê Lợi, Quận 1, TP.HCM",
+    "lat": 10.7740,
+    "lng": 106.7019,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hcm_03",
+    "bank": "Techcombank",
+    "name": "TCB Nguyễn Huệ",
+    "address": "115 Nguyễn Huệ, Quận 1, TP.HCM",
+    "lat": 10.7745,
+    "lng": 106.7038,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hcm_04",
+    "bank": "MB Bank",
+    "name": "MB Phú Nhuận",
+    "address": "180 Phan Đình Phùng, Phú Nhuận, TP.HCM",
+    "lat": 10.7959,
+    "lng": 106.6826,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hcm_05",
+    "bank": "VPBank",
+    "name": "VPB Tân Bình",
+    "address": "85 Hoàng Văn Thụ, Tân Bình, TP.HCM",
+    "lat": 10.8013,
+    "lng": 106.6651,
+    "hours": "06:00 - 22:00"
+  },
+  {
+    "id": "atm_hcm_06",
+    "bank": "Sacombank",
+    "name": "STB Quận 3",
+    "address": "278 Nam Kỳ Khởi Nghĩa, Quận 3, TP.HCM",
+    "lat": 10.7868,
+    "lng": 106.6896,
+    "hours": "24/7"
+  },
+  {
+    "id": "atm_hcm_07",
+    "bank": "Agribank",
+    "name": "Agribank Thủ Đức",
+    "address": "Số 1 Võ Văn Ngân, TP. Thủ Đức, TP.HCM",
+    "lat": 10.8503,
+    "lng": 106.7717,
+    "hours": "07:00 - 21:00"
+  }
+]

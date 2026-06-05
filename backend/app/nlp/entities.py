@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Optional
 
 from ..models.schemas import ExtractedEntities
 from .amount import parse_amount
@@ -173,6 +174,43 @@ _RECIPIENT_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ATM finder — surface-form → canonical bank name. Both the short
+# (VCB, TCB, …) and full ("Vietcombank") forms are common in chat;
+# we normalise to the canonical bank label used in ``data/atms.json`` so
+# the route can filter directly.
+_ATM_BANK_ALIASES: list[tuple[str, str]] = [
+    ("vietcombank", "Vietcombank"),
+    ("vcb", "Vietcombank"),
+    ("techcombank", "Techcombank"),
+    ("techcom", "Techcombank"),
+    ("tcb", "Techcombank"),
+    ("bidv", "BIDV"),
+    ("agribank", "Agribank"),
+    ("mb bank", "MB Bank"),
+    ("mbbank", "MB Bank"),
+    ("mb ", "MB Bank"),
+    (" mb", "MB Bank"),
+    ("vpbank", "VPBank"),
+    ("vpb", "VPBank"),
+    ("acb", "ACB"),
+    ("sacombank", "Sacombank"),
+    ("stb", "Sacombank"),
+]
+
+
+def extract_atm_bank(text: str) -> Optional[str]:
+    """Return the canonical bank name mentioned in ``text``, or ``None``.
+
+    Matched on the diacritic-folded form so "Vietcombank" / "vietcombank"
+    / "VCB" all resolve to ``"Vietcombank"``.
+    """
+    folded = _strip_diacritics(text)
+    for needle, canonical in _ATM_BANK_ALIASES:
+        if needle in folded:
+            return canonical
+    return None
+
+
 _ACCOUNT_HINT_RE = re.compile(
     r"(?:stk|số\s+tài\s+khoản|so\s+tai\s+khoan|account|số\s+cuối|so\s+cuoi)"
     r"\s*(?:là|la)?\s*(\d{3,})",
@@ -265,5 +303,11 @@ def extract(text: str) -> ExtractedEntities:
         sf = m.group(1).strip(" ,.;-?!")
         if sf and not re.search(r"\d", sf):
             out.semantic_filter = sf
+
+    # ATM finder — bank hint is optional ("ATM gần nhất" sends None,
+    # "ATM Vietcombank gần đây" sends the canonical issuer name).
+    bank = extract_atm_bank(text)
+    if bank:
+        out.atm_bank = bank
 
     return out

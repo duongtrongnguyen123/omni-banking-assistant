@@ -1533,3 +1533,68 @@ textarea:focus-visible,
 .budget-draft-card__actions {
   display: flex; gap: 8px; justify-content: flex-end;
 }
+
+/* -------- ATM finder -------- */
+.atm-pill {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--orange, #f59e0b);
+  border-radius: 999px;
+  background: #fff7ed;
+  color: var(--ink, #111);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, transform .05s;
+}
+.atm-pill:hover:not(:disabled) {
+  background: #ffedd5;
+  transform: translateY(-1px);
+}
+.atm-pill:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.atm-card {
+  background: white;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  max-width: 320px;
+}
+.atm-card__title {
+  font-size: 12.5px; font-weight: 700;
+  color: var(--ink, #111);
+  margin-bottom: 6px;
+}
+.atm-card__list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.atm-card__row {
+  border-top: 1px solid var(--line, #eee);
+  padding-top: 6px;
+}
+.atm-card__row:first-child { border-top: none; padding-top: 0; }
+.atm-card__link {
+  display: block; text-decoration: none; color: inherit;
+}
+.atm-card__head {
+  display: flex; align-items: center; gap: 6px;
+}
+.atm-card__emoji { font-size: 14px; }
+.atm-card__name {
+  flex: 1; font-size: 13px; font-weight: 600; color: var(--ink, #111);
+}
+.atm-card__dist {
+  font-size: 11.5px; font-weight: 700; color: var(--orange, #f59e0b);
+}
+.atm-card__meta {
+  font-size: 11px; color: var(--muted, #6b7280);
+  margin-top: 2px;
+}
+.atm-card__addr {
+  font-size: 11.5px; color: #555;
+  margin-top: 1px;
+}

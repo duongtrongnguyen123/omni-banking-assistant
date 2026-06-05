@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { RecipientSuggestion } from "../types";
+import type { AtmHit, RecipientSuggestion } from "../types";
+import { AtmFinderButton } from "./AtmFinderButton";
 
 interface Props {
   refreshKey: number;
   busy: boolean;
   onPick: (text: string) => void;
+  onAtms?: (atms: AtmHit[], note?: string) => void;
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  *
  * Re-fetched whenever `refreshKey` changes (after every executed transfer).
  */
-export const SuggestionStrip = ({ refreshKey, busy, onPick }: Props) => {
+export const SuggestionStrip = ({ refreshKey, busy, onPick, onAtms }: Props) => {
   const [items, setItems] = useState<RecipientSuggestion[]>([]);
 
   useEffect(() => {
@@ -35,7 +37,10 @@ export const SuggestionStrip = ({ refreshKey, busy, onPick }: Props) => {
     };
   }, [refreshKey]);
 
-  if (items.length < 2) return null;
+  // The ATM pill is useful even with no recipient suggestions to show
+  // (sparse data, demo first turn). So keep rendering when at least the
+  // pill or 2+ recipients are available.
+  if (items.length < 2 && !onAtms) return null;
 
   return (
     <div className="suggest-strip" aria-label="Gợi ý người nhận">
@@ -59,6 +64,9 @@ export const SuggestionStrip = ({ refreshKey, busy, onPick }: Props) => {
             </button>
           );
         })}
+        {onAtms && (
+          <AtmFinderButton busy={busy} onAtms={onAtms} />
+        )}
       </div>
     </div>
   );
