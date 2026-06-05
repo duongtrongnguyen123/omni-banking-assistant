@@ -475,17 +475,33 @@ export default function App() {
     setShowClearConfirm(false);
   };
 
+  // Per WCAG 4.1.3 (Status Messages), surface "Omni is replying" as a
+  // polite live-region announcement. Screen readers will hear it when
+  // any reply becomes pending, then hear the resolved text via the
+  // chat log (role="log", aria-live="polite" below).
+  const pendingReply = messages.some(
+    (m) => m.role === "omni" && m.pending === true,
+  );
+
   return (
     <div className="page">
       <div className="phone">
         <ToastStack />
-        <div className="phone__statusbar">9:41</div>
+        {/*
+          Visually-hidden live region. Announces transient AT-only
+          status without affecting layout. The chat log itself is also
+          a live region (role="log") for the actual messages.
+        */}
+        <div className="sr-only" role="status" aria-live="polite">
+          {pendingReply ? "Omni đang trả lời" : ""}
+        </div>
+        <div className="phone__statusbar" aria-hidden="true">9:41</div>
         <header className="phone__header">
           <OmniAvatar size={40} />
           <div className="phone__title">
             <div className="phone__brand">OMNI</div>
             <div className="phone__sub">
-              <span className="online-dot" /> Trợ lý đang trực tuyến
+              <span className="online-dot" aria-hidden="true" /> Trợ lý đang trực tuyến
             </div>
           </div>
           {ttsSupported && (
@@ -494,15 +510,23 @@ export default function App() {
               className={`phone__tts-btn ${ttsEnabled ? "phone__tts-btn--on" : ""}`}
               onClick={() => setTtsEnabled((v) => !v)}
               aria-label={ttsEnabled ? "Tắt giọng đọc" : "Bật giọng đọc"}
+              aria-pressed={ttsEnabled}
               title={ttsEnabled ? "Đang đọc to (vi-VN)" : "Đọc to câu trả lời"}
             >
-              {ttsEnabled ? "🔊" : "🔇"}
+              <span aria-hidden="true">{ttsEnabled ? "🔊" : "🔇"}</span>
             </button>
           )}
-          <div className="user-pill">AN</div>
+          <div className="user-pill" aria-label="Người dùng An">AN</div>
         </header>
 
-        <div className="phone__chat" ref={scrollRef}>
+        <main
+          className="phone__chat"
+          ref={scrollRef}
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-label="Hội thoại với Omni"
+        >
           <div className="day-divider">Hôm nay · 08:14</div>
           {messages.map((m) => (
             <Message
@@ -525,7 +549,7 @@ export default function App() {
               ttsEnabled={ttsEnabled}
             />
           ))}
-        </div>
+        </main>
 
         <SuggestionStrip
           refreshKey={suggestRefresh}
@@ -560,15 +584,24 @@ export default function App() {
                 {formatVND(balancePeek.total)}
               </div>
               <button
+                type="button"
                 className="balance-peek__close"
                 onClick={() => setBalancePeekVisible(false)}
-                aria-label="Đóng"
+                aria-label="Đóng số dư"
               >
-                ×
+                <span aria-hidden="true">×</span>
               </button>
             </div>
           )}
-          <div className="phone__input">
+          <form
+            className="phone__input"
+            role="search"
+            aria-label="Trò chuyện với Omni"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
+          >
             <VoiceButton
               onTranscript={(t) => setInput(t)}
               disabled={busy}
@@ -578,9 +611,10 @@ export default function App() {
               className="phone__contacts-btn"
               onClick={() => setPickerOpen(true)}
               aria-label="Mở danh bạ"
+              aria-haspopup="dialog"
               title="Danh bạ"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 5h18v14H3z" />
                 <path d="M16 3v4" />
                 <path d="M8 3v4" />
@@ -588,6 +622,15 @@ export default function App() {
                 <path d="M8 18c.5-1.5 2-2.5 4-2.5s3.5 1 4 2.5" />
               </svg>
             </button>
+            {/*
+              The input has no visible <label> by design (chat-app
+              convention) — supply an aria-label so AT users get a
+              proper field name. Backed by aria-controls/-expanded so
+              the slash + mention popovers announce as a combobox.
+            */}
+            <label htmlFor={INPUT_DOM_ID} className="sr-only">
+              Nhập câu lệnh cho Omni
+            </label>
             <input
               id={INPUT_DOM_ID}
               ref={inputRef}
@@ -605,16 +648,35 @@ export default function App() {
               placeholder="Nhập câu lệnh, ví dụ: chuyển cho mẹ 2 triệu… (/ để mở lệnh nhanh, @ để chọn danh bạ)"
               disabled={busy}
               autoComplete="off"
+              aria-label="Nhập câu lệnh cho Omni"
+              // role="combobox" + aria-* unlocks predictable AT behavior
+              // for the slash/mention popovers (per ARIA APG combobox
+              // pattern). Only set the listbox/aria-expanded attrs when
+              // a popover is actually open so axe doesn't complain that
+              // the attribute is unsupported on a plain <input>.
+              {...(slashOpen || mentionOpen
+                ? {
+                    role: "combobox",
+                    "aria-autocomplete": "list" as const,
+                    "aria-expanded": true,
+                    "aria-controls": slashOpen
+                      ? "omni-slash-palette"
+                      : "omni-mention-list",
+                  }
+                : {})}
             />
             <button
+              type="submit"
               className="btn btn--primary btn--send"
-              onClick={() => send(input)}
               disabled={busy || !input.trim()}
-              aria-label="Gửi"
+              aria-label="Gửi câu lệnh"
             >
-              ➤
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M22 2L11 13" />
+                <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
             </button>
-          </div>
+          </form>
         </div>
         <ContactPicker
           open={pickerOpen}
@@ -622,10 +684,18 @@ export default function App() {
           onPick={pickRecipient}
         />
         {showClearConfirm && (
-          <div className="clear-confirm" role="dialog" aria-modal="true">
+          <div
+            className="clear-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clear-confirm-title"
+            aria-describedby="clear-confirm-body"
+          >
             <div className="clear-confirm__card">
-              <div className="clear-confirm__title">Xoá toàn bộ đoạn chat?</div>
-              <div className="clear-confirm__body">
+              <div className="clear-confirm__title" id="clear-confirm-title">
+                Xoá toàn bộ đoạn chat?
+              </div>
+              <div className="clear-confirm__body" id="clear-confirm-body">
                 Lịch sử hội thoại hiện tại sẽ bị xoá. Hành động này không thể hoàn tác.
               </div>
               <div className="clear-confirm__actions">
@@ -635,7 +705,7 @@ export default function App() {
                 >
                   Huỷ
                 </button>
-                <button className="btn btn--warn" onClick={confirmClear}>
+                <button className="btn btn--warn" onClick={confirmClear} autoFocus>
                   Xoá
                 </button>
               </div>
@@ -644,7 +714,7 @@ export default function App() {
         )}
       </div>
 
-      <aside className="sidebar">
+      <aside className="sidebar" aria-label="Bảng giới thiệu và kịch bản demo">
         <h1 className="sidebar__brand">
           Omni <span>AI Assistant</span>
         </h1>

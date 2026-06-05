@@ -5,7 +5,10 @@
   --orange-soft: #ffeed8;
   --cream: #fff6e9;
   --ink: #15173a;
-  --muted: #6b6e8a;
+  /* --muted bumped from #6b6e8a → #585b78 so 12.5-px helper text on
+     white passes WCAG AA contrast (4.5:1) instead of failing at 4.06:1.
+     Still visually muted compared to --ink, just darker. */
+  --muted: #585b78;
   --line: #ebe9f4;
   --bg: #f0eff7;
   --user: #2563eb;
@@ -13,6 +16,10 @@
   --good: #16a34a;
   --warn: #f59e0b;
   --bad: #dc2626;
+  /* Focus ring colour chosen to be visible on every surface (orange
+     accent + dark navy phone shell + cream-toned cards). */
+  --focus-ring: #2563eb;
+  --focus-ring-offset: rgba(37, 99, 235, 0.2);
   --radius: 16px;
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   color: var(--ink);
@@ -21,6 +28,87 @@
 * { box-sizing: border-box; }
 
 html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
+
+/* ----------------------------------------------------------------- */
+/* Accessibility utilities + reduced-motion + high-contrast overrides */
+/* ----------------------------------------------------------------- */
+
+/* Screen-reader-only utility. Visually hides content while keeping
+   it discoverable by assistive tech. Cribbed from Tailwind/Bootstrap
+   so it's the standard cross-browser implementation. */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Visible, predictable focus ring on every interactive element. We
+   target :focus-visible so mouse clicks don't leave a sticky outline,
+   but keyboard / screen-reader users always see one (WCAG 2.4.7). */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[role="option"]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-ring-offset);
+}
+
+/* Reduced motion — disable transform/keyframe animations that can
+   trigger vestibular discomfort. The success-flip, confetti burst,
+   voice-pulse, toast slide-in, picker slide-in, and insights pulse
+   are all decorative; the underlying state changes still happen
+   instantly. (WCAG 2.3.3, AAA but cheap and right.) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .tx-success__confetti { display: none !important; }
+  .tx-success { animation: none !important; }
+  .phone__voice-btn--listening { animation: none !important; }
+  .insights-highlight { animation: none !important; }
+}
+
+/* High-contrast mode (Windows + macOS "Increase contrast" toggle).
+   Bumps borders to full ink, darkens muted text to ink, and removes
+   subtle shadows that wash out on high-contrast displays. */
+@media (prefers-contrast: more) {
+  :root {
+    --muted: #2a2c45;
+    --line: #15173a;
+    --focus-ring-offset: rgba(37, 99, 235, 0.45);
+  }
+  .phone { box-shadow: 0 0 0 6px #1d1840 !important; }
+  .bubble--omni { border-color: var(--ink) !important; }
+  .tx-card,
+  .hist-card,
+  .rec-card,
+  .insights-card,
+  .quick-scenarios,
+  .sidebar__legend {
+    border-color: var(--ink) !important;
+  }
+  .suggest-chip,
+  .candidate-row,
+  .picker__row,
+  .quick-chip,
+  .phone__voice-btn,
+  .phone__tts-btn {
+    border-color: var(--ink) !important;
+  }
+}
 
 .page {
   display: grid;

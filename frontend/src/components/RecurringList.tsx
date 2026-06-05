@@ -49,6 +49,7 @@ export const RecurringList = ({ patterns, onSchedule }: Props) => {
                   <span
                     className={confidenceClass(p.confidence)}
                     title={confidenceLabel(p.confidence)}
+                    role="img"
                     aria-label={confidenceLabel(p.confidence)}
                   />
                 </div>

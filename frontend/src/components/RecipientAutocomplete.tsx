@@ -83,7 +83,12 @@ export const RecipientAutocomplete = ({ open, query, onPick, onClose }: Props) =
   if (!open) return null;
 
   return (
-    <div className="autocomplete" role="listbox" aria-label="Gợi ý danh bạ">
+    <div
+      className="autocomplete"
+      id="omni-mention-list"
+      role="listbox"
+      aria-label="Gợi ý danh bạ"
+    >
       {filtered.length === 0 && (
         <div className="autocomplete__empty">Không có danh bạ phù hợp.</div>
       )}
