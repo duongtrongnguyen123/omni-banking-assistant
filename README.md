@@ -28,6 +28,29 @@ Five layers, exactly as proposed on slide 5:
 | 4. Safety | `safety/rules.py` | Rule Engine · JWT (header-based) · "AES-256" stand-in via header pass-through |
 | 5. Banking | `banking/service.py`, `store.py`, `app/data/*.json` | Mock banking sandbox |
 
+## Empirical results
+
+Next-recipient suggester evaluated against the contest dataset and
+against a synthetic proof-of-learning seed (full writeup in
+[`docs/eval.md`](docs/eval.md)):
+
+- **Hit@K on the contest-supplied 520k-tx dataset** (2,000-row
+  time-ordered hold-out, 1,000 candidate contacts):
+  Hit@1 = 0.002, Hit@3 = 0.005, Hit@5 = 0.007 — at uniform-random
+  baseline. The contest data has no per-counterparty temporal pattern
+  for the model to learn from (every contact is sampled ~equally across
+  the 6 months).
+- **Inflection point** — when the candidate pool is restricted to the
+  user's top-20 most-frequent recipients (the realistic banking-app
+  case), the tree beats the frequency baseline by ~35% relative
+  (Hit@1 0.054 vs 0.040).
+- **On pattern-rich synthetic (proof-of-learning)** (225 tx, 14
+  contacts with weekly / monthly cadence): Hit@1 = 0.36, Hit@3 = 0.82,
+  Hit@5 = 0.89 — the tree+freq hybrid clearly learns the patterns.
+
+Eval runs in <20 s on the full 520k-row contest DB (in-memory after the
+initial SELECT — no per-call SQL).
+
 ## All 6 demo scenarios pass
 
 Run `python scripts/smoke.py` after starting the venv (`make smoke`):
