@@ -208,5 +208,40 @@
     "account_number": "0009988776", "account_masked": "*776",
     "aliases": ["thầy yoga", "yoga", "thầy đức"],
     "label": "Yoga studio", "verified": true, "frequent": true
+  },
+  {
+    "id": "c_netflix", "owner_id": "u_an",
+    "display_name": "Netflix Vietnam", "bank": "Vietcombank",
+    "account_number": "0123111222", "account_masked": "*222",
+    "aliases": ["netflix", "phim netflix"],
+    "label": "Streaming", "verified": true, "frequent": true
+  },
+  {
+    "id": "c_spotify", "owner_id": "u_an",
+    "display_name": "Spotify Premium", "bank": "BIDV",
+    "account_number": "3344222111", "account_masked": "*111",
+    "aliases": ["spotify", "nhạc spotify"],
+    "label": "Streaming", "verified": true, "frequent": true
+  },
+  {
+    "id": "c_gym_hn", "owner_id": "u_an",
+    "display_name": "Phòng gym Hà Nội", "bank": "Techcombank",
+    "account_number": "0007654321", "account_masked": "*321",
+    "aliases": ["gym", "phòng gym", "gym hà nội"],
+    "label": "Phòng tập", "verified": true, "frequent": true
+  },
+  {
+    "id": "c_chu_nha", "owner_id": "u_an",
+    "display_name": "Vũ Đình Phong", "bank": "BIDV",
+    "account_number": "3344000999", "account_masked": "*999",
+    "aliases": ["chủ nhà", "bác phong", "nhà trọ"],
+    "label": "Chủ nhà", "verified": true, "frequent": true
+  },
+  {
+    "id": "c_cty_abc", "owner_id": "u_an",
+    "display_name": "Công ty ABC", "bank": "Vietcombank",
+    "account_number": "0123000111", "account_masked": "*111",
+    "aliases": ["công ty abc", "abc", "công ty"],
+    "label": "Công ty", "verified": true, "frequent": false
   }
 ]
