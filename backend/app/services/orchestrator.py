@@ -363,7 +363,23 @@ def _handle_recurring(
         llm_phrase(nlu.raw_text, facts, history=history_msgs)
         or fallback
     )
-    return OmniResponse(intent="recurring", text=body)
+
+    # Surface the structured pattern list so the UI can render a recurring
+    # card. We populate recipient_name / recipient_bank here (rather than in
+    # the detector) so the detector stays a pure function of (tx, ref_now).
+    enriched: list = []
+    for p in top:
+        c = contacts_by_id.get(p.contact_id)
+        enriched.append(
+            p.model_copy(
+                update={
+                    "recipient_name": c.display_name if c else None,
+                    "recipient_bank": c.bank if c else None,
+                }
+            )
+        )
+
+    return OmniResponse(intent="recurring", text=body, recurring_patterns=enriched)
 
 
 def _handle_history(

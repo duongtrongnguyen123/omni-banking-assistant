@@ -446,6 +446,55 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
   font-size: 11.5px; font-weight: 600;
 }
 
+/* -------- recurring patterns -------- */
+
+.rec-card {
+  background: white; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; margin-top: 8px;
+  box-shadow: 0 6px 16px -10px rgba(15,17,58,0.18);
+}
+.rec-card__title {
+  color: var(--muted); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 10px;
+}
+.rec-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.rec-list__item {
+  display: grid; grid-template-columns: 40px 1fr; gap: 12px;
+  padding: 10px; border-radius: 12px; background: #f9f8ff;
+  border: 1px solid var(--line);
+}
+.rec-list__avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--orange-soft); color: var(--orange);
+  display: grid; place-items: center; font-weight: 700; font-size: 15px;
+}
+.rec-list__body { display: grid; gap: 2px; min-width: 0; }
+.rec-list__head {
+  display: flex; align-items: center; gap: 8px; justify-content: space-between;
+}
+.rec-list__name { font-weight: 600; font-size: 14px; color: var(--ink); }
+.rec-list__bank { color: var(--muted); font-size: 12.5px; }
+.rec-list__cadence {
+  font-size: 13px; color: var(--ink); margin-top: 4px; font-weight: 500;
+}
+.rec-list__desc { color: var(--muted); font-size: 12px; font-style: italic; }
+.rec-list__action {
+  margin-top: 8px; align-self: start;
+  appearance: none; border: 1px solid var(--orange);
+  background: var(--orange-soft); color: var(--orange);
+  font-family: inherit; font-weight: 600; font-size: 12.5px;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.rec-list__action:hover { background: var(--orange); color: white; }
+.rec-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+  display: inline-block;
+}
+.rec-dot--good { background: var(--good); box-shadow: 0 0 0 3px rgba(22,163,74,0.18); }
+.rec-dot--warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(245,158,11,0.18); }
+.rec-dot--mute { background: #cbd5e1; box-shadow: 0 0 0 3px rgba(148,163,184,0.18); }
+
 /* -------- sidebar -------- */
 
 .sidebar {

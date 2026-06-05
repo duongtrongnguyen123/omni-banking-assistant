@@ -220,6 +220,10 @@ export default function App() {
               onCancelContact={onCancelContact}
               onConfirmSchedule={onConfirmSchedule}
               onCancelSchedule={onCancelSchedule}
+              onPrefill={(text) => {
+                setInput(text);
+                setTimeout(() => inputRef.current?.focus(), 0);
+              }}
               busy={busy}
               actionableDraftIds={actionableDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
