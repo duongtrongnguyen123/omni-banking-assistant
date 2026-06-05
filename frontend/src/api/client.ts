@@ -1,4 +1,4 @@
-import type { OmniResponse, RecipientSuggestion } from "../types";
+import type { InsightsSummary, OmniResponse, RecipientSuggestion } from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -64,4 +64,5 @@ export const api = {
     jsonFetch<RecipientSuggestion[]>(
       `/api/suggestions/recipients?all=true&limit=200`,
     ),
+  insights: () => jsonFetch<InsightsSummary>("/api/insights/summary"),
 };

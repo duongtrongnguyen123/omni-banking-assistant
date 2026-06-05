@@ -3,6 +3,7 @@ import { api } from "./api/client";
 import type { ChatMessage, Contact, OmniResponse } from "./types";
 import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
+import { InsightsCard } from "./components/InsightsCard";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
@@ -294,6 +295,7 @@ export default function App() {
           Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng — Team One
           Last Token.
         </p>
+        <InsightsCard />
         <QuickScenarios onPick={send} />
         <div className="sidebar__legend">
           <div>
