@@ -14,7 +14,7 @@ from ..banking.service import create_schedule, get_balance, get_history, next_ru
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
 from ..ml.amount_predictor import predict_amount
-from ..ml.insights import anomalies, month_over_month, subscriptions
+from ..ml.insights import anomalies, forecast, month_over_month, subscriptions
 from ..models.schemas import (
     Contact,
     ContactDraft,
@@ -402,7 +402,8 @@ def _handle_insights(
       - ``insight_facet == "spending"``       → MoM only (focused reply).
       - ``insight_facet == "anomalies"``      → anomalies only.
       - ``insight_facet == "subscriptions"``  → subscriptions only.
-      - ``insight_facet is None``             → high-level rollup of all 3.
+      - ``insight_facet == "forecast"``       → month-end projection only.
+      - ``insight_facet is None``             → high-level rollup of all 4.
     """
     # Rule-based facet inference: when the LLM is rate-limited the entity
     # extractor never fills `insight_facet`. Scan the raw text so the chat
@@ -418,6 +419,11 @@ def _handle_insights(
         ):
             facet = "subscriptions"
         elif (
+            "cuoi thang" in folded or "du bao" in folded
+            or "voi da nay" in folded or "se tieu het" in folded
+        ):
+            facet = "forecast"
+        elif (
             "thang truoc" in folded or "so voi" in folded
             or "nhieu hon" in folded or "it hon" in folded
         ):
@@ -427,14 +433,16 @@ def _handle_insights(
     mom = month_over_month(user_id, when) if facet in (None, "spending") else None
     anom = anomalies(user_id, when) if facet in (None, "anomalies") else None
     subs = subscriptions(user_id) if facet in (None, "subscriptions") else None
+    fcast = forecast(user_id, when) if facet in (None, "forecast") else None
 
     # Empty-state guard. If every requested facet came back empty, return
     # a deterministic message instead of letting the LLM stretch for words.
-    if not any(x for x in (mom, anom, subs) if x):
+    if not any(x for x in (mom, anom, subs, fcast) if x):
         empty_msg = {
             "spending": "Mình chưa có đủ dữ liệu để so sánh chi tiêu tháng này với tháng trước.",
             "anomalies": "Mình không thấy giao dịch nào bất thường gần đây.",
             "subscriptions": "Mình chưa thấy khoản đăng ký định kỳ nào.",
+            "forecast": "Tháng này còn quá sớm để dự báo — bạn quay lại sau vài ngày nhé.",
             None: (
                 "Mình chưa thấy dấu hiệu nào nổi bật trong chi tiêu của bạn — "
                 "tài khoản đang đi đúng nhịp."
@@ -454,6 +462,7 @@ def _handle_insights(
         "month_over_month": mom,
         "anomalies": anom,
         "subscriptions": subs,
+        "forecast": fcast,
     }
 
     # Deterministic fallback — independently meaningful when the LLM is down.
@@ -493,6 +502,21 @@ def _handle_insights(
         lines.append(
             f"Bạn có {len(subs)} khoản trông như đăng ký định kỳ "
             f"(ví dụ: {subs[0]['contact']} {format_vnd(subs[0]['typical_amount'])}/tháng)."
+        )
+    if fcast:
+        pace_phrase = ""
+        pace = fcast.get("pace_vs_last_month")
+        if pace is not None:
+            if pace >= 1.15:
+                pace_phrase = f" — nhanh hơn tháng trước {pace:.1f}×"
+            elif pace <= 0.85:
+                pace_phrase = f" — chậm hơn tháng trước {pace:.1f}×"
+        lines.append(
+            f"Với đà {format_vnd(fcast['daily_rate'])}/ngày, "
+            f"dự kiến cuối tháng tiêu {format_vnd(fcast['projected_total'])} "
+            f"(đến giờ {format_vnd(fcast['spent_so_far'])}, "
+            f"ngày {fcast['days_elapsed']}/{fcast['days_in_month']}){pace_phrase}. "
+            f"Tài khoản còn lại dự kiến {format_vnd(fcast['projected_eom_balance'])}."
         )
     fallback = " ".join(lines) if lines else (
         "Mình đã quét chi tiêu của bạn nhưng chưa có điểm nào đặc biệt để báo."

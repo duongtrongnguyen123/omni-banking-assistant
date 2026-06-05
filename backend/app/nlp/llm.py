@@ -79,11 +79,12 @@ Schema:
     "schedule_cron": string|null,      // cron expression if recurring
     "bank_name": string|null,          // e.g., "MB Bank", "Vietcombank", "VCB"
     "alias": string|null,              // pet name to save under, e.g. "anh Nam"
-    "insight_facet": "spending"|"anomalies"|"subscriptions"|null
+    "insight_facet": "spending"|"anomalies"|"subscriptions"|"forecast"|null
     // Used ONLY with intent=insights:
     //   spending      = month-over-month spending trend
     //   anomalies     = unusual / surprising transactions
     //   subscriptions = recurring fixed-price services (Netflix, điện-nước…)
+    //   forecast      = projected month-end spend / remaining balance
   }
 }
 
@@ -187,6 +188,15 @@ INPUT: "Có giao dịch nào bất thường không?"
 
 INPUT: "Mình đang đăng ký dịch vụ gì hàng tháng?"
 {"intent":"insights","confidence":0.9,"entities":{"insight_facet":"subscriptions"}}
+
+INPUT: "Đến cuối tháng mình còn lại bao nhiêu?"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"forecast"}}
+
+INPUT: "Với đà này tháng này tiêu hết bao nhiêu?"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"forecast"}}
+
+INPUT: "Dự báo chi tiêu tháng này"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"forecast"}}
 
 INPUT: "Phân tích chi tiêu của mình"
 {"intent":"insights","confidence":0.85,"entities":{}}

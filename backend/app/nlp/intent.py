@@ -39,6 +39,11 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "dang ky dich vu", "subscription", "thue bao hang thang",
         "co the cat giam", "khoan nao thua",
         "phan tich chi tieu", "phan tich tieu",
+        # forecast facet: "đến cuối tháng còn lại bao nhiêu", "tháng này
+        # mình sẽ tiêu hết bao nhiêu", "dự báo chi tiêu"
+        "den cuoi thang", "cuoi thang con", "du bao chi tieu",
+        "se tieu het", "tieu het bao nhieu thang",
+        "voi muc nay", "voi da nay",
     ]),
     # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
     # hang thang" are queries about existing patterns, not commands to make

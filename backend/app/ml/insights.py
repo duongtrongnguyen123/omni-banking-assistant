@@ -247,6 +247,72 @@ def subscriptions(user_id: str, min_occurrences: int = 3) -> list[dict]:
     return results
 
 
+# ----- 4. month-end forecast ------------------------------------------------
+
+
+def forecast(user_id: str, when: datetime) -> Optional[dict]:
+    """Project month-end spend & remaining balance from the running rate.
+
+    Returns ``None`` when the data is too thin to project — ≤3 days into
+    the month (daily rate is noise) or zero spend so far. Output fields:
+      - ``days_elapsed`` / ``days_in_month``
+      - ``spent_so_far``
+      - ``daily_rate`` (spent_so_far / days_elapsed, integer VND)
+      - ``projected_total`` (daily_rate × days_in_month)
+      - ``projected_remaining_spend`` (projected_total − spent_so_far, ≥0)
+      - ``current_balance`` (sum across all accounts)
+      - ``projected_eom_balance`` (current − projected_remaining_spend)
+      - ``last_month_total`` (sanity baseline; 0 if unknown)
+      - ``pace_vs_last_month`` projected_total / last_month_total; None
+                               when last_month_total == 0
+    """
+    from ..store import get_store
+
+    this_start, this_end = _month_bounds(when)
+    days_in_month = (this_end - this_start).days
+    days_elapsed = max(1, (when - this_start).days + 1)
+    if days_elapsed < 3:
+        return None
+
+    txs = _completed_tx(user_id)
+    spent_so_far = sum(
+        t.amount for t in txs if this_start <= t.created_at < this_end
+    )
+    if spent_so_far <= 0:
+        return None
+
+    last_start, last_end = _prev_month_bounds(when)
+    last_month_total = sum(
+        t.amount for t in txs if last_start <= t.created_at < last_end
+    )
+
+    daily_rate = spent_so_far // days_elapsed
+    projected_total = daily_rate * days_in_month
+    projected_remaining_spend = max(0, projected_total - spent_so_far)
+
+    store = get_store()
+    user = store.get_user_or_none(user_id)
+    current_balance = sum(a.balance for a in user.accounts) if user else 0
+    projected_eom_balance = current_balance - projected_remaining_spend
+
+    pace_ratio: Optional[float] = None
+    if last_month_total > 0:
+        pace_ratio = round(projected_total / last_month_total, 2)
+
+    return {
+        "days_elapsed": days_elapsed,
+        "days_in_month": days_in_month,
+        "spent_so_far": int(spent_so_far),
+        "daily_rate": int(daily_rate),
+        "projected_total": int(projected_total),
+        "projected_remaining_spend": int(projected_remaining_spend),
+        "current_balance": int(current_balance),
+        "projected_eom_balance": int(projected_eom_balance),
+        "last_month_total": int(last_month_total),
+        "pace_vs_last_month": pace_ratio,
+    }
+
+
 # ----- aggregate ------------------------------------------------------------
 
 
@@ -260,5 +326,6 @@ def summary(user_id: str, when: Optional[datetime] = None) -> dict:
         "mom": month_over_month(user_id, when),
         "anomalies": anomalies(user_id, when),
         "subscriptions": subscriptions(user_id),
+        "forecast": forecast(user_id, when),
         "generated_at": when.isoformat(),
     }

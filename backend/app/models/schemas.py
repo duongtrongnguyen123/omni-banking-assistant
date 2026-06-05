@@ -18,7 +18,7 @@ Intent = Literal[
     "unknown",
 ]
 
-InsightFacet = Literal["spending", "anomalies", "subscriptions"]
+InsightFacet = Literal["spending", "anomalies", "subscriptions", "forecast"]
 
 
 class Account(BaseModel):
