@@ -134,6 +134,10 @@ class TransactionDraft(BaseModel):
     amount: Optional[int] = None
     description: str = ""
     source_text: str = ""
+    # Surface form the NLU pulled from the user's utterance (e.g. "anh Tuấn",
+    # "mẹ"). Captured so the orchestrator can persist it as an alias after
+    # the user confirms the transfer — closing the loop on semantic matches.
+    recipient_surface: Optional[str] = None
     reference_transaction_id: Optional[str] = None
     flags: list[SafetyFlag] = Field(default_factory=list)
     requires_step_up: bool = False
