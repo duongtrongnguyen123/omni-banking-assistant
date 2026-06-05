@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import get_settings
-from .models.schemas import Contact, Schedule, Transaction, User
+from .models.schemas import AuditEvent, Contact, Schedule, Transaction, User
 
 
 def _load(path: Path) -> list[dict]:
@@ -38,6 +38,7 @@ class Store:
         self.schedules: dict[str, Schedule] = {
             s["id"]: Schedule(**s) for s in _load(data_dir / "schedules.json")
         }
+        self.audit_events: list[AuditEvent] = []
 
     def get_user(self, user_id: str) -> User:
         return self.users[user_id]
@@ -95,6 +96,15 @@ class Store:
             if c.owner_id == user_id and c.account_number == account_number:
                 return c
         return None
+
+    def add_audit_event(self, event: AuditEvent) -> AuditEvent:
+        with self._lock:
+            self.audit_events.append(event)
+            return event
+
+    def audit_of(self, user_id: str, limit: int = 100) -> list[AuditEvent]:
+        items = [e for e in self.audit_events if e.user_id == user_id]
+        return list(reversed(items[-limit:]))
 
 
 _store: Store | None = None

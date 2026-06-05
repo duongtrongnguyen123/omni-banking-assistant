@@ -37,6 +37,8 @@ export interface SafetyFlag {
   message: string;
 }
 
+export type AuthMethod = "otp" | "biometric";
+
 export interface TransactionDraft {
   id: string;
   recipient: Contact | null;
@@ -49,6 +51,8 @@ export interface TransactionDraft {
   reference_transaction_id: string | null;
   flags: SafetyFlag[];
   requires_step_up: boolean;
+  auth_required: AuthMethod[];
+  auth_completed: AuthMethod[];
 }
 
 export interface HistoryItem {

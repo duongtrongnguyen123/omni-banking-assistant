@@ -47,7 +47,7 @@ export const RecentRecipients = ({
     setOpen(true);
     if (items === null) {
       try {
-        const data = await api.recentRecipients(5);
+        const data = await api.recentRecipients(10);
         setItems(data);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -77,38 +77,45 @@ export const RecentRecipients = ({
       {open && (
         <div className="recents__popover" role="listbox">
           <div className="recents__title">Người nhận gần đây</div>
-          {items === null && !error && (
-            <div className="recents__empty">Đang tải…</div>
-          )}
-          {error && <div className="recents__empty">Lỗi: {error}</div>}
-          {items && items.length === 0 && (
-            <div className="recents__empty">Chưa có giao dịch nào.</div>
-          )}
-          {items?.map((r) => {
-            const initial = r.contact.display_name.trim().charAt(0).toUpperCase();
-            return (
-              <button
-                key={r.contact.id}
-                type="button"
-                className="recents__row"
-                onClick={() => pick(r)}
-                role="option"
-              >
-                <span className="recents__avatar">{initial}</span>
-                <span className="recents__meta">
-                  <span className="recents__name">
-                    {r.contact.display_name}
-                    {r.contact.label && (
-                      <span className="recents__label">· {r.contact.label}</span>
-                    )}
+          <div className="recents__list">
+            {items === null && !error && (
+              <div className="recents__empty">Đang tải…</div>
+            )}
+            {error && <div className="recents__empty">Lỗi: {error}</div>}
+            {items && items.length === 0 && (
+              <div className="recents__empty">Chưa có giao dịch nào.</div>
+            )}
+            {items?.map((r) => {
+              const initial = r.contact.display_name
+                .trim()
+                .charAt(0)
+                .toUpperCase();
+              return (
+                <button
+                  key={r.contact.id}
+                  type="button"
+                  className="recents__row"
+                  onClick={() => pick(r)}
+                  role="option"
+                >
+                  <span className="recents__avatar">{initial}</span>
+                  <span className="recents__meta">
+                    <span className="recents__name">
+                      {r.contact.display_name}
+                      {r.contact.label && (
+                        <span className="recents__label">
+                          · {r.contact.label}
+                        </span>
+                      )}
+                    </span>
+                    <span className="recents__sub">
+                      {r.contact.bank} {r.contact.account_masked}
+                    </span>
                   </span>
-                  <span className="recents__sub">
-                    {r.contact.bank} {r.contact.account_masked}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

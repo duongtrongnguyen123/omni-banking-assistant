@@ -118,12 +118,24 @@ export default function App() {
     }
   };
 
-  const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) =>
-    sendDraftAction(
-      () => api.confirm(draftId, otp, sourceAccountId),
-      "Xác minh OTP",
-      draftId,
-    );
+  const onConfirm = (
+    draftId: string,
+    payload: {
+      otp?: string;
+      biometric_verified?: boolean;
+      source_account_id?: string;
+    },
+  ) => {
+    const label =
+      payload.otp && payload.biometric_verified
+        ? "Xác minh OTP + sinh trắc học"
+        : payload.biometric_verified
+          ? "Xác minh sinh trắc học"
+          : payload.otp
+            ? "Xác minh OTP"
+            : "Xác nhận";
+    return sendDraftAction(() => api.confirm(draftId, payload), label, draftId);
+  };
 
   const onCancel = (draftId: string) =>
     sendDraftAction(() => api.cancel(draftId), "Huỷ", draftId);
