@@ -118,6 +118,36 @@ export interface OmniResponse {
   needs_disambiguation: boolean;
 }
 
+export interface MoMEntry {
+  this: number;
+  last: number;
+  delta_pct: number;
+}
+
+export interface AnomalyItem {
+  tx_id: string;
+  amount: number;
+  contact_name: string;
+  z_score: number;
+  reason: string;
+}
+
+export interface SubscriptionItem {
+  contact: string;
+  contact_id: string;
+  typical_amount: number;
+  occurrences: number;
+  last_seen: string;
+  median_gap_days: number;
+}
+
+export interface InsightsSummary {
+  mom: Record<string, MoMEntry>;
+  anomalies: AnomalyItem[];
+  subscriptions: SubscriptionItem[];
+  generated_at: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "omni";

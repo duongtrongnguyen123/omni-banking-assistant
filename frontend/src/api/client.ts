@@ -1,4 +1,4 @@
-import type { OmniResponse } from "../types";
+import type { InsightsSummary, OmniResponse } from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -56,4 +56,5 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
+  insights: () => jsonFetch<InsightsSummary>("/api/insights/summary"),
 };
