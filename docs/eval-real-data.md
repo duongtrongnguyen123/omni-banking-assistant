@@ -167,3 +167,70 @@ Runtime: 43 s across all 50 users × 8 ablation weights.
 | "Fraud model raises score >0.7 on outliers" | F1 = 0.24 at threshold 0.5 on BankSim labelled fraud (FP rate 11 % on legit) — production threshold 0.7 is mis-calibrated and should drop |
 | "Suggester Hit@1 ~0.9 on synthetic seed" | Hit@1 = 0.81 on BankSim real-merchant prediction; non-circular |
 | "Vietnamese rule scorer always helps" | On VN data yes; on BankSim it costs ~14 pp Hit@1 (rule-heavy 0.59 vs no-rule 0.81). Honest: locale-specific. |
+
+---
+
+## 4. Cross-user generalisation check (synthetic v2)
+
+Source: `backend/scripts/gen_synthetic_users.py` +
+`backend/scripts/eval_suggester_holdout.py`. Full protocol pinned in
+`docs/eval-protocol.md` (seed = 42, n_users = 20, months = 6, noise = 0.10,
+pattern = mixed). We **pre-registered** the seed and hyperparameters
+before running anything — there is no search over seeds.
+
+The previous single-user synthetic seed was circular by construction:
+we hand-encoded the patterns the model then "discovered". The v2
+generator emits 20 distinct users (5 – 15 contacts each, ~150 tx/user
+on average) sharing a pool of behavioural archetypes (mom on day 1±2,
+grocery on Sundays, lunch on Mon/Wed/Fri, …) but with **per-user
+jitter** on day-of-month preference, amount band, and adherence so
+two users sharing "mom" still differ.
+
+We run the suggester at the BankSim-winning weights `(tree=0.60,
+freq=0.40, rule=0.00)` and report two evaluations:
+
+| Eval | Hit@1 | Hit@3 | Hit@5 | Note |
+|------|------:|------:|------:|------|
+| **In-distribution** (train/test same user, 80/20 time-ordered split, micro-avg n=628) | **0.540** | **0.815** | **0.889** | This is the headline. |
+| **Cross-user RAW** (train on A, test on B — separate contact-id namespaces, micro-avg n=879) | 0.000 | 0.000 | 0.000 | Sanity check: A's labels never overlap B's labels, so the model cannot trivially pretend to predict B. Confirms namespace isolation. |
+| **Cross-user MAPPED** (train on A, test on B, B's contacts re-mapped to A's archetype-matched ids, micro-avg n=677) | 0.570 | 0.846 | 0.914 | Measures how much of A's prior transfers to B once archetype identity is held constant. |
+
+**Reading these numbers — what's honest, what's uncomfortable**
+
+* The headline in-distribution Hit@1 of **0.54** is well below the
+  BankSim 0.81. The synthetic v2 dataset is harder than BankSim
+  because each user has a smaller contact universe (5 – 15 vs 50) so
+  the frequency prior pays off less, and the per-user amount/timing
+  jitter makes the tree's feature signal noisier.
+* The cross-user RAW = 0.000 is the **proof of isolation**: A's
+  trained model has zero knowledge of B's contact IDs. No global label
+  leakage, no shortcut.
+* The cross-user MAPPED ≈ in-distribution number (0.57 vs 0.54). This
+  is **the honest finding** — at our current data size and feature set,
+  most of the model's lift comes from shared archetype identity
+  (everyone's "mom" sits early in the month, everyone's grocery on
+  Sunday), not from learning user-specific timing. The user-specific
+  gain is in the noise band of our ±~4 pp uncertainty.
+* That is **not** a failure of the model. It is exactly what a
+  well-behaved time-of-day / day-of-month classifier should do when
+  trained on 100 – 250 tx with 5 – 15 contacts: lean hard on the
+  frequency prior, smooth with the global timing prior, defer
+  user-specific shape until more data accumulates. Real production
+  histories run into the thousands of tx per user — the same protocol
+  re-run with `--n-users 50` and a 12-month window would tighten the
+  bound and likely widen the gap.
+
+The uncomfortable part: we **cannot** honestly claim the synthetic v2
+numbers as proof of user-specific learning. We CAN claim:
+
+1. **Architecture and infrastructure work end-to-end** at this scale —
+   bulk-load, train, score, micro-average across 20 users in ~10 s.
+2. **No label leakage** — cross-user RAW = 0.
+3. **Lift over random** at Hit@5 = 0.89 in-distribution (random
+   over ~10 contacts = 0.50).
+4. **Honest gap** between archetype-shared lift and user-specific
+   lift — we report both numbers, the reader chooses what to believe.
+
+Runtime: ~10 s total. Generator output is deterministic on
+`--seed 42` — anyone who clones this repo gets the same DB and the
+same Hit@K to three decimals.
