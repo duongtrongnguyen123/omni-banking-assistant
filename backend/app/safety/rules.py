@@ -66,6 +66,7 @@ def evaluate(
     recipient: Optional[Contact],
     transactions: list[Transaction],
     account: Optional[Account],
+    user_id: Optional[str] = None,
 ) -> list[SafetyFlag]:
     flags: list[SafetyFlag] = []
 
@@ -169,6 +170,17 @@ def evaluate(
                     ).replace(",", "."),
                 )
             )
+
+    # Push toast for anomaly warnings so the user sees the heads-up
+    # even if the chat scroll has moved past the safety message. Only
+    # fires when we know which user this is (the orchestrator passes
+    # ``user_id``; callers that don't need toasts can omit it).
+    if user_id:
+        from ..services import events as _events  # local import: avoid cycle
+
+        for f in flags:
+            if f.code == "amount_above_average" and f.severity == "warn":
+                _events.publish_anomaly_warning(user_id, message=f.message)
 
     return flags
 

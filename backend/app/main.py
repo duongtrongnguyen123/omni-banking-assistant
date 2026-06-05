@@ -65,6 +65,64 @@ def _backfill_embeddings() -> None:
         log.warning("Embedding backfill skipped: %s", e)
 
 
+@app.on_event("startup")
+async def _start_schedule_ticker() -> None:
+    """Background coroutine: every 60s, scan schedules whose ``next_run``
+    is due and publish a ``schedule_fired`` toast for the owner.
+
+    Mock-only — we don't actually execute the transfer here (that's
+    the user's job via the confirm card). The toast is a "hey, the
+    schedule you set up is firing now" nudge. Skipped under
+    ``OMNI_DISABLE_SCHEDULE_TICK=1`` so tests don't see surprise
+    events.
+    """
+    import asyncio
+    import os
+
+    if os.environ.get("OMNI_DISABLE_SCHEDULE_TICK") == "1":
+        return
+
+    interval = int(os.environ.get("OMNI_SCHEDULE_TICK_SECONDS", "60"))
+
+    async def _tick() -> None:
+        from datetime import datetime, timezone
+
+        from .services import events as _events
+        from .store import get_store
+
+        seen: set[tuple[str, str]] = set()  # (schedule_id, isoformat)
+        # The demo is single-user. When we add real auth, swap this for
+        # a ``store.all_user_ids()`` scan and the rest of the loop is
+        # unchanged.
+        demo_user = get_settings().demo_user_id
+        while True:
+            try:
+                store = get_store()
+                ref = datetime.now(timezone.utc)
+                for user_id in [demo_user]:
+                    for sched in store.schedules_of(user_id):
+                        if not sched.active:
+                            continue
+                        if sched.next_run > ref:
+                            continue
+                        key = (sched.id, sched.next_run.isoformat())
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        contact = store.get_contact(sched.contact_id)
+                        name = contact.display_name if contact else "người nhận"
+                        _events.publish_schedule_fired(
+                            user_id,
+                            recipient_name=name,
+                            amount_vnd=sched.amount,
+                        )
+            except Exception as e:  # pragma: no cover — keep ticker alive
+                log.warning("schedule tick error: %s", e)
+            await asyncio.sleep(interval)
+
+    asyncio.create_task(_tick())
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "omni-api"}

@@ -278,6 +278,7 @@ def _modify_transfer_draft(
         recipient=draft.recipient,
         transactions=txs,
         account=account,
+        user_id=user_id,
     )
     draft.requires_step_up = requires_step_up(draft.flags)
 
@@ -900,6 +901,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         recipient=chosen,
         transactions=txs,
         account=account,
+        user_id=user_id,
     )
 
     draft = TransactionDraft(
@@ -1062,6 +1064,7 @@ def confirm_draft(
         recipient=draft.recipient,
         transactions=txs,
         account=account,
+        user_id=user_id,
     )
     draft.flags = fresh_flags
     draft.requires_step_up = requires_step_up(fresh_flags)
@@ -1174,6 +1177,7 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
         recipient=chosen,
         transactions=txs,
         account=account,
+        user_id=user_id,
     )
 
     draft.recipient = chosen

@@ -8,7 +8,14 @@ from statistics import mean
 from typing import Optional
 
 from ..models.schemas import Contact, Schedule, Transaction
+from ..services import events
 from ..store import get_store, new_id, now
+
+# Threshold below which we surface a "balance low" push notification
+# after every transfer. Keeps the toast non-spammy by only firing once
+# the user's primary account drops under 100k VND — at that point a
+# heads-up is genuinely useful (typical Omni demo balance is 24M).
+_BALANCE_LOW_THRESHOLD = 100_000
 
 
 def execute_transfer(
@@ -26,6 +33,11 @@ def execute_transfer(
         else store.primary_account(user_id)
     )
     if amount > acc.balance:
+        # Push notification so the user sees the failure even if they've
+        # navigated away from the chat. Mirrors the chat error string.
+        events.publish_transfer_failed(
+            user_id, reason=f"Số dư không đủ để chuyển {amount:,}đ.".replace(",", ".")
+        )
         raise ValueError("insufficient_balance")
     store.update_balance(user_id, acc.id, -amount)
     tx = Transaction(
@@ -38,7 +50,17 @@ def execute_transfer(
         status="completed",
         created_at=now(),
     )
-    return store.add_transaction(tx)
+    saved = store.add_transaction(tx)
+
+    # Fire-and-forget toasts. Both are non-blocking and fail-open inside
+    # the event bus, so they can't break the transfer happy path.
+    events.publish_transfer_success(
+        user_id, recipient_name=recipient.display_name, amount_vnd=amount
+    )
+    remaining = acc.balance - amount
+    if remaining < _BALANCE_LOW_THRESHOLD:
+        events.publish_balance_low(user_id, balance_vnd=remaining)
+    return saved
 
 
 def get_balance(user_id: str) -> dict:
@@ -277,7 +299,14 @@ def create_schedule(
         next_run=_next_run_for(cron, now()),
         active=True,
     )
-    return store.add_schedule(sched)
+    saved = store.add_schedule(sched)
+    events.publish_schedule_created(
+        user_id,
+        recipient_name=recipient.display_name,
+        amount_vnd=amount,
+        cron=cron,
+    )
+    return saved
 
 
 def next_run_for(cron: str, ref: datetime) -> datetime:

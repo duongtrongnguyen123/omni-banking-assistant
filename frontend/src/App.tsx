@@ -9,6 +9,8 @@ import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
+import { ToastStack } from "./components/ToastStack";
+import { useEventStream } from "./hooks/useEventStream";
 import {
   SlashPalette,
   buildMessageFromSlash,
@@ -463,6 +465,8 @@ export default function App() {
     isInputEmpty: () => input.length === 0,
   });
 
+  useEventStream("u_an");
+
   const confirmClear = () => {
     setMessages([WELCOME]);
     setClosedDraftIds(new Set());
@@ -474,6 +478,7 @@ export default function App() {
   return (
     <div className="page">
       <div className="phone">
+        <ToastStack />
         <div className="phone__statusbar">9:41</div>
         <header className="phone__header">
           <OmniAvatar size={40} />
