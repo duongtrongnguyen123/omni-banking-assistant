@@ -42,17 +42,28 @@ Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 - ✅ **@-mention recipient autocomplete** in chat input
 - ✅ **Redis session backend** with fakeredis fallback + 5-min draft TTL
 - ✅ **Real-time toast notifications** via `/ws/events` — 6 event kinds, per-user queue
+- ✅ **Smart categorizer** — auto-categorize tx from VN description (P=0.95, <2ms)
+- ✅ **Exports** — CSV / sao kê HTML / tax-year JSON
+- ✅ **a11y** — WCAG 2.1 AA, focus rings, reduced-motion, sr-only live region
+- ✅ **Demo resilience** — offline mode, telemetry overlay, recorder, canonical demo JSONL
+- ✅ **Privacy mode** — `OMNI_PRIVACY_MODE={off,redact,local-only}`, 5 PII classes, LLM audit ring buffer
+- ✅ **Budgets + savings goals** — 4 new intents, monthly envelopes, progress tracking
+- ✅ **Metrics + Prometheus** — 7 metric series, `/api/metrics` exposition, live dashboard
+- ✅ **Cross-user synth eval** — pre-registered protocol, in-dist 0.54 / RAW 0.00 / mapped 0.57
 
 ### Quality gates (all green)
 
 | Gate | What |
 |------|------|
-| `make check` | 18/18 assertions pass (KB scenarios, safety contract, injection containment) |
+| `make check` | 19/19 assertions pass (KB scenarios, safety contract, injection containment, toast events) |
 | `make test-nlu` | 200/200 NLU corpus pass (after honoring 12 xfail) |
-| `make test` | + 10 multi-turn integration + 14 Redis persistence pass |
+| `make test` | 310+ tests pass — NLU corpus, multi-turn, Redis persistence, events, exports, categorizer, redactor, LLM audit, metrics, budgets, goals |
 | `make smoke` | All 8 KB demo scenarios pass with LLMs deliberately disabled |
+| `make verify` | Single-command pre-pitch gate (check + tests + build, ~45s warm) |
+| `make reset` | Pitch-day panic button (wipes runtime DB, re-seeds, ~10s warm) |
 | GitHub Actions CI | Import sanity + smoke + NLU + frontend build on every push |
-| Frontend build | Clean tsc + vite, 187 kB JS / 59 kB gzipped |
+| Frontend build | Clean tsc + vite, 218 kB JS / 68 kB gzipped |
+| Backend routes | 33+ (chat, transactions, schedules, contacts, history, suggestions, insights, recurring, exports, demo, budgets, goals, admin, metrics, ws/chat, ws/events) |
 
 ### Honest empirical results
 
