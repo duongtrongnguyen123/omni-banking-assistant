@@ -78,6 +78,7 @@ from ..store import get_store, new_id, now
 # here is the only thing that needs touching. Keeps the long handler body
 # out of the way of in-flight merges to this file.
 from .insights_handler import handle_insights as _handle_insights
+from .goal_status_handler import handle_goal_status as _handle_goal_status
 
 # In-memory budget / goal draft stash. We deliberately don't push these
 # through the session backend (Redis-compatible) for two reasons:
@@ -470,6 +471,9 @@ def _dispatch_intent(
 
     if nlu.intent == "budget_status":
         return _handle_budget_status(user_id, nlu)
+
+    if nlu.intent == "goal_status":
+        return _handle_goal_status(user_id, nlu, history_msgs)
 
     if nlu.intent == "transfer":
         return _handle_transfer(user_id, nlu)

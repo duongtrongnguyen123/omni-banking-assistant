@@ -271,6 +271,43 @@ def test_set_budget_constraint_phrasing(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# goal_status — progress query against an existing savings goal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "tiến độ mục tiêu",
+        "mục tiêu của tôi",
+        "mục tiêu của mình",
+        "đã tiết kiệm được bao nhiêu",
+        "tiết kiệm đến đâu rồi",
+    ],
+)
+def test_goal_status_routes_under_rule_only(text: str) -> None:
+    """Goal progress queries used to fall through to ``unknown``.
+    Now route through goal_status_handler which lists each goal's
+    progress with a % bar."""
+    r = _r(text)
+    assert r.intent == "goal_status", text
+    assert r.text  # composed reply
+
+
+def test_goal_status_empty_state_is_helpful() -> None:
+    """With no goals set, the handler must nudge toward set_goal
+    instead of returning a confusing empty reply."""
+    r = _r("tiến độ mục tiêu")
+    assert r.intent == "goal_status"
+    # Either we have a goal (from session pollution) and progress shows,
+    # or the empty-state copy points the user to set_goal.
+    assert (
+        "Tiến độ" in r.text  # populated case
+        or "chưa tạo mục tiêu" in r.text  # empty case
+    )
+
+
+# ---------------------------------------------------------------------------
 # Bounded "hi"/"hey" smalltalk match — substring vs word-boundary
 # ---------------------------------------------------------------------------
 

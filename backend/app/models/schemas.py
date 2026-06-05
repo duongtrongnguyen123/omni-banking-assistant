@@ -22,6 +22,10 @@ Intent = Literal[
     "set_budget",
     "set_goal",
     "budget_status",
+    # Goal progress query — "tiến độ mục tiêu Tết", "đã tiết kiệm được
+    # bao nhiêu", "mục tiêu của tôi". Parallel to budget_status: reads
+    # the savings_goals table and reports % progress per goal.
+    "goal_status",
     # "ATM gần nhất", "tìm cây ATM Vietcombank" — location-aware finder.
     # Handler returns the OmniResponse.atms field populated from the
     # mock seed in ``banking/atm.py``.

@@ -95,6 +95,20 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "luu danh ba", "them danh ba", "luu lien lac", "luu so",
         "them lien he",
     ]),
+    # goal_status — progress query for an existing savings goal. Goes
+    # *before* the smalltalk row in Tier-1 so "muc tieu cua toi" can't
+    # accidentally fall through. Conservative anchor: needs both "muc
+    # tieu" (or "tien do") AND a possessive / progress cue so a bare
+    # "mục tiêu cuộc đời" doesn't get eaten.
+    ("goal_status", [
+        "tien do muc tieu",  # "tiến độ mục tiêu"
+        "muc tieu cua toi",  # "mục tiêu của tôi"
+        "muc tieu cua minh", # "mục tiêu của mình"
+        "da tiet kiem duoc",  # "đã tiết kiệm được bao nhiêu"
+        "tiet kiem den dau",  # "tiết kiệm đến đâu rồi"
+        "con thieu bao nhieu cho muc tieu",  # explicit
+        "muc tieu sap dat", "muc tieu cua minh sap",
+    ]),
     ("smalltalk", ["xin chao", "chao omni", "hello", "cam on"]),
 ]
 
