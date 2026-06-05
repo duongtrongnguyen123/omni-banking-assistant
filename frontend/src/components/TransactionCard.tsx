@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TransactionDraft } from "../types";
 import { formatVND } from "../format";
 
@@ -24,6 +24,23 @@ export const TransactionCard = ({
   const [sourceAccountId, setSourceAccountId] = useState(
     draft.source_account_id ?? draft.source_accounts[0]?.id ?? "",
   );
+  // Tracks the actionable → done transition so we can play the success
+  // animation exactly once, only when the user just confirmed (vs. an
+  // already-completed card rendered from history).
+  const wasActionable = useRef(actionable);
+  const [justConfirmed, setJustConfirmed] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [confirmedAt] = useState(() => new Date());
+
+  useEffect(() => {
+    if (wasActionable.current && !actionable) {
+      // Fire celebratory state, then auto-collapse to a compact receipt.
+      setJustConfirmed(true);
+      const t = window.setTimeout(() => setCollapsed(true), 4000);
+      return () => window.clearTimeout(t);
+    }
+    wasActionable.current = actionable;
+  }, [actionable]);
   const blocked = draft.flags.some((f) => f.severity === "block");
   const hardBlocked = draft.flags.some(
     (f) => f.severity === "block" && f.code !== "insufficient_balance",
@@ -65,6 +82,84 @@ export const TransactionCard = ({
             f.code === "amount_above_average"),
       )
     : undefined;
+
+  // Compact receipt rendered after the 4s celebration auto-collapses.
+  if (collapsed && r && draft.amount != null) {
+    const time = confirmedAt.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return (
+      <div className="tx-receipt" role="status" data-testid="tx-receipt">
+        <div className="tx-receipt__check" aria-hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12l5 5L20 7" />
+          </svg>
+        </div>
+        <div className="tx-receipt__body">
+          <div className="tx-receipt__line">
+            Đã chuyển <strong>{formatVND(draft.amount)}</strong> · {r.display_name}
+          </div>
+          <div className="tx-receipt__time">{time}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Animated celebratory state: shown for ~4s right after confirmation.
+  if (justConfirmed && r && draft.amount != null) {
+    const time = confirmedAt.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return (
+      <div className="tx-success" role="status" aria-live="polite" data-testid="tx-success">
+        <div className="tx-success__confetti" aria-hidden>
+          {Array.from({ length: 14 }).map((_, i) => (
+            <span key={i} className={`tx-confetti tx-confetti--${i % 7}`} />
+          ))}
+        </div>
+        <div className="tx-success__hero">
+          <div className="tx-success__check" aria-hidden>
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12l5 5L20 7" />
+            </svg>
+          </div>
+          <div className="tx-success__title">Đã chuyển thành công</div>
+          <div className="tx-success__amount">{formatVND(draft.amount)}</div>
+          <div className="tx-success__meta">
+            cho {r.display_name} · {r.bank} · {time}
+          </div>
+        </div>
+        <div className="tx-success__actions">
+          <button
+            type="button"
+            className="tx-success__action"
+            onClick={() => setCollapsed(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M5 12h14" />
+              <path d="M12 5l7 7-7 7" />
+            </svg>
+            Chuyển tiếp
+          </button>
+          <button
+            type="button"
+            className="tx-success__action"
+            onClick={() => setCollapsed(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <path d="M8.6 13.5l6.9 4M15.4 6.5l-6.8 4" />
+            </svg>
+            Chia sẻ biên lai
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`tx-card ${warned ? "tx-card--warn" : ""} ${!actionable ? "tx-card--done" : ""}`}>
