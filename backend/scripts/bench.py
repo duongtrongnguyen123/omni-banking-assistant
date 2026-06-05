@@ -111,7 +111,7 @@ def _spawn_uvicorn(port: int, db_path: Path) -> subprocess.Popen:
         "app.main:app",
         "--host", "127.0.0.1",
         "--port", str(port),
-        "--log-level", "info",
+        "--log-level", "warning",
     ]
     log_path = Path("/tmp/omni_bench_uvicorn.log")
     print(f"[bench] spawning uvicorn on :{port} (OMNI_DB_PATH={db_path}) "

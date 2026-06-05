@@ -51,7 +51,7 @@ numbers in ms; `n` columns omitted for brevity (see the appendix).
 | `chat (add_contact)`          |       60   |      120   |      2.1  |      2.5  |     ~28× |
 | `chat (unknown)`              |       40   |       60   |      2.0  |      2.3  |     ~20× |
 | `GET /api/suggestions/recipients` | ~1 800 |    ~2 500  |     25.1  |     25.8  |     ~70× |
-| `GET /api/insights/summary`   |  ~210 000  |  ~250 000  |  *see ↓*  |  *see ↓*  |  *see ↓* |
+| `GET /api/insights/summary`   |  ~210 000  |  ~250 000  |  ~70 000  |  ~76 000  |       3× |
 | `alias_resolve` (×50 queries) |   ~150 †   |     ~220 † |    150.1  |    157.3  |    ~1.0× |
 | `suggester.suggest(k=5)`      |   ~1 800   |   ~2 200   |     23.6  |     24.1  |     ~75× |
 
@@ -66,7 +66,14 @@ aliases the speedup from Fix 1 would dominate this row.
 > was unrunnable.  HTTP overhead is ~3–5 ms on this loopback setup,
 > so the in-process measurement is a faithful lower bound.
 > **After** numbers are the steady-state of a 200-iter HTTP bench
-> (warmup-trimmed) under the same configuration.
+> (warmup-trimmed) under the same configuration, except
+> `insights/summary` whose 70 s/call cost makes a full 200-iter run
+> unhelpful; its number is the median of 3 direct
+> `ml.insights.summary()` calls after warmup. Insights is bottlenecked
+> by the Python loop over the materialised 520 k-row history
+> (z-score per tx) — the next round of work would push the aggregate
+> straight into SQL (`GROUP BY` per category / per contact) instead
+> of round-tripping every row through Pydantic.
 
 ---
 
