@@ -29,7 +29,7 @@ def nearby(
 ) -> list[dict]:
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
         raise HTTPException(status_code=400, detail="Toạ độ không hợp lệ")
-    return list(find_nearby(lat=lat, lng=lng, radius_km=radius_km, bank=bank))
+    return [dict(h) for h in find_nearby(lat=lat, lng=lng, radius_km=radius_km, bank=bank)]
 
 
 @router.get("/by-bank/{bank}")
@@ -39,4 +39,4 @@ def by_bank(bank: str) -> list[dict]:
     # parameter is obviously empty / whitespace.
     if not hits and not bank.strip():
         raise HTTPException(status_code=400, detail="Tên ngân hàng trống")
-    return list(hits)
+    return [dict(h) for h in hits]

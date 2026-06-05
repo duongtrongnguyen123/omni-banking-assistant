@@ -33,6 +33,8 @@ def execute_transfer(
         if source_account_id
         else store.primary_account(user_id)
     )
+    if acc is None:
+        raise ValueError("no_source_account")
     if amount > acc.balance:
         # Push notification so the user sees the failure even if they've
         # navigated away from the chat. Mirrors the chat error string.
