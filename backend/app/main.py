@@ -5,7 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .nlp import privacy as _privacy
-from .routes import admin, banking, budgets, chat, demo, exports, insights, suggestions, ws
+from .routes import (
+    admin,
+    banking,
+    budgets,
+    chat,
+    demo,
+    exports,
+    insights,
+    metrics,
+    suggestions,
+    ws,
+)
 
 log = logging.getLogger("omni.main")
 
@@ -37,6 +48,7 @@ app.include_router(demo.router)
 app.include_router(exports.router)
 app.include_router(ws.router)
 app.include_router(admin.router)
+app.include_router(metrics.router)
 
 
 @app.on_event("startup")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -402,26 +403,52 @@ def _openai_compat(
         },
         method="POST",
     )
+    # ``status`` is one of: ``ok`` (2xx), ``429`` (rate-limited — the
+    # most operationally important error path because it drives our
+    # provider fallback), ``http_4xx``, ``http_5xx``, ``network``,
+    # ``parse``. The metric label space stays small.
+    status = "ok"
+    t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        choices = payload.get("choices") or []
-        # Gemini may return a top-level list rather than a dict when erroring,
-        # but on success the shape matches OpenAI's.
-        if not choices:
-            return None
-        return choices[0]["message"]["content"]
-    except urllib.error.HTTPError as e:
         try:
-            body_text = e.read().decode("utf-8", "ignore")[:240]
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            choices = payload.get("choices") or []
+            # Gemini may return a top-level list rather than a dict when erroring,
+            # but on success the shape matches OpenAI's.
+            if not choices:
+                status = "empty"
+                return None
+            return choices[0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            try:
+                body_text = e.read().decode("utf-8", "ignore")[:240]
+            except Exception:
+                body_text = ""
+            log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
+            if e.code == 429:
+                status = "429"
+            elif 400 <= e.code < 500:
+                status = "http_4xx"
+            else:
+                status = "http_5xx"
+            # 4xx/5xx → fall through so caller can try the next provider.
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            log.warning("%s network error: %s", provider.name, e)
+            status = "network"
+            return None
+        except (KeyError, ValueError, json.JSONDecodeError) as e:
+            log.warning("%s parse error: %s", provider.name, e)
+            status = "parse"
+            return None
+    finally:
+        try:
+            from ..services import metrics as _m
+
+            _m.llm_call_total.inc(provider=provider.name, status=status)
+            _m.llm_latency_seconds.observe(
+                time.perf_counter() - t0, provider=provider.name
+            )
         except Exception:
-            body_text = ""
-        log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
-        # 4xx/5xx → fall through so caller can try the next provider.
-        return None
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        log.warning("%s network error: %s", provider.name, e)
-        return None
-    except (KeyError, ValueError, json.JSONDecodeError) as e:
-        log.warning("%s parse error: %s", provider.name, e)
-        return None
+            pass

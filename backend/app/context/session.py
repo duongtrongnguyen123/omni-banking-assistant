@@ -214,5 +214,35 @@ def _decode(raw: Optional[str], cls):
 ConversationMemory = Session
 
 
+_seen_user_ids: set[str] = set()
+_seen_lock = threading.Lock()
+
+
 def session_for(user_id: str) -> Session:
+    # Track first-time-seen user IDs so the ``omni_session_active`` gauge
+    # reflects unique sessions in this process. Best-effort — a metric
+    # import failure must not break the chat path.
+    try:
+        with _seen_lock:
+            is_new = user_id not in _seen_user_ids
+            if is_new:
+                _seen_user_ids.add(user_id)
+        if is_new:
+            from ..services import metrics as _m
+
+            _m.session_active.set(len(_seen_user_ids))
+    except Exception:
+        pass
     return Session(user_id)
+
+
+def _reset_session_metrics_for_tests() -> None:
+    """Test hook — clear the seen-user set so per-test counts start fresh."""
+    with _seen_lock:
+        _seen_user_ids.clear()
+    try:
+        from ..services import metrics as _m
+
+        _m.session_active.set(0)
+    except Exception:
+        pass

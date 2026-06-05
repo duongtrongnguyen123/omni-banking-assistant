@@ -153,6 +153,14 @@ def publish(user_id: str, event: Event) -> None:
         get_bus().publish(user_id, event)
     except Exception as e:  # pragma: no cover — fail-open
         log.warning("event publish failed: %s", e)
+    # Metrics: count every published toast by kind. Wrapped so a metrics
+    # registration bug can't break the per-user event bus.
+    try:
+        from . import metrics as _m
+
+        _m.toast_published_total.inc(kind=event.kind)
+    except Exception:
+        pass
 
 
 # Convenience constructors ------------------------------------------

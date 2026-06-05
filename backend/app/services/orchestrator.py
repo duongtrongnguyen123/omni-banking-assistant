@@ -18,6 +18,13 @@ _telemetry: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
     "omni_telemetry", default=None
 )
 
+# Sidecar bucket for *always-on* metric labels. Distinct from ``_telemetry``
+# (which is gated on ``?dev=1``) so the Prometheus counters get the NLU
+# source label every request, not just dev-mode ones.
+_metric_labels: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "omni_metric_labels", default={}
+)
+
 
 def begin_telemetry() -> dict:
     """Mark the current async task / request as a telemetry caller.
@@ -172,7 +179,24 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
 
 def handle_message(user_id: str, text: str) -> OmniResponse:
     overall_t0 = time.perf_counter()
-    resp = _handle_message_inner(user_id, text)
+    # Capture the intent label even when the inner call raises — Prometheus
+    # otherwise loses count of error-path latency. ``"error"`` is the
+    # sentinel used for both unexpected exceptions and missing intents.
+    intent_label = "error"
+    try:
+        resp = _handle_message_inner(user_id, text)
+        intent_label = resp.intent or "unknown"
+    finally:
+        # Best-effort metric recording. The try/except inside .inc()/.observe()
+        # already swallows errors, but we wrap again for defence in depth so
+        # an unimported metric module (eg. partial install) can't break chat.
+        try:
+            from . import metrics as _m
+
+            elapsed = time.perf_counter() - overall_t0
+            _m.chat_latency_seconds.observe(elapsed, intent=intent_label)
+        except Exception:
+            pass
     # Notify the demo recorder if a recording is active. Imported lazily
     # to avoid a routes ↔ orchestrator cycle and to keep the production
     # hot path free of an extra import when recorder is unused.
@@ -181,6 +205,20 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
 
         record_turn(user_id, text, resp)
     except Exception:  # pragma: no cover — recorder must never break chat
+        pass
+    # Record the chat-requests counter once we know both intent and source.
+    # ``nlu.source`` lives in the telemetry bucket when ``?dev=1`` was set;
+    # otherwise we read it back off the bucket if the orchestrator set it
+    # internally.
+    try:
+        from . import metrics as _m
+
+        labels = _metric_labels.get() or {}
+        source = labels.get("nlu_source") or "unknown"
+        _m.chat_requests_total.inc(intent=intent_label, source=source)
+        # Reset for the next request on this task.
+        _metric_labels.set({})
+    except Exception:
         pass
     # Attach telemetry only when the request context opted in.
     bucket = get_telemetry()
@@ -291,6 +329,12 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         bucket["nlu_source"] = nlu.source
         bucket["intent"] = nlu.intent
         bucket["intent_confidence"] = nlu.confidence
+    # Always-on metric labels — used by handle_message's Prometheus
+    # exposition path even when the dev-only ``_telemetry`` bucket is None.
+    try:
+        _metric_labels.set({"nlu_source": nlu.source})
+    except Exception:
+        pass
 
     # Follow-up modify path: there's an active draft and the user is still
     # talking about transfer — treat as an edit, not a brand-new transaction.
