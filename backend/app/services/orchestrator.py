@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ..banking.recurring import detect_recurring
+from ..banking.recurring import _normalize as _normalize_desc, detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
@@ -372,7 +372,19 @@ def _handle_recurring(
     # the detector) so the detector stays a pure function of (tx, ref_now).
     # We also attach a one-tap schedule suggestion derived from the pattern
     # so the UI can offer "đặt lịch ngay" without round-tripping to the LLM.
+    # Missed-payment alert: when the pattern's expected day this month has
+    # passed but no matching transfer has occurred yet, flag it so the UI
+    # can render a "Khoản này chưa được trả tháng này" badge.
     existing_schedules = store.schedules_of(user_id)
+    today = now()
+    month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Days in current month — compute via the next-month rollover trick so we
+    # avoid hard-coding 28/30/31 and the leap-year edge case.
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    days_in_current_month = (next_month_start - month_start).days
     enriched: list = []
     for p in top:
         c = contacts_by_id.get(p.contact_id)
@@ -386,6 +398,23 @@ def _handle_recurring(
             and abs(s.amount - p.typical_amount) <= max(p.typical_amount * 0.2, 10_000)
             for s in existing_schedules
         )
+        # Missed check: did the pattern's "expected this month" date pass
+        # without a matching tx? Clamp the expected day to the month length
+        # so Feb 31 / Apr 31 patterns don't crash datetime.
+        expected_dom = min(p.typical_day, days_in_current_month)
+        expected_date = month_start.replace(day=expected_dom)
+        pattern_desc_norm = _normalize_desc(p.description)
+        matched_this_month = any(
+            t.contact_id == p.contact_id
+            and _normalize_desc(t.description) == pattern_desc_norm
+            and t.created_at.replace(tzinfo=None) >= month_start.replace(tzinfo=None)
+            for t in txs
+        )
+        is_missed = (not matched_this_month) and expected_date < today
+        days_overdue = (
+            (today.replace(tzinfo=None) - expected_date.replace(tzinfo=None)).days
+            if is_missed else 0
+        )
         enriched.append(
             p.model_copy(
                 update={
@@ -396,8 +425,15 @@ def _handle_recurring(
                 "suggested_cron": suggested_cron,
                 "suggested_cron_label": _cron_label(suggested_cron),
                 "is_already_scheduled": already,
+                "is_missed": is_missed,
+                "days_overdue": days_overdue,
             }
         )
+
+    # Surface missed patterns first so the UI can highlight overdue rows
+    # without having to re-sort. Within the missed bucket, prefer the
+    # longer-overdue ones; within the on-track bucket, keep detector order.
+    enriched.sort(key=lambda d: (not d["is_missed"], -d["days_overdue"]))
 
     return OmniResponse(intent="recurring", text=body, recurring_patterns=enriched)
 
