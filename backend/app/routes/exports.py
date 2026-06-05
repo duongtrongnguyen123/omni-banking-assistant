@@ -102,7 +102,10 @@ def _user_txs(user_id: str) -> list[Transaction]:
 def _contact_view(contact_id: str) -> tuple[str, str]:
     """Return (display_name, bank) for a contact id, blank strings when
     the contact was deleted. We never want a KeyError to break an export."""
-    c = get_store().contacts.get(contact_id)
+    try:
+        c = get_store().get_contact(contact_id)
+    except KeyError:
+        return ("", "")
     if not c:
         return ("", "")
     return (c.display_name, c.bank or "")
