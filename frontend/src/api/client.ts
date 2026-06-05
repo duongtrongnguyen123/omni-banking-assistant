@@ -67,6 +67,28 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
+  voiceText: (response: OmniResponse) =>
+    jsonFetch<{ text: string }>("/api/speech/voice-text", {
+      method: "POST",
+      body: JSON.stringify({ response }),
+    }),
+  tts: async (text: string, voice?: string): Promise<Blob> => {
+    const res = await fetch("/api/speech/tts", {
+      method: "POST",
+      headers: HEADERS,
+      body: JSON.stringify({ text, voice: voice ?? "vi-VN-HoaiMyNeural" }),
+    });
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = (await res.json()).detail ?? "";
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status} ${detail || res.statusText}`);
+    }
+    return res.blob();
+  },
   recentRecipients: async (max = 5): Promise<RecentRecipient[]> => {
     const txs = await jsonFetch<
       { id: string; created_at: string; contact: RecentRecipient["contact"] }[]

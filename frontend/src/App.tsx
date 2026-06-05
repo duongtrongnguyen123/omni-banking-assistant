@@ -5,6 +5,7 @@ import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { RecentRecipients } from "./components/RecentRecipients";
+import { VoiceMode } from "./components/VoiceMode";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -23,6 +24,7 @@ export default function App() {
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -71,9 +73,9 @@ export default function App() {
   };
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<OmniResponse | null> => {
       const trimmed = text.trim();
-      if (!trimmed || busy) return;
+      if (!trimmed || busy) return null;
       appendUser(trimmed);
       const pendingId = appendOmniPending();
       setInput("");
@@ -88,8 +90,10 @@ export default function App() {
           });
         }
         resolveOmni(pendingId, resp);
+        return resp;
       } catch (e) {
         failOmni(pendingId, e);
+        return null;
       } finally {
         setBusy(false);
       }
@@ -248,18 +252,36 @@ export default function App() {
                 send(input);
               }
             }}
-            placeholder="Nhập câu lệnh, ví dụ: chuyển cho mẹ 2 triệu…"
+            placeholder="Nhập câu lệnh, hoặc nhấn 🎙 để nói…"
             disabled={busy}
           />
-          <button
-            className="btn btn--primary btn--send"
-            onClick={() => send(input)}
-            disabled={busy || !input.trim()}
-            aria-label="Gửi"
-          >
-            ➤
-          </button>
+          {input.trim() ? (
+            <button
+              className="btn btn--primary btn--send"
+              onClick={() => send(input)}
+              disabled={busy}
+              aria-label="Gửi"
+            >
+              ➤
+            </button>
+          ) : (
+            <button
+              className="btn btn--send voice-trigger"
+              onClick={() => setVoiceOpen(true)}
+              disabled={busy}
+              aria-label="Trò chuyện bằng giọng nói"
+              title="Trò chuyện bằng giọng nói"
+            >
+              🎙
+            </button>
+          )}
         </div>
+
+        <VoiceMode
+          open={voiceOpen}
+          onClose={() => setVoiceOpen(false)}
+          send={send}
+        />
       </div>
 
       <aside className="sidebar">
@@ -270,7 +292,7 @@ export default function App() {
           Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng — Team One
           Last Token.
         </p>
-        <QuickScenarios onPick={send} />
+        <QuickScenarios onPick={(t) => send(t)} />
         <div className="sidebar__legend">
           <div>
             <strong>Pipeline:</strong> Câu lệnh → Hiểu ý định → Trích xuất →
