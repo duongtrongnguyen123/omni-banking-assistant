@@ -13,6 +13,7 @@ from ..banking.recurring import detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
+from ..ml.amount_predictor import predict_amount
 from ..models.schemas import (
     Contact,
     ContactDraft,
@@ -222,6 +223,8 @@ def _modify_transfer_draft(
 
     if e.amount is not None and e.amount != draft.amount:
         draft.amount = e.amount
+        # User just supplied an explicit amount — it's no longer predicted.
+        draft.predicted_amount = False
     if e.description:
         draft.description = e.description
 
@@ -835,6 +838,18 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             if chosen is None and not candidates:
                 chosen = store.get_contact(referenced_tx.contact_id)
 
+    # Smart amount prediction: when the user named a recipient but no
+    # amount, look at their history with this contact and pre-fill the
+    # draft with the most likely figure. This must run *before* `evaluate`
+    # so the `missing_amount` flag isn't raised on a draft that does have
+    # an amount (a predicted one). The user can still override the value
+    # in the confirm card or by saying "đổi sang 3 triệu thôi".
+    prediction: Optional[dict] = None
+    if amount is None and chosen is not None:
+        prediction = predict_amount(user_id, chosen.id)
+        if prediction is not None:
+            amount = prediction["amount"]
+
     flags = evaluate(
         amount=amount,
         recipient_candidates=candidates,
@@ -855,12 +870,22 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         reference_transaction_id=reference_tx_id,
         flags=flags,
         requires_step_up=requires_step_up(flags),
+        predicted_amount=prediction is not None,
     )
 
     session = session_for(user_id)
     session.set_draft(draft)
 
     text = _compose_transfer_text(draft, referenced_tx)
+    if prediction is not None and draft.recipient is not None:
+        # Prepend the rationale so both the LLM-phrased and the
+        # deterministic fallback responses surface the suggestion clearly.
+        text = (
+            f"Có vẻ bạn muốn gửi {format_vnd(draft.amount)} cho "  # type: ignore[arg-type]
+            f"{draft.recipient.display_name} như thường lệ "
+            f"({prediction['rationale']}). Đúng không? "
+            + text
+        )
     return OmniResponse(
         intent="transfer",
         text=text,

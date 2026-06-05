@@ -85,7 +85,12 @@ export const TransactionCard = ({
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>
-          <div className="tx-card__amount-value">{formatVND(draft.amount)}</div>
+          <div className="tx-card__amount-value">
+            {formatVND(draft.amount)}
+            {draft.predicted_amount && (
+              <span className="tx-card__predicted-chip">đề xuất từ lịch sử</span>
+            )}
+          </div>
         </div>
       )}
       {r && (
