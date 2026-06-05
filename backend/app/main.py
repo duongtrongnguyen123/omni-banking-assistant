@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routes import banking, chat, demo, exports, insights, suggestions, ws
+from .nlp import privacy as _privacy
+from .routes import admin, banking, chat, demo, exports, insights, suggestions, ws
 
 log = logging.getLogger("omni.main")
 
@@ -34,6 +35,7 @@ app.include_router(insights.router)
 app.include_router(demo.router)
 app.include_router(exports.router)
 app.include_router(ws.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")
@@ -162,6 +164,7 @@ def health() -> dict:
         "version": app.version,
         "git_sha": _GIT_SHA,
         "offline_demo": settings.offline_demo,
+        "privacy_mode": _privacy.get_mode(),
     }
 
 

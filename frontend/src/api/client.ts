@@ -51,6 +51,7 @@ export interface HealthResponse {
   version: string;
   git_sha: string;
   offline_demo: boolean;
+  privacy_mode?: "off" | "redact" | "local-only";
 }
 
 export const api = {
