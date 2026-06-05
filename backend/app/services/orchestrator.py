@@ -38,6 +38,9 @@ def get_telemetry() -> Optional[dict]:
 def end_telemetry() -> None:
     _telemetry.set(None)
 
+import threading as _th
+
+from ..banking.budgets import compute_statuses, label_for
 from ..banking.recurring import detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
@@ -45,11 +48,15 @@ from ..context.alias import filter_by_account_hint
 from ..ml.amount_predictor import predict_amount
 from ..ml.categorizer import categorize as categorize_description
 from ..models.schemas import (
+    Budget,
+    BudgetDraft,
     Contact,
     ContactDraft,
+    GoalDraft,
     NLUResult,
     OmniResponse,
     SafetyFlag,
+    SavingsGoal,
     ScheduleDraft,
     TransactionDraft,
 )
@@ -59,6 +66,54 @@ from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
 from ..safety.rules import evaluate, is_blocked, requires_step_up
 from ..store import get_store, new_id, now
+
+# In-memory budget / goal draft stash. We deliberately don't push these
+# through the session backend (Redis-compatible) for two reasons:
+#   1. They never require OTP step-up — the safety contract is enforced
+#      by re-validating the limit/target at confirm time, not by a code.
+#   2. They're confirmed by clicking a card the user just saw, so a
+#      cross-process retrieval path is overkill for this MVP.
+# Falls back to "draft not found" if a user confirms after a restart,
+# which is the same UX the schedule draft has after its TTL expires.
+_budget_drafts: dict[str, BudgetDraft] = {}
+_goal_drafts: dict[str, GoalDraft] = {}
+_drafts_lock = _th.Lock()
+
+
+def _stash_budget_draft(user_id: str, draft: BudgetDraft) -> None:
+    with _drafts_lock:
+        _budget_drafts[user_id] = draft
+
+
+def _pop_budget_draft(user_id: str, draft_id: str) -> Optional[BudgetDraft]:
+    with _drafts_lock:
+        d = _budget_drafts.get(user_id)
+        if d and d.id == draft_id:
+            return _budget_drafts.pop(user_id)
+    return None
+
+
+def _peek_budget_draft(user_id: str) -> Optional[BudgetDraft]:
+    with _drafts_lock:
+        return _budget_drafts.get(user_id)
+
+
+def _stash_goal_draft(user_id: str, draft: GoalDraft) -> None:
+    with _drafts_lock:
+        _goal_drafts[user_id] = draft
+
+
+def _pop_goal_draft(user_id: str, draft_id: str) -> Optional[GoalDraft]:
+    with _drafts_lock:
+        d = _goal_drafts.get(user_id)
+        if d and d.id == draft_id:
+            return _goal_drafts.pop(user_id)
+    return None
+
+
+def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
+    with _drafts_lock:
+        return _goal_drafts.get(user_id)
 
 _CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
 _CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
@@ -205,6 +260,24 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
             session.append("omni", cont.text)
             return cont
 
+    # Budget / goal draft continuation. Both confirm flows are simple
+    # (no OTP); the cancel / xác nhận shortcut applies just like contact.
+    bd = _peek_budget_draft(user_id)
+    if bd is not None:
+        cont = _try_continue_budget_draft(user_id, text, bd)
+        if cont is not None:
+            session.append("user", text)
+            session.append("omni", cont.text)
+            return cont
+
+    gd = _peek_goal_draft(user_id)
+    if gd is not None:
+        cont = _try_continue_goal_draft(user_id, text, gd)
+        if cont is not None:
+            session.append("user", text)
+            session.append("omni", cont.text)
+            return cont
+
     nlu_t0 = time.perf_counter()
     nlu = understand(text, history=history_msgs)
     nlu_ms = int((time.perf_counter() - nlu_t0) * 1000)
@@ -250,6 +323,15 @@ def _dispatch_intent(
 
     if nlu.intent == "add_contact":
         return _handle_add_contact(user_id, nlu)
+
+    if nlu.intent == "set_budget":
+        return _handle_set_budget(user_id, nlu)
+
+    if nlu.intent == "set_goal":
+        return _handle_set_goal(user_id, nlu)
+
+    if nlu.intent == "budget_status":
+        return _handle_budget_status(user_id, nlu)
 
     if nlu.intent == "transfer":
         return _handle_transfer(user_id, nlu)
@@ -914,6 +996,229 @@ def cancel_contact_draft(user_id: str, draft_id: str) -> OmniResponse:
     return OmniResponse(intent="add_contact", text=text)
 
 
+# ---------------------------------------------------------------------------
+# Budget envelope handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_set_budget(user_id: str, nlu: NLUResult) -> OmniResponse:
+    """Stage a monthly budget draft. The user confirms (or cancels) via
+    the budget card or by typing "xác nhận" / "huỷ" in chat."""
+    e = nlu.entities
+    if not e.budget_category:
+        return OmniResponse(
+            intent="set_budget",
+            text=(
+                "Bạn muốn đặt ngân sách cho hạng mục nào? Ví dụ: "
+                "\"đặt ngân sách ăn uống 3 triệu\"."
+            ),
+        )
+    if e.amount is None or e.amount <= 0:
+        return OmniResponse(
+            intent="set_budget",
+            text=(
+                f"Bạn muốn đặt hạn mức bao nhiêu cho {label_for(e.budget_category)} "
+                "mỗi tháng?"
+            ),
+        )
+
+    store = get_store()
+    existing = store.get_budget_by_category(user_id, e.budget_category)
+    draft = BudgetDraft(
+        id=new_id("bd"),
+        category=e.budget_category,
+        category_label=label_for(e.budget_category),
+        monthly_limit_vnd=e.amount,
+        replaces_existing=existing is not None,
+    )
+    _stash_budget_draft(user_id, draft)
+
+    verb = "cập nhật" if existing else "đặt"
+    text = (
+        f"Mình sẽ {verb} ngân sách {draft.category_label} là "
+        f"{format_vnd(draft.monthly_limit_vnd)} mỗi tháng. Xác nhận giúp mình nhé."
+    )
+    return OmniResponse(intent="set_budget", text=text, budget_draft=draft)
+
+
+def confirm_budget_draft(user_id: str, draft_id: str) -> OmniResponse:
+    session = session_for(user_id)
+    draft = _pop_budget_draft(user_id, draft_id)
+    if draft is None:
+        return OmniResponse(
+            intent="unknown", text="Không tìm thấy ngân sách chờ xác nhận."
+        )
+    budget = Budget(
+        id=new_id("b"),
+        user_id=user_id,
+        category=draft.category,
+        monthly_limit_vnd=draft.monthly_limit_vnd,
+        created_at=now(),
+    )
+    saved = get_store().add_budget(budget)
+    text = (
+        f"Đã lưu ngân sách {draft.category_label}: "
+        f"{format_vnd(saved.monthly_limit_vnd)} mỗi tháng. Mình sẽ "
+        "nhắc khi bạn sắp chạm hạn mức."
+    )
+    session.append("user", "Xác nhận ngân sách")
+    session.append("omni", text)
+    return OmniResponse(intent="set_budget", text=text)
+
+
+def cancel_budget_draft(user_id: str, draft_id: str) -> OmniResponse:
+    session = session_for(user_id)
+    _pop_budget_draft(user_id, draft_id)
+    text = "Đã huỷ đặt ngân sách."
+    session.append("user", "Huỷ ngân sách")
+    session.append("omni", text)
+    return OmniResponse(intent="set_budget", text=text)
+
+
+def _handle_budget_status(user_id: str, nlu: NLUResult) -> OmniResponse:
+    """Read-only: this month's spending vs each budget."""
+    e = nlu.entities
+    statuses = compute_statuses(user_id)
+    if not statuses:
+        return OmniResponse(
+            intent="budget_status",
+            text=(
+                "Bạn chưa đặt ngân sách nào. Thử nói \"đặt ngân sách ăn uống "
+                "3 triệu\" để bắt đầu nhé."
+            ),
+        )
+
+    if e.budget_category:
+        match = next((s for s in statuses if s.category == e.budget_category), None)
+        if match is None:
+            return OmniResponse(
+                intent="budget_status",
+                text=(
+                    f"Bạn chưa đặt ngân sách cho {label_for(e.budget_category)}. "
+                    "Mình có thể đặt giúp — bạn muốn hạn mức bao nhiêu?"
+                ),
+                budget_statuses=statuses,
+            )
+        remaining = max(match.remaining_vnd, 0)
+        if match.ratio >= 1.0:
+            over = match.spent_vnd - match.monthly_limit_vnd
+            body = (
+                f"Tháng này {match.category_label} đã vượt ngân sách "
+                f"{format_vnd(over)} (đã tiêu {format_vnd(match.spent_vnd)} / "
+                f"{format_vnd(match.monthly_limit_vnd)})."
+            )
+        else:
+            body = (
+                f"{match.category_label}: còn {format_vnd(remaining)} "
+                f"trong ngân sách (đã tiêu {format_vnd(match.spent_vnd)} / "
+                f"{format_vnd(match.monthly_limit_vnd)})."
+            )
+        return OmniResponse(
+            intent="budget_status", text=body, budget_statuses=[match]
+        )
+
+    # No category specified — summarise everything.
+    lines = []
+    for s in statuses:
+        remaining = max(s.remaining_vnd, 0)
+        if s.ratio >= 1.0:
+            tag = "VƯỢT"
+        elif s.ratio >= 0.8:
+            tag = "Sắp hết"
+        else:
+            tag = "Ổn"
+        lines.append(
+            f"• {s.category_label}: {format_vnd(s.spent_vnd)}/"
+            f"{format_vnd(s.monthly_limit_vnd)} ({tag}, còn {format_vnd(remaining)})"
+        )
+    body = "Tình trạng ngân sách tháng này:\n" + "\n".join(lines)
+    return OmniResponse(intent="budget_status", text=body, budget_statuses=statuses)
+
+
+# ---------------------------------------------------------------------------
+# Savings goal handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_set_goal(user_id: str, nlu: NLUResult) -> OmniResponse:
+    e = nlu.entities
+    name = (e.goal_name or "").strip() or "Mục tiêu mới"
+    if e.amount is None or e.amount <= 0:
+        return OmniResponse(
+            intent="set_goal",
+            text=(
+                f"Bạn muốn tiết kiệm bao nhiêu cho \"{name}\"? "
+                "Ví dụ: \"mục tiêu Tết 50 triệu\"."
+            ),
+        )
+    draft = GoalDraft(
+        id=new_id("gd"),
+        name=name,
+        target_vnd=e.amount,
+    )
+    _stash_goal_draft(user_id, draft)
+    text = (
+        f"Mình sẽ tạo mục tiêu tiết kiệm \"{draft.name}\" với "
+        f"{format_vnd(draft.target_vnd)}. Xác nhận giúp mình nhé."
+    )
+    return OmniResponse(intent="set_goal", text=text, goal_draft=draft)
+
+
+def confirm_goal_draft(user_id: str, draft_id: str) -> OmniResponse:
+    session = session_for(user_id)
+    draft = _pop_goal_draft(user_id, draft_id)
+    if draft is None:
+        return OmniResponse(
+            intent="unknown", text="Không tìm thấy mục tiêu chờ xác nhận."
+        )
+    goal = SavingsGoal(
+        id=new_id("g"),
+        user_id=user_id,
+        name=draft.name,
+        target_vnd=draft.target_vnd,
+        current_vnd=0,
+        deadline=draft.deadline,
+        created_at=now(),
+    )
+    saved = get_store().add_goal(goal)
+    text = (
+        f"Đã tạo mục tiêu \"{saved.name}\": {format_vnd(saved.target_vnd)}. "
+        "Mỗi lần chuyển khoản, bạn có thể chia một phần sang mục tiêu này."
+    )
+    session.append("user", "Xác nhận mục tiêu")
+    session.append("omni", text)
+    return OmniResponse(intent="set_goal", text=text)
+
+
+def cancel_goal_draft(user_id: str, draft_id: str) -> OmniResponse:
+    session = session_for(user_id)
+    _pop_goal_draft(user_id, draft_id)
+    text = "Đã huỷ mục tiêu."
+    session.append("user", "Huỷ mục tiêu")
+    session.append("omni", text)
+    return OmniResponse(intent="set_goal", text=text)
+
+
+def _try_continue_budget_draft(
+    user_id: str, text: str, draft: BudgetDraft
+) -> Optional[OmniResponse]:
+    if _is_cancel(text):
+        return cancel_budget_draft(user_id, draft.id)
+    if _is_confirm(text):
+        return confirm_budget_draft(user_id, draft.id)
+    return None
+
+
+def _try_continue_goal_draft(
+    user_id: str, text: str, draft: GoalDraft
+) -> Optional[OmniResponse]:
+    if _is_cancel(text):
+        return cancel_goal_draft(user_id, draft.id)
+    if _is_confirm(text):
+        return confirm_goal_draft(user_id, draft.id)
+    return None
+
+
 def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
@@ -1354,4 +1659,8 @@ __all__ = [
     "cancel_contact_draft",
     "confirm_schedule_draft",
     "cancel_schedule_draft",
+    "confirm_budget_draft",
+    "cancel_budget_draft",
+    "confirm_goal_draft",
+    "cancel_goal_draft",
 ]

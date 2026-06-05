@@ -8,6 +8,7 @@ import { BalanceCard } from "./BalanceCard";
 import { ScheduleCard } from "./ScheduleCard";
 import { ContactDraftCard } from "./ContactDraftCard";
 import { ScheduleDraftCard } from "./ScheduleDraftCard";
+import { BudgetDraftCard, GoalDraftCard } from "./BudgetDraftCard";
 import { RecurringList } from "./RecurringList";
 import { speak } from "../lib/tts";
 
@@ -121,6 +122,29 @@ export const Message = ({
             onCancel={() => onCancelSchedule(r.schedule_draft!.id)}
             disabled={busy}
             actionable={actionableScheduleDraftIds?.has(r.schedule_draft.id) ?? true}
+          />
+        )}
+        {r?.budget_draft && (
+          <BudgetDraftCard
+            draft={r.budget_draft}
+            onResolve={(resp) => {
+              // Mutate the message in place — the App-level state
+              // already references this object, so updating ``response``
+              // would also propagate. We keep the simpler approach of
+              // letting the user re-trigger via chat keyword if they
+              // want a second action.
+              message.response = resp;
+            }}
+            busy={busy}
+          />
+        )}
+        {r?.goal_draft && (
+          <GoalDraftCard
+            draft={r.goal_draft}
+            onResolve={(resp) => {
+              message.response = resp;
+            }}
+            busy={busy}
           />
         )}
       </div>

@@ -78,3 +78,31 @@ CREATE TABLE IF NOT EXISTS schedules (
     active             INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS ix_sched_owner ON schedules(owner_id);
+
+-- Budget envelopes: monthly cap per spending category. One row per
+-- (user_id, category) — the orchestrator enforces uniqueness so the
+-- "update existing" path doesn't accidentally insert duplicates.
+CREATE TABLE IF NOT EXISTS budgets (
+    id                 TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL,
+    category           TEXT NOT NULL,
+    monthly_limit_vnd  INTEGER NOT NULL,
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_budgets_user ON budgets(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_budgets_user_category
+    ON budgets(user_id, category);
+
+-- Savings goals: a named pot the user contributes toward. ``current_vnd``
+-- tracks accumulated contributions; ``deadline`` is optional (NULL when
+-- the user said "mục tiêu mua xe" without a date).
+CREATE TABLE IF NOT EXISTS savings_goals (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    target_vnd   INTEGER NOT NULL,
+    current_vnd  INTEGER NOT NULL DEFAULT 0,
+    deadline     TEXT,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_goals_user ON savings_goals(user_id);

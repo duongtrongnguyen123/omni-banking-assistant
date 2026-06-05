@@ -6,6 +6,9 @@ export type Intent =
   | "recurring"
   | "reminder"
   | "add_contact"
+  | "set_budget"
+  | "set_goal"
+  | "budget_status"
   | "smalltalk"
   | "unknown";
 
@@ -135,16 +138,61 @@ export interface TelemetryPayload {
   suggester_ms?: number;
 }
 
+export interface BudgetDraft {
+  id: string;
+  category: string;
+  category_label: string;
+  monthly_limit_vnd: number;
+  replaces_existing: boolean;
+  flags: SafetyFlag[];
+}
+
+export interface GoalDraft {
+  id: string;
+  name: string;
+  target_vnd: number;
+  deadline: string | null;
+  flags: SafetyFlag[];
+}
+
+export interface BudgetStatus {
+  category: string;
+  category_label: string;
+  monthly_limit_vnd: number;
+  spent_vnd: number;
+  remaining_vnd: number;
+  ratio: number;
+}
+
+export interface BudgetRow extends BudgetStatus {
+  id: string;
+  user_id: string;
+  created_at: string;
+}
+
+export interface SavingsGoal {
+  id: string;
+  user_id: string;
+  name: string;
+  target_vnd: number;
+  current_vnd: number;
+  deadline: string | null;
+  created_at: string;
+}
+
 export interface OmniResponse {
   intent: Intent;
   text: string;
   draft: TransactionDraft | null;
   contact_draft: ContactDraft | null;
   schedule_draft: ScheduleDraft | null;
+  budget_draft?: BudgetDraft | null;
+  goal_draft?: GoalDraft | null;
   history: HistoryResult | null;
   balance: BalanceResult | null;
   schedule: Schedule | null;
   recurring_patterns: RecurringPattern[] | null;
+  budget_statuses?: BudgetStatus[] | null;
   needs_disambiguation: boolean;
   telemetry?: TelemetryPayload | null;
 }

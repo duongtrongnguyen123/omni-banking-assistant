@@ -4,6 +4,8 @@ import type { BalanceResult, ChatMessage, Contact, OmniResponse } from "./types"
 import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { InsightsCard } from "./components/InsightsCard";
+import { BudgetCard } from "./components/BudgetCard";
+import { GoalsCard } from "./components/GoalsCard";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
@@ -744,6 +746,8 @@ export default function App() {
         <div className={insightsOpen ? "insights-highlight" : ""}>
           <InsightsCard />
         </div>
+        <BudgetCard refreshKey={suggestRefresh} />
+        <GoalsCard refreshKey={suggestRefresh} />
         <QuickScenarios onPick={send} />
         <div className="sidebar__legend">
           <div>

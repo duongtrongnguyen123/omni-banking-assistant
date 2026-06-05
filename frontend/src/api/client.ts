@@ -1,4 +1,10 @@
-import type { InsightsSummary, OmniResponse, RecipientSuggestion } from "../types";
+import type {
+  BudgetRow,
+  InsightsSummary,
+  OmniResponse,
+  RecipientSuggestion,
+  SavingsGoal,
+} from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -119,4 +125,51 @@ export const api = {
       `/api/suggestions/recipients?all=true&limit=200`,
     ),
   insights: () => jsonFetch<InsightsSummary>("/api/insights/summary"),
+  budgets: () => jsonFetch<BudgetRow[]>("/api/budgets"),
+  createBudget: (category: string, monthlyLimitVnd: number) =>
+    jsonFetch<BudgetRow>("/api/budgets", {
+      method: "POST",
+      body: JSON.stringify({
+        category,
+        monthly_limit_vnd: monthlyLimitVnd,
+      }),
+    }),
+  updateBudget: (budgetId: string, monthlyLimitVnd: number) =>
+    jsonFetch<BudgetRow>(`/api/budgets/${budgetId}`, {
+      method: "PUT",
+      body: JSON.stringify({ monthly_limit_vnd: monthlyLimitVnd }),
+    }),
+  deleteBudget: (budgetId: string) =>
+    jsonFetch<{ ok: boolean }>(`/api/budgets/${budgetId}`, { method: "DELETE" }),
+  confirmBudget: (draftId: string) =>
+    jsonFetch<OmniResponse>(`/api/budgets/${draftId}/confirm`, {
+      method: "POST",
+    }),
+  cancelBudget: (draftId: string) =>
+    jsonFetch<OmniResponse>(`/api/budgets/${draftId}/cancel`, {
+      method: "POST",
+    }),
+  goals: () => jsonFetch<SavingsGoal[]>("/api/goals"),
+  createGoal: (name: string, targetVnd: number, deadline?: string) =>
+    jsonFetch<SavingsGoal>("/api/goals", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        target_vnd: targetVnd,
+        deadline: deadline ?? null,
+      }),
+    }),
+  contributeGoal: (goalId: string, amount: number) =>
+    jsonFetch<SavingsGoal>(`/api/goals/${goalId}/contribute`, {
+      method: "POST",
+      body: JSON.stringify({ amount }),
+    }),
+  confirmGoal: (draftId: string) =>
+    jsonFetch<OmniResponse>(`/api/goals/${draftId}/confirm`, {
+      method: "POST",
+    }),
+  cancelGoal: (draftId: string) =>
+    jsonFetch<OmniResponse>(`/api/goals/${draftId}/cancel`, {
+      method: "POST",
+    }),
 };
