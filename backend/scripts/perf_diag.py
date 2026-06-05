@@ -37,7 +37,8 @@ def timed(label, fn, iters=10, warmup=2):
     samples.sort()
     median = samples[len(samples) // 2]
     p95 = samples[int(0.95 * (len(samples) - 1))]
-    print(f"{label:42}  P50={median:8.1f}ms  P95={p95:8.1f}ms  n={len(samples)}")
+    print(f"{label:42}  P50={median:8.1f}ms  P95={p95:8.1f}ms  n={len(samples)}",
+          flush=True)
     return median
 
 

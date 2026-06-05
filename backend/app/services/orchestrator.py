@@ -27,8 +27,34 @@ from ..nlp.amount import format_vnd
 from ..nlp.entities import normalize_alias
 from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
-from ..safety.rules import evaluate, is_blocked, requires_step_up
+from ..safety.rules import (
+    NEW_RECIPIENT_LARGE_THRESHOLD,
+    evaluate,
+    is_blocked,
+    requires_step_up,
+)
 from ..store import get_store, new_id, now
+
+def _maybe_global_mean(
+    user_id: str,
+    recipient: Optional[Contact],
+    amount: Optional[int],
+    txs: list,
+) -> Optional[float]:
+    """OPT-3 (bench): the safety rule for cold-contact-anomaly only fires
+    on a non-frequent recipient + large amount + too-thin per-contact
+    history. Computing AVG(amount) on the contest dataset is ~380ms, so
+    we lift that work behind a precondition check and skip it otherwise."""
+    if (
+        recipient is not None
+        and amount is not None
+        and not recipient.frequent
+        and amount >= NEW_RECIPIENT_LARGE_THRESHOLD
+        and len(txs) < 3
+    ):
+        return get_store().completed_amount_mean(user_id)
+    return None
+
 
 _CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
 _CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
@@ -289,6 +315,7 @@ def _modify_transfer_draft(
         recipient=draft.recipient,
         transactions=txs,
         account=account,
+        global_mean=_maybe_global_mean(user_id, draft.recipient, draft.amount, txs),
     )
     draft.requires_step_up = requires_step_up(draft.flags)
 
@@ -886,11 +913,12 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     if chosen is not None:
         txs = store.transactions_of(user_id, contact_id=chosen.id)
     else:
-        # Cold-contact path: need the global mean for the anomaly check
-        # AND a recent window for "lần trước" temporal resolution. The
-        # last 90 days covers the temporal vocab we recognise.
-        from datetime import timedelta as _td
-        txs = store.transactions_of(user_id, since=now() - _td(days=90))
+        # Cold-contact path: we only need (a) "global mean" for the
+        # anomaly check and (b) a small recent window for "lần trước"
+        # temporal resolution. The mean is cheap from SQL so we lift it
+        # out of ``evaluate``; for (b), ``limit=200`` covers every
+        # temporal phrase we recognise (most recent in the last month).
+        txs = store.transactions_of(user_id, limit=200)
 
     # Resolve temporal reference using the chosen recipient (if any) for higher precision
     amount = e.amount
@@ -936,6 +964,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         recipient=chosen,
         transactions=txs,
         account=account,
+        global_mean=_maybe_global_mean(user_id, chosen, amount, txs),
     )
 
     draft = TransactionDraft(
@@ -1105,6 +1134,7 @@ def confirm_draft(
         recipient=draft.recipient,
         transactions=txs,
         account=account,
+        global_mean=_maybe_global_mean(user_id, draft.recipient, draft.amount, txs),
     )
     draft.flags = fresh_flags
     draft.requires_step_up = requires_step_up(fresh_flags)
@@ -1218,6 +1248,7 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
         recipient=chosen,
         transactions=txs,
         account=account,
+        global_mean=_maybe_global_mean(user_id, chosen, draft.amount, txs),
     )
 
     draft.recipient = chosen

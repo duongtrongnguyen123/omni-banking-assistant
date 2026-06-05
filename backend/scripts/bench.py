@@ -200,7 +200,10 @@ def bench_chat(client: httpx.Client, iters: int) -> list[dict]:
             r = client.post("/api/chat", json={"message": msg}, timeout=300.0)
             r.raise_for_status()
         print(f"[bench]   {label} ({n} iters) …", flush=True)
-        results.append(_measure(label, _hit, n))
+        row = _measure(label, _hit, n)
+        print(f"[bench]   {label} done: "
+              f"P50={row['p50']:.1f}ms P95={row['p95']:.1f}ms", flush=True)
+        results.append(row)
     return results
 
 

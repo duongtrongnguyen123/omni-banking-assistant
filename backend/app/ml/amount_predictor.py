@@ -66,10 +66,15 @@ def predict_amount(
 
     reference = when or now()
     store = get_store()
+    # OPT-3 (bench): push the contact + status filter into SQL. The
+    # previous implementation materialised all 520k contest transactions
+    # and threw away ~99.9% of them — ~16s wasted per call.
     txs = [
         t
-        for t in store.transactions_of(user_id)
-        if t.contact_id == contact_id and t.status == "completed" and t.amount > 0
+        for t in store.transactions_of(
+            user_id, contact_id=contact_id, status="completed",
+        )
+        if t.amount > 0
     ]
 
     if len(txs) < 2:

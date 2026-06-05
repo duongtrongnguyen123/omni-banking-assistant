@@ -66,6 +66,7 @@ def evaluate(
     recipient: Optional[Contact],
     transactions: list[Transaction],
     account: Optional[Account],
+    global_mean: Optional[float] = None,
 ) -> list[SafetyFlag]:
     flags: list[SafetyFlag] = []
 
@@ -142,20 +143,26 @@ def evaluate(
                 )
         else:
             # Cold contact: use global mean × multiplier as before.
-            all_amounts = [t.amount for t in transactions if t.status == "completed"]
-            if all_amounts:
-                avg = mean(all_amounts)
-                if amount >= avg * ANOMALY_MULTIPLIER:
-                    flags.append(
-                        SafetyFlag(
-                            code="amount_above_average",
-                            severity="warn",
-                            message=(
-                                f"Khoan đã — số tiền này cao gấp ~{int(amount / max(avg, 1))}× "
-                                f"mức thường ngày của bạn (~{int(avg):,}đ). Bạn cân nhắc lại nhé."
-                            ).replace(",", "."),
-                        )
+            # OPT-3 (bench): callers that already scoped ``transactions``
+            # to a single contact pass ``global_mean`` separately so we
+            # don't fall back to "no data" just because the scoped list
+            # is empty for this recipient.
+            if global_mean is not None:
+                avg: Optional[float] = global_mean
+            else:
+                all_amounts = [t.amount for t in transactions if t.status == "completed"]
+                avg = mean(all_amounts) if all_amounts else None
+            if avg is not None and avg > 0 and amount >= avg * ANOMALY_MULTIPLIER:
+                flags.append(
+                    SafetyFlag(
+                        code="amount_above_average",
+                        severity="warn",
+                        message=(
+                            f"Khoan đã — số tiền này cao gấp ~{int(amount / max(avg, 1))}× "
+                            f"mức thường ngày của bạn (~{int(avg):,}đ). Bạn cân nhắc lại nhé."
+                        ).replace(",", "."),
                     )
+                )
 
         # Balance check
         if account is not None and amount > account.balance:

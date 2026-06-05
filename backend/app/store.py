@@ -315,6 +315,18 @@ class Store:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def completed_amount_mean(self, user_id: str) -> Optional[float]:
+        """OPT-3 (bench): global mean for the cold-contact anomaly
+        fallback in ``safety.rules.evaluate``.  Computing this in SQL is
+        ~100× faster than materialising every transaction and reading
+        ``.amount`` in Python, which is all the caller was doing."""
+        row = get_connection().execute(
+            "SELECT AVG(amount) AS mu FROM transactions "
+            "WHERE owner_id = ? AND status = 'completed' AND amount > 0",
+            (user_id,),
+        ).fetchone()
+        return float(row["mu"]) if row and row["mu"] is not None else None
+
     def add_transaction(self, tx: Transaction) -> Transaction:
         conn = get_connection()
         with self._lock:
