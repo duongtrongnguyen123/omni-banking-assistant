@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client";
-import type { ChatMessage, Contact, OmniResponse } from "./types";
+import type { BalanceResult, ChatMessage, Contact, OmniResponse } from "./types";
 import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { InsightsCard } from "./components/InsightsCard";
@@ -9,7 +9,15 @@ import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
+import {
+  SlashPalette,
+  buildMessageFromSlash,
+  type SlashCommand,
+} from "./components/SlashPalette";
+import { RecipientAutocomplete } from "./components/RecipientAutocomplete";
+import { useKeyboard } from "./hooks/useKeyboard";
 import { cancelSpeech, isSpeechSupported } from "./lib/tts";
+import { formatVND } from "./format";
 
 const TTS_STORAGE_KEY = "omni.tts.enabled";
 
@@ -23,6 +31,8 @@ const readStoredTtsPref = (): boolean => {
 };
 
 const newId = () => Math.random().toString(36).slice(2, 10);
+
+const INPUT_DOM_ID = "omni-chat-input";
 
 const WELCOME: ChatMessage = {
   id: "welcome",
@@ -47,6 +57,18 @@ export default function App() {
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Power-user state.
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionAnchor, setMentionAnchor] = useState<number>(-1); // index of '@' in input
+  const [balancePeek, setBalancePeek] = useState<BalanceResult | null>(null);
+  const [balancePeekVisible, setBalancePeekVisible] = useState(false);
+  const [historyIdx, setHistoryIdx] = useState<number | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -115,6 +137,9 @@ export default function App() {
       appendUser(trimmed);
       const pendingId = appendOmniPending();
       setInput("");
+      setSlashOpen(false);
+      setMentionOpen(false);
+      setHistoryIdx(null);
       setBusy(true);
       try {
         const resp = await api.chat(trimmed);
@@ -228,6 +253,224 @@ export default function App() {
     }
   }
 
+  // ---------------------------------------------------------------
+  // Power-user features wiring
+  // ---------------------------------------------------------------
+
+  // Recent user messages, newest first, for the ↑-history cycle.
+  const recentUserMessages = useMemo(
+    () =>
+      messages
+        .filter((m) => m.role === "user")
+        .map((m) => m.text)
+        .reverse(),
+    [messages],
+  );
+
+  const lastUserMessage = recentUserMessages[0] ?? null;
+
+  // Recompute slash / mention state from the input text on every change.
+  // We choose to watch the value rather than parse onKeyDown so paste
+  // and IME composition both work.
+  const updatePopovers = useCallback((value: string, caret: number) => {
+    // Slash palette: only when "/" is the first char.
+    if (value.startsWith("/")) {
+      // Close once the user types whitespace — that's the args separator.
+      const firstWord = value.slice(1).split(/\s/)[0];
+      // "lang en" needs two tokens — special-case keep open until newline.
+      const probe = value.slice(1).toLowerCase();
+      const stillMatching =
+        firstWord.length === 0 ||
+        [
+          "transfer",
+          "balance",
+          "history",
+          "repeat",
+          "insights",
+          "help",
+          "lang",
+          "clear",
+        ].some((k) => k.startsWith(firstWord.toLowerCase())) ||
+        probe.startsWith("lang");
+      setSlashOpen(stillMatching);
+      setSlashQuery(probe);
+    } else {
+      setSlashOpen(false);
+    }
+
+    // @-mention: look backwards from caret for the last "@".
+    const upToCaret = value.slice(0, caret);
+    const atIdx = upToCaret.lastIndexOf("@");
+    if (atIdx >= 0) {
+      // Stop the mention popover if the chunk after @ has whitespace.
+      const chunk = upToCaret.slice(atIdx + 1);
+      const prevChar = atIdx > 0 ? value[atIdx - 1] : "";
+      const wordBoundary = atIdx === 0 || /\s/.test(prevChar);
+      if (wordBoundary && !/\s/.test(chunk)) {
+        setMentionOpen(true);
+        setMentionQuery(chunk);
+        setMentionAnchor(atIdx);
+        return;
+      }
+    }
+    setMentionOpen(false);
+    setMentionAnchor(-1);
+  }, []);
+
+  const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setInput(value);
+    setHistoryIdx(null);
+    const caret = e.target.selectionStart ?? value.length;
+    updatePopovers(value, caret);
+  };
+
+  const closeAllModals = (): boolean => {
+    if (showClearConfirm) {
+      setShowClearConfirm(false);
+      return true;
+    }
+    if (pickerOpen) {
+      setPickerOpen(false);
+      return true;
+    }
+    if (slashOpen) {
+      setSlashOpen(false);
+      return true;
+    }
+    if (mentionOpen) {
+      setMentionOpen(false);
+      return true;
+    }
+    if (balancePeekVisible) {
+      setBalancePeekVisible(false);
+      return true;
+    }
+    return false;
+  };
+
+  const handleSlashPick = (cmd: SlashCommand, raw: string) => {
+    if (cmd.action.kind === "send") {
+      const msg = buildMessageFromSlash(cmd, raw) ?? cmd.action.text;
+      send(msg);
+      return;
+    }
+    if (cmd.action.kind === "prefill") {
+      // Replace the slash command in the input with the prefilled text,
+      // preserve any args the user already typed.
+      const rest = raw.replace(/^\s*\/\S+\s*/, "");
+      const next = cmd.action.text + rest;
+      setInput(next);
+      setSlashOpen(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
+      return;
+    }
+    if (cmd.action.kind === "ui") {
+      setSlashOpen(false);
+      setInput("");
+      if (cmd.action.name === "insights") {
+        setInsightsOpen(true);
+        // Scroll the sidebar insights into view on small screens.
+        document.querySelector(".insights-card")?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      } else if (cmd.action.name === "clear") {
+        setShowClearConfirm(true);
+      } else if (cmd.action.name === "lang_en") {
+        // i18n branch hasn't landed yet — surface a friendly notice.
+        appendUser("/lang en");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: newId(),
+            role: "omni",
+            text: "Chế độ tiếng Anh sẽ có trong bản cập nhật sắp tới. Hiện tại Omni hỗ trợ tiếng Việt.",
+          },
+        ]);
+      }
+    }
+  };
+
+  const handleMentionPick = (contact: Contact) => {
+    if (mentionAnchor < 0) {
+      setMentionOpen(false);
+      return;
+    }
+    const before = input.slice(0, mentionAnchor);
+    const after = input.slice(mentionAnchor + 1 + mentionQuery.length);
+    const next = `${before}${contact.display_name} ${after.trimStart()}`;
+    setInput(next);
+    setMentionOpen(false);
+    setMentionAnchor(-1);
+    setTimeout(() => {
+      inputRef.current?.focus();
+      const pos = (before + contact.display_name + " ").length;
+      inputRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  };
+
+  const cycleHistory = (dir: "up" | "down") => {
+    if (recentUserMessages.length === 0) return;
+    const cur = historyIdx ?? -1;
+    let next = dir === "up" ? cur + 1 : cur - 1;
+    if (next < -1) next = -1;
+    if (next >= recentUserMessages.length) next = recentUserMessages.length - 1;
+    setHistoryIdx(next);
+    setInput(next < 0 ? "" : recentUserMessages[next]);
+  };
+
+  const toggleBalancePeek = useCallback(async () => {
+    if (balancePeekVisible) {
+      setBalancePeekVisible(false);
+      return;
+    }
+    if (!balancePeek) {
+      try {
+        const b = await api.chat("số dư");
+        if (b.balance) setBalancePeek(b.balance);
+      } catch {
+        /* ignore */
+      }
+    }
+    setBalancePeekVisible(true);
+  }, [balancePeek, balancePeekVisible]);
+
+  useKeyboard({
+    inputId: INPUT_DOM_ID,
+    onFocusInput: () => inputRef.current?.focus(),
+    onResendLast: () => {
+      if (lastUserMessage && !busy) send(lastUserMessage);
+    },
+    onToggleBalance: toggleBalancePeek,
+    onEscape: closeAllModals,
+    onOpenSlash: () => {
+      if (!input.startsWith("/")) {
+        setInput("/");
+        updatePopovers("/", 1);
+      } else {
+        setSlashOpen(true);
+      }
+      setTimeout(() => inputRef.current?.focus(), 0);
+    },
+    onPrevHistory: () => cycleHistory("up"),
+    onNextHistory: () => cycleHistory("down"),
+    onClearInput: () => {
+      setInput("");
+      setSlashOpen(false);
+      setMentionOpen(false);
+    },
+    isInputEmpty: () => input.length === 0,
+  });
+
+  const confirmClear = () => {
+    setMessages([WELCOME]);
+    setClosedDraftIds(new Set());
+    setClosedScheduleDraftIds(new Set());
+    setHistoryIdx(null);
+    setShowClearConfirm(false);
+  };
+
   return (
     <div className="page">
       <div className="phone">
@@ -291,53 +534,109 @@ export default function App() {
           onClick={() => send("Lặp lại giao dịch vừa rồi")}
         />
 
-        <div className="phone__input">
-          <VoiceButton
-            onTranscript={(t) => setInput(t)}
-            disabled={busy}
+        <div className="phone__input-wrap">
+          <SlashPalette
+            open={slashOpen}
+            query={slashQuery}
+            rawInput={input}
+            onPick={handleSlashPick}
+            onClose={() => setSlashOpen(false)}
           />
-          <button
-            type="button"
-            className="phone__contacts-btn"
-            onClick={() => setPickerOpen(true)}
-            aria-label="Mở danh bạ"
-            title="Danh bạ"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M3 5h18v14H3z" />
-              <path d="M16 3v4" />
-              <path d="M8 3v4" />
-              <circle cx="12" cy="13" r="2.5" />
-              <path d="M8 18c.5-1.5 2-2.5 4-2.5s3.5 1 4 2.5" />
-            </svg>
-          </button>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send(input);
-              }
-            }}
-            placeholder="Nhập câu lệnh, ví dụ: chuyển cho mẹ 2 triệu…"
-            disabled={busy}
+          <RecipientAutocomplete
+            open={mentionOpen}
+            query={mentionQuery}
+            onPick={handleMentionPick}
+            onClose={() => setMentionOpen(false)}
           />
-          <button
-            className="btn btn--primary btn--send"
-            onClick={() => send(input)}
-            disabled={busy || !input.trim()}
-            aria-label="Gửi"
-          >
-            ➤
-          </button>
+          {balancePeekVisible && balancePeek && (
+            <div className="balance-peek" role="status">
+              <div className="balance-peek__label">Số dư khả dụng</div>
+              <div className="balance-peek__amount">
+                {formatVND(balancePeek.total)}
+              </div>
+              <button
+                className="balance-peek__close"
+                onClick={() => setBalancePeekVisible(false)}
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          <div className="phone__input">
+            <VoiceButton
+              onTranscript={(t) => setInput(t)}
+              disabled={busy}
+            />
+            <button
+              type="button"
+              className="phone__contacts-btn"
+              onClick={() => setPickerOpen(true)}
+              aria-label="Mở danh bạ"
+              title="Danh bạ"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M3 5h18v14H3z" />
+                <path d="M16 3v4" />
+                <path d="M8 3v4" />
+                <circle cx="12" cy="13" r="2.5" />
+                <path d="M8 18c.5-1.5 2-2.5 4-2.5s3.5 1 4 2.5" />
+              </svg>
+            </button>
+            <input
+              id={INPUT_DOM_ID}
+              ref={inputRef}
+              value={input}
+              onChange={onInputChange}
+              onKeyDown={(e) => {
+                // Slash palette / autocomplete intercept Enter, Arrow*,
+                // Esc via their own capture-phase listeners. We only
+                // reach this branch when neither popover is open.
+                if (e.key === "Enter" && !e.shiftKey && !slashOpen && !mentionOpen) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
+              placeholder="Nhập câu lệnh, ví dụ: chuyển cho mẹ 2 triệu… (/ để mở lệnh nhanh, @ để chọn danh bạ)"
+              disabled={busy}
+              autoComplete="off"
+            />
+            <button
+              className="btn btn--primary btn--send"
+              onClick={() => send(input)}
+              disabled={busy || !input.trim()}
+              aria-label="Gửi"
+            >
+              ➤
+            </button>
+          </div>
         </div>
         <ContactPicker
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onPick={pickRecipient}
         />
+        {showClearConfirm && (
+          <div className="clear-confirm" role="dialog" aria-modal="true">
+            <div className="clear-confirm__card">
+              <div className="clear-confirm__title">Xoá toàn bộ đoạn chat?</div>
+              <div className="clear-confirm__body">
+                Lịch sử hội thoại hiện tại sẽ bị xoá. Hành động này không thể hoàn tác.
+              </div>
+              <div className="clear-confirm__actions">
+                <button
+                  className="btn btn--ghost"
+                  onClick={() => setShowClearConfirm(false)}
+                >
+                  Huỷ
+                </button>
+                <button className="btn btn--warn" onClick={confirmClear}>
+                  Xoá
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <aside className="sidebar">
@@ -348,12 +647,18 @@ export default function App() {
           Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng — Team One
           Last Token.
         </p>
-        <InsightsCard />
+        <div className={insightsOpen ? "insights-highlight" : ""}>
+          <InsightsCard />
+        </div>
         <QuickScenarios onPick={send} />
         <div className="sidebar__legend">
           <div>
             <strong>Pipeline:</strong> Câu lệnh → Hiểu ý định → Trích xuất →
             Ngữ cảnh cá nhân → Kiểm tra an toàn → Thực thi.
+          </div>
+          <div>
+            <strong>Phím tắt:</strong> Cmd/Ctrl+K (focus), Cmd/Ctrl+/ (lệnh),
+            Cmd/Ctrl+Enter (gửi lại), Cmd/Ctrl+B (số dư), Esc (đóng), ↑ (lịch sử).
           </div>
           <div>
             <strong>Mock user:</strong> An — số dư tài khoản chính 24.350.000đ.
