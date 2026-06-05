@@ -286,20 +286,48 @@ def _handle_history(
     user_id: str, nlu: NLUResult, history_msgs: Optional[list[dict]] = None
 ) -> OmniResponse:
     contacts = get_store().contacts_of(user_id)
+    e = nlu.entities
 
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
-    if nlu.entities.recipient_text:
-        candidates = resolve_recipient(nlu.entities.recipient_text, contacts)
+    if e.recipient_text:
+        candidates = resolve_recipient(e.recipient_text, contacts)
         if len(candidates) == 1:
             contact_id = candidates[0].contact.id
             contact_name = candidates[0].contact.display_name
 
     # A4: normalize temporal phrasing (handles "thang truoc" no-diacritic too).
-    user_asked_specific_period = nlu.entities.temporal_reference is not None
-    period = _period_from_temporal(nlu.entities.temporal_reference)
+    # Specific month / all_time override the temporal reference.
+    user_asked_specific_period = (
+        e.temporal_reference is not None
+        or e.specific_month is not None
+        or e.all_time
+    )
+    period = _period_from_temporal(e.temporal_reference)
 
-    hist = get_history(user_id=user_id, contact_id=contact_id, period=period)
+    # When the user asked for "N most recent" without a period, search
+    # the full history — defaulting to this_month silently turns "lần
+    # cuối gửi mẹ" into a no-op when mẹ wasn't paid this month.
+    if e.limit is not None and not user_asked_specific_period:
+        e.all_time = True
+        user_asked_specific_period = True
+
+    # Same for semantic filter — "khoản chi liên quan đến sách" shouldn't
+    # be artificially scoped to this month.
+    if e.semantic_filter and not user_asked_specific_period:
+        e.all_time = True
+        user_asked_specific_period = True
+
+    hist = get_history(
+        user_id=user_id,
+        contact_id=contact_id,
+        period=period,
+        specific_month=e.specific_month,
+        specific_year=e.specific_year,
+        all_time=e.all_time,
+        limit=e.limit,
+        semantic_filter=e.semantic_filter,
+    )
 
     # A3: if the user didn't ask for a specific period and this_month is empty,
     # silently fall back to last_month (with a note in the reply).
@@ -308,6 +336,8 @@ def _handle_history(
         not user_asked_specific_period
         and period == "this_month"
         and hist["count"] == 0
+        and not e.semantic_filter
+        and not e.limit
     ):
         last_hist = get_history(
             user_id=user_id, contact_id=contact_id, period="last_month"
@@ -321,6 +351,7 @@ def _handle_history(
         "this_month": "tháng này",
         "last_month": "tháng trước",
         "recent_30d": "30 ngày gần đây",
+        "all_time": "tất cả thời gian",
     }.get(period, period)
 
     if hist["count"] == 0:
@@ -335,9 +366,27 @@ def _handle_history(
             f"{format_vnd(hist['total'])} qua {hist['count']} giao dịch. "
             f"Trung bình {format_vnd(hist['average'])} mỗi lần."
         )
+        # Enrich the deterministic fallback with top-N highlights when the
+        # user asked for them — important when the LLM is rate-limited
+        # and can't phrase the answer itself.
+        if e.top_recipient and hist["by_recipient"]:
+            top = max(hist["by_recipient"].items(), key=lambda x: x[1])
+            fallback += f" Người nhận nhiều nhất: {top[0]} ({format_vnd(top[1])})."
+        if e.top_category and hist["by_category"]:
+            top = max(hist["by_category"].items(), key=lambda x: x[1])
+            fallback += f" Chủ đề nhiều nhất: {top[0]} ({format_vnd(top[1])})."
         # Let the LLM phrase the answer using the full breakdown so it can
         # respond to questions like "vào những chủ đề nào", "ai nhận nhiều
         # nhất", etc. — but the data it cites is whatever's in `facts`.
+        # Top-N highlights for the LLM to cite when the user asks aggregations.
+        top_recipient = (
+            max(hist["by_recipient"].items(), key=lambda x: x[1])
+            if hist["by_recipient"] else None
+        )
+        top_category = (
+            max(hist["by_category"].items(), key=lambda x: x[1])
+            if hist["by_category"] else None
+        )
         facts = {
             "intent": "history",
             "period_label": period_label,
@@ -347,13 +396,24 @@ def _handle_history(
             "average": hist["average"],
             "by_category": hist["by_category"],
             "by_recipient": hist["by_recipient"],
+            "top_recipient": (
+                {"name": top_recipient[0], "total": top_recipient[1]}
+                if top_recipient else None
+            ),
+            "top_category": (
+                {"category": top_category[0], "total": top_category[1]}
+                if top_category else None
+            ),
             "fell_back_from_this_month": fell_back,
+            "semantic_filter": e.semantic_filter,
+            "limit_applied": e.limit,
             "descriptions": [
                 {
                     "recipient": t["contact"]["display_name"],
                     "amount": t["amount"],
                     "description": t["description"],
                     "category": t["category"],
+                    "created_at": t["created_at"],
                 }
                 for t in hist["items"]
             ],
@@ -367,6 +427,22 @@ def _handle_history(
                 "Tháng này bạn chưa có giao dịch nào, mình lấy dữ liệu tháng trước nhé. "
                 + fallback
             )
+        elif e.limit:
+            # User asked for N most recent — list them, don't aggregate.
+            lines = [
+                f"{i+1}. {it['contact']['display_name']} — "
+                f"{format_vnd(it['amount'])} ({it['description']})"
+                for i, it in enumerate(hist["items"])
+            ]
+            body = (
+                f"{e.limit} giao dịch gần nhất"
+                + (f" với {contact_name}" if contact_name else "")
+                + ":\n" + "\n".join(lines)
+            )
+            # Try LLM phrasing too — it sometimes produces nicer flow text.
+            llm_text = llm_phrase(nlu.raw_text, facts, history=history_msgs)
+            if llm_text:
+                body = llm_text
         else:
             body = llm_phrase(nlu.raw_text, facts, history=history_msgs) or fallback
     return OmniResponse(intent="history", text=body, history=hist)

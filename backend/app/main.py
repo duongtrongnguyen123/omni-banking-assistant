@@ -34,19 +34,25 @@ app.include_router(ws.router)
 
 @app.on_event("startup")
 def _backfill_embeddings() -> None:
-    """Embed any contact/transaction rows that don't yet have a vector.
-    Runs once per process start; no-op if there's no Gemini key.
-    Skipped when OMNI_SKIP_EMBED_BACKFILL=1 (CI/tests)."""
+    """Warm the local embedder and embed any contact/transaction rows that
+    don't yet have a vector. Runs once per process start. Skipped when
+    OMNI_SKIP_EMBED_BACKFILL=1 (CI / fast restarts).
+    """
     import os
 
     if os.environ.get("OMNI_SKIP_EMBED_BACKFILL"):
         return
     try:
+        from .nlp.embeddings import warmup
         from .nlp.embedder import fill_missing_embeddings
 
+        warmup()
         filled = fill_missing_embeddings()
         if filled["contacts"] or filled["transactions"]:
-            log.info("Embedded %s contacts, %s transactions", **filled)
+            log.info(
+                "Embedded %s contacts, %s transactions",
+                filled["contacts"], filled["transactions"],
+            )
     except Exception as e:
         log.warning("Embedding backfill skipped: %s", e)
 

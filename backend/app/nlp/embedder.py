@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 from ..db.connection import get_connection
-from .embeddings import embed, pack
+from .embeddings import embed_many, pack
 
 log = logging.getLogger("omni.nlp.embed")
 
@@ -34,19 +34,22 @@ def _transaction_text(row) -> str:
 
 
 def _fill(table: str, text_fn) -> int:
+    """Batch-embed every row in ``table`` that lacks an embedding. Uses
+    ``embed_many`` so the local fastembed model only pays its per-batch
+    overhead once instead of per-row."""
     conn = get_connection()
     rows = conn.execute(
         f"SELECT * FROM {table} WHERE embedding IS NULL"
     ).fetchall()
+    if not rows:
+        return 0
+
+    texts = [text_fn(row) for row in rows]
+    vectors = embed_many(texts)
     filled = 0
-    for row in rows:
-        text = text_fn(row)
-        if not text.strip():
-            continue
-        vec = embed(text)
+    for row, vec in zip(rows, vectors):
         if vec is None:
-            # No API key or rate-limited; stop trying this run.
-            return filled
+            continue
         conn.execute(
             f"UPDATE {table} SET embedding = ? WHERE id = ?",
             (pack(vec), row["id"]),

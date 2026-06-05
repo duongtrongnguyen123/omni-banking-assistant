@@ -80,6 +80,14 @@ class ExtractedEntities(BaseModel):
     # Used by add_contact intent
     bank_name: Optional[str] = None
     alias: Optional[str] = None
+    # Used by history intent
+    specific_month: Optional[int] = None   # 1..12
+    specific_year: Optional[int] = None
+    all_time: bool = False                 # "tất cả từ trước đến giờ"
+    limit: Optional[int] = None            # "5 giao dịch gần nhất"
+    semantic_filter: Optional[str] = None  # fuzzy text match on description, e.g. "ăn uống", "Tết"
+    top_recipient: bool = False            # "ai nhận nhiều nhất"
+    top_category: bool = False             # "chủ đề nào nhiều nhất"
 
 
 class NLUResult(BaseModel):
