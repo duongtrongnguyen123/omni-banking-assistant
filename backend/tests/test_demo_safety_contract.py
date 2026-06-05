@@ -338,6 +338,45 @@ def test_actual_greetings_still_route_smalltalk(text: str) -> None:
     assert intent == "smalltalk", text
 
 
+# ---------------------------------------------------------------------------
+# Isolation Forest fraud scorer wired into the safety contract
+# ---------------------------------------------------------------------------
+
+
+def test_fraud_risk_high_flag_is_in_schema() -> None:
+    """Schema's SafetyFlag Literal must include ``fraud_risk_high`` —
+    otherwise the score-above-threshold path crashes Pydantic at flag
+    construction. Test schema directly so a revert in schemas.py is
+    caught even when the fraud model isn't loaded for the test user."""
+    from app.models.schemas import SafetyFlag
+
+    # If the literal includes the code, constructing the flag succeeds.
+    f = SafetyFlag(code="fraud_risk_high", severity="warn", message="x")
+    assert f.code == "fraud_risk_high"
+
+
+def test_fraud_risk_high_triggers_step_up() -> None:
+    """``requires_step_up()`` must include the new flag — otherwise a
+    high IF score wouldn't gate an OTP and the model would be
+    decorative."""
+    from app.models.schemas import SafetyFlag
+    from app.safety.rules import requires_step_up
+
+    flags = [SafetyFlag(code="fraud_risk_high", severity="warn", message="x")]
+    assert requires_step_up(flags) is True
+
+
+def test_fraud_model_threshold_constant_exists() -> None:
+    """rules.evaluate() reads ``fraud_model.FRAUD_RISK_THRESHOLD``. A
+    rename / reorder would silently disable the integration; assert
+    the public name is stable."""
+    from app.safety import fraud_model
+
+    assert hasattr(fraud_model, "FRAUD_RISK_THRESHOLD")
+    # Threshold is a probability — must be in [0, 1].
+    assert 0.0 <= fraud_model.FRAUD_RISK_THRESHOLD <= 1.0
+
+
 def test_insights_anomaly_renders_detector_reason() -> None:
     """The MAD anomaly detector returns ``contact_name`` + ``reason``
     (e.g. "cao gấp 8.4 lần mức thường (per-contact)"). The chat reply

@@ -170,6 +170,42 @@ def evaluate(
                 )
             )
 
+    # Isolation Forest fraud score (per-user, trained on the user's own
+    # history). Soft dependency — returns None when no model is loaded
+    # for this user, in which case the legacy z-score check above already
+    # caught anything statistically interesting. Wrapped in try/except so
+    # a broken model file can never break the safety contract.
+    if user_id and recipient is not None and amount is not None:
+        try:
+            from . import fraud_model  # local import: keeps cold path cheap
+
+            score = fraud_model.score_draft(
+                user_id=user_id,
+                amount=amount,
+                recipient=recipient,
+            )
+            if score is not None and score >= fraud_model.FRAUD_RISK_THRESHOLD:
+                # Suppress when an existing per-recipient warn already fired
+                # so the user doesn't see two warnings about the same tx.
+                already_warned = any(
+                    f.code == "amount_above_average" and f.severity == "warn"
+                    for f in flags
+                )
+                if not already_warned:
+                    flags.append(
+                        SafetyFlag(
+                            code="fraud_risk_high",
+                            severity="warn",
+                            message=(
+                                f"Mô hình bất thường (Isolation Forest) đánh giá "
+                                f"giao dịch này có rủi ro cao ({int(score * 100)}%). "
+                                "Bạn xác minh OTP để chắc chắn nhé."
+                            ),
+                        )
+                    )
+        except Exception:  # pragma: no cover — defensive
+            pass
+
     # Push toast for anomaly warnings so the user sees the heads-up
     # even if the chat scroll has moved past the safety message. Only
     # fires when we know which user this is (the orchestrator passes
@@ -198,7 +234,11 @@ def evaluate(
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
     """Whether OTP / step-up auth is required to proceed."""
     return any(
-        f.code in ("new_recipient_large_amount", "amount_above_average")
+        f.code in (
+            "new_recipient_large_amount",
+            "amount_above_average",
+            "fraud_risk_high",
+        )
         and f.severity == "warn"
         for f in flags
     )

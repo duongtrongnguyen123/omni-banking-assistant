@@ -140,6 +140,11 @@ class SafetyFlag(BaseModel):
         "new_recipient_large_amount",
         "amount_above_average",
         "insufficient_balance",
+        # Isolation Forest score over the fraud threshold — model is
+        # per-user, trained on the user's own history. Raises a warn flag
+        # that triggers OTP step-up; never a hard block (false positives
+        # on a real bank dataset are too costly to auto-cancel a transfer).
+        "fraud_risk_high",
         "ok",
     ]
     severity: Literal["info", "warn", "block"]
