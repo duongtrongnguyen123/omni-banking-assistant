@@ -26,11 +26,51 @@ from app.services.orchestrator import _is_confirm, handle_message
 USER = "u_an"
 
 
+def _clear_all_drafts() -> None:
+    """Clear every draft type — transaction, contact, schedule, budget,
+    goal. Avoids leaking state out to siblings like ``test_multiturn``
+    that assert on no-draft behaviour.
+
+    Wrapped in try/except so a session backend that lacks one of the
+    clear methods (e.g. a future Redis variant) still wins through
+    instead of breaking the regression guard."""
+    s = session_for(USER)
+    for attr in ("clear_draft", "clear_contact_draft", "clear_schedule_draft"):
+        fn = getattr(s, attr, None)
+        if fn:
+            try:
+                fn()
+            except Exception:
+                pass
+
+    # Budget / goal drafts live in module-level dicts on the orchestrator
+    # (in-memory stash, not in the session backend). Reach in and wipe them.
+    try:
+        from app.services import orchestrator as _orch
+
+        for store in ("_budget_drafts", "_goal_drafts"):
+            d = getattr(_orch, store, None)
+            if isinstance(d, dict):
+                d.pop(USER, None)
+    except Exception:
+        pass
+
+
 def _r(text: str):
     """Fresh session per turn — these are intent / routing assertions, not
     multi-turn ones, so leaking draft state would just confuse the test."""
-    session_for(USER).clear_draft()
+    _clear_all_drafts()
     return handle_message(USER, text)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session():
+    """Per-test session isolation: clean before AND after so a leftover
+    budget / goal / contact draft can't reach the next test (in this
+    module or any sibling)."""
+    _clear_all_drafts()
+    yield
+    _clear_all_drafts()
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +268,37 @@ def test_set_budget_constraint_phrasing(text: str) -> None:
 # ---------------------------------------------------------------------------
 # 10937f2 — anomaly callout shows the detector's per-recipient reason
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Bounded "hi"/"hey" smalltalk match — substring vs word-boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Bare "hi" inside "hiện" / "nghi" / "chi" — substring smalltalk
+        # used to steal these into smalltalk before the bounded fix.
+        "phát hiện chi tiêu lạ",
+        "phát hiện giao dịch lạ",
+        "omni rà soát chi tiêu hộ mình",
+        "Chi ơi cho mình số dư",
+        "ghi nhớ giúp mình",
+    ],
+)
+def test_hi_substring_does_not_route_smalltalk(text: str) -> None:
+    """Tier-2 smalltalk used the bare substrings "hi" / "hey" — those
+    match inside the Vietnamese tokens *hiện* / *nghi* / *chi* and
+    misrouted normal banking text. Word-boundary match required."""
+    intent, _ = classify(text)
+    assert intent != "smalltalk", text
+
+
+@pytest.mark.parametrize("text", ["hi", "hey", "hi omni", "hey omni", "hello"])
+def test_actual_greetings_still_route_smalltalk(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "smalltalk", text
 
 
 def test_insights_anomaly_renders_detector_reason() -> None:

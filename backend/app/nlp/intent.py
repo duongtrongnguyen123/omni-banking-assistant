@@ -125,8 +125,18 @@ _MED: list[tuple[Intent, list[str]]] = [
         # the orchestrator pulls the previous tx as the implicit recipient.
         "lap lai", "repeat", "lai giao dich", "y nhu",
     ]),
-    ("smalltalk", ["hi", "hey"]),
+    # NOTE: bare "hi" / "hey" are intentionally NOT here. Substring matching
+    # would false-positive on Vietnamese words containing those letters
+    # ("phát hiện" → "hi" inside "hiện", "khả nghi" → "hi" inside "nghi",
+    # "chi tiêu" → "hi" inside "chi"). They're matched as whole words via
+    # ``_SMALLTALK_HI_RE`` in classify() instead.
 ]
+
+
+# Word-boundary smalltalk fallback — kept out of the Tier-2 substring loop
+# so "hi" inside "hiện" / "nghi" / "chi" can't steal the routing from
+# insights / history / transfer.
+_SMALLTALK_HI_RE = re.compile(r"\b(?:hi|hey)\b", re.IGNORECASE)
 
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
@@ -174,6 +184,12 @@ def classify(text: str) -> tuple[Intent, float]:
         for kw in kws:
             if kw in folded:
                 return intent, 0.65
+
+    # Tier 2.5 — bounded smalltalk for the English "hi"/"hey" greetings.
+    # Done as a regex AFTER all substring-keyword tiers so it can't steal
+    # routing from any intent. Matches whole words only.
+    if _SMALLTALK_HI_RE.search(folded):
+        return "smalltalk", 0.65
 
     # Tier 3 — bare digit means an unclassified transfer command.
     if re.search(r"\d", folded):

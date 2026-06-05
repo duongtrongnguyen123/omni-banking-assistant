@@ -10,6 +10,11 @@ export type Intent =
   | "set_goal"
   | "budget_status"
   | "atm_finder"
+  // Proactive analytics — backend ships this for "có gì bất thường",
+  // "so với tháng trước", "phân tích chi tiêu". The chat reply is
+  // text-only (no structured card) but exhaustive switches on Intent
+  // need to know about it.
+  | "insights"
   | "smalltalk"
   | "unknown";
 
