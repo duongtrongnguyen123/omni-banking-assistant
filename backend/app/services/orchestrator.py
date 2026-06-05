@@ -602,6 +602,11 @@ def _handle_schedule(user_id: str, nlu: NLUResult) -> OmniResponse:
         )
     recipient = candidates[0].contact
     account = store.primary_account(user_id)
+    if account is None:
+        return OmniResponse(
+            intent="schedule",
+            text="Chưa có tài khoản nguồn. Bạn liên kết tài khoản trước nhé.",
+        )
 
     # A2: stage a draft — persistence happens only on confirm.
     draft = ScheduleDraft(
@@ -805,6 +810,11 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     contacts = store.contacts_of(user_id)
     txs = store.transactions_of(user_id)
     account = store.primary_account(user_id)
+    if account is None:
+        return OmniResponse(
+            intent="transfer",
+            text="Chưa có tài khoản nguồn. Bạn liên kết tài khoản trước nhé.",
+        )
     e = nlu.entities
 
     candidates = (
