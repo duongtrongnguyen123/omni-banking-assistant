@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routes import banking, chat, demo, insights, suggestions, ws
+from .routes import banking, chat, demo, exports, insights, suggestions, ws
 
 log = logging.getLogger("omni.main")
 
@@ -32,6 +32,7 @@ app.include_router(banking.router)
 app.include_router(suggestions.router)
 app.include_router(insights.router)
 app.include_router(demo.router)
+app.include_router(exports.router)
 app.include_router(ws.router)
 
 

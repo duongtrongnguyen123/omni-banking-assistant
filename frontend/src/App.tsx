@@ -12,6 +12,7 @@ import { RepeatLastCTA } from "./components/RepeatLastCTA";
 import { ToastStack } from "./components/ToastStack";
 import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
 import { DemoRecorder } from "./components/DemoRecorder";
+import { ExportMenu } from "./components/ExportMenu";
 import { useEventStream } from "./hooks/useEventStream";
 import {
   SlashPalette,
@@ -516,6 +517,7 @@ export default function App() {
               {ttsEnabled ? "🔊" : "🔇"}
             </button>
           )}
+          <ExportMenu />
           <div className="user-pill">AN</div>
         </header>
 
