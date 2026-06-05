@@ -63,7 +63,13 @@ _BUDGET_CATEGORIES: list[tuple[str, str, str]] = [
 
 _BUDGET_VERBS_RE = re.compile(
     r"(?:đặt|dat|tao|tạo|thiet lap|thiết lập|đặt lại|dat lai)\s+"
-    r"(?:ngân sách|ngan sach|han muc|hạn mức|budget)",
+    r"(?:ngân sách|ngan sach|han muc|hạn mức|budget)"
+    # Verb-anchored phrasings without the "ngân sách" noun — judges often
+    # phrase budgets as a constraint on spending rather than naming the
+    # envelope.  "giới hạn chi tiêu 5 triệu/tháng" / "khống chế tiêu
+    # 3 triệu" / "đặt mức chi 2 triệu cho ăn uống".
+    r"|(?:giới\s+hạn|gioi\s+han|khống\s+chế|khong\s+che|đặt\s+mức|dat\s+muc)"
+    r"\s+(?:chi\s+tiêu|chi\s+tieu|tiêu|tieu|chi)",
     re.IGNORECASE,
 )
 
