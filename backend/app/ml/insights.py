@@ -26,7 +26,6 @@ from typing import Optional
 
 from ..store import get_store
 
-
 # ----- helpers --------------------------------------------------------------
 
 
@@ -167,10 +166,9 @@ def anomalies(
         else:
             z = (t.amount - mu) / sigma
 
-        if z < 2.5 or not math.isfinite(z) and z != float("inf"):
+        if (z < 2.5 or not math.isfinite(z) and z != float("inf")) and z != float("inf"):
             # Filter out everything below threshold; keep +inf for novelty.
-            if z != float("inf"):
-                continue
+            continue
 
         ratio = (t.amount / mu) if mu > 0 else float("inf")
         scored.append(

@@ -21,19 +21,63 @@ const DEV_MODE = (() => {
   }
 })();
 
+// Vietnamese fallback copy when the server returns a body-less error or
+// when fetch itself fails (offline / DNS / CORS). Used by jsonFetch and
+// surfaced as a top-frame toast via friendlyApiError().
+const VI_NETWORK_DOWN = "Mất kết nối — kiểm tra mạng nhé";
+const VI_GENERIC_ERROR = "Mạng tạm trục trặc — thử lại nhé";
+const VI_RATE_LIMITED = "Bạn gửi hơi nhanh — chờ chút rồi thử lại nhé";
+
+/**
+ * Wraps a fetch-stage Error / HTTP-stage Error with a normalised shape:
+ * `status` (0 = network unreachable), `detail` (server-supplied or our
+ * Vietnamese fallback). Consumers can pattern-match on `status` to
+ * decide between toast variants.
+ */
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string) {
+    super(`${status} ${detail}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** Pick the right Vietnamese error string for a thrown ApiError. */
+export function friendlyApiError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 0) return VI_NETWORK_DOWN;
+    if (err.status === 429) return err.detail || VI_RATE_LIMITED;
+    return err.detail || VI_GENERIC_ERROR;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return VI_GENERIC_ERROR;
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { ...HEADERS, ...(init?.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: { ...HEADERS, ...(init?.headers ?? {}) },
+    });
+  } catch {
+    // Browser fetch only rejects on network failure / CORS preflight
+    // failure. Surface as status=0 so the caller can show the offline
+    // toast instead of "TypeError: failed to fetch".
+    throw new ApiError(0, VI_NETWORK_DOWN);
+  }
   if (!res.ok) {
     let detail = "";
     try {
       detail = (await res.json()).detail ?? "";
     } catch {
-      // ignore
+      // Body wasn't JSON — fall back to statusText, then to the generic VN string.
     }
-    throw new Error(`${res.status} ${detail || res.statusText}`);
+    if (!detail) detail = res.statusText || VI_GENERIC_ERROR;
+    throw new ApiError(res.status, detail);
   }
   return res.json();
 }

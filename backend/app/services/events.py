@@ -25,6 +25,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections import defaultdict
@@ -85,7 +86,7 @@ class EventBus:
             lambda: asyncio.Queue(maxsize=_MAX_BACKLOG)
         )
 
-    def _queue_for(self, user_id: str) -> "asyncio.Queue[Event]":
+    def _queue_for(self, user_id: str) -> asyncio.Queue[Event]:
         # Hitting defaultdict via __getitem__ creates the queue. We do
         # this in a helper to keep the call sites readable.
         return self._queues[user_id]
@@ -101,10 +102,8 @@ class EventBus:
         try:
             q.put_nowait(event)
         except asyncio.QueueFull:
-            try:
+            with contextlib.suppress(asyncio.QueueEmpty):
                 q.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
             try:
                 q.put_nowait(event)
             except Exception:  # pragma: no cover — extremely unlikely

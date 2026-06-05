@@ -56,7 +56,6 @@ import re
 import zlib
 from typing import Optional, TypedDict
 
-
 _MAGIC = "OMNIQR1"
 
 # Permissive but bounded — accounts up to 19 digits (longest Vietnamese

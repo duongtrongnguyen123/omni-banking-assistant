@@ -13,6 +13,7 @@ transactions / 10k contacts per user without anything special.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import uuid
 from datetime import datetime
@@ -601,10 +602,8 @@ class Store:
             except Exception:
                 # Belt-and-braces rollback for unexpected sqlite errors;
                 # known branches above already ROLLBACK explicitly.
-                try:
+                with contextlib.suppress(Exception):
                     conn.execute("ROLLBACK")
-                except Exception:
-                    pass
                 raise
         return self.get_goal(goal_id)  # type: ignore[return-value]
 

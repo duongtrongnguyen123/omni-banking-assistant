@@ -17,7 +17,6 @@ from ..models.schemas import BudgetStatus, Transaction
 from ..nlp.budget_entities import _BUDGET_CATEGORIES
 from ..store import get_store
 
-
 # Build a code → label map once at import time. The first entry per
 # code wins, which keeps the labels stable even when the keyword table
 # grows.

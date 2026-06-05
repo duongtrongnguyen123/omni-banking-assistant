@@ -29,7 +29,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional, TypedDict
 
-
 _DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "atms.json"
 
 # Earth's mean radius in kilometres. The Haversine formula is exact on

@@ -29,6 +29,7 @@ Design notes
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sqlite3
@@ -268,8 +269,8 @@ async def _run_startup_hooks() -> None:
             log.info("offline_demo=1 — embedding backfill skipped")
             return
         try:
-            from ..nlp.embeddings import warmup
             from ..nlp.embedder import fill_missing_embeddings
+            from ..nlp.embeddings import warmup
 
             warmup()
             filled = fill_missing_embeddings()
@@ -354,7 +355,7 @@ async def _drain_event_bus() -> None:
         # Snapshot the keys because ``publish`` may mutate the dict.
         user_ids = list(bus._queues.keys())  # type: ignore[attr-defined]
         for user_id in user_ids:
-            try:
+            with contextlib.suppress(Exception):
                 bus.publish(
                     user_id,
                     Event(
@@ -364,8 +365,6 @@ async def _drain_event_bus() -> None:
                         severity="info",
                     ),
                 )
-            except Exception:  # noqa: BLE001
-                pass
     except Exception as exc:  # noqa: BLE001
         log.warning("event bus drain failed: %s", exc)
 
@@ -381,10 +380,8 @@ async def _close_session_backend() -> None:
         from ..context.session import get_backend
 
         backend = get_backend()
-        try:
+        with contextlib.suppress(Exception):
             backend.close()
-        except Exception:  # noqa: BLE001
-            pass
     except Exception as exc:  # noqa: BLE001
         log.debug("session backend close skipped: %s", exc)
 

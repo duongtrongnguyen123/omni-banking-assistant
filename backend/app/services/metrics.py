@@ -48,7 +48,6 @@ from __future__ import annotations
 import threading
 from typing import Iterable, Optional
 
-
 # ---------------------------------------------------------------------------
 # Label helpers
 # ---------------------------------------------------------------------------
@@ -346,8 +345,7 @@ class Histogram:
         with self._lock:
             items = list(self._children.items())
         items.sort(key=lambda kv: kv[0])
-        for values, child in items:
-            yield values, child
+        yield from items
 
 
 # ---------------------------------------------------------------------------

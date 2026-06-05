@@ -11,14 +11,48 @@ capped at 100 entries.
 
 from __future__ import annotations
 
+import os
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from ..nlp import privacy
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+def require_admin(authorization: Optional[str] = Header(default=None)) -> None:
+    """Gate every ``/api/admin/*`` route behind a shared-secret bearer token.
+
+    Behavior:
+
+    * ``OMNI_ADMIN_TOKEN`` unset → open (demo mode). Documented in
+      ``docs/admin-auth.md`` so judges and operators know the trust
+      contract before deploying.
+    * ``OMNI_ADMIN_TOKEN`` set → request must send
+      ``Authorization: Bearer <token>`` with an exact-match value.
+      Mismatch → 401. Missing header → 401.
+
+    The token is compared in constant time to avoid timing oracles even
+    though the demo doesn't realistically need it — habit hardening.
+    """
+    expected = os.environ.get("OMNI_ADMIN_TOKEN", "").strip()
+    if not expected:
+        return  # demo mode
+    header = (authorization or "").strip()
+    if not header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Thiếu Authorization Bearer token")
+    supplied = header.split(None, 1)[1].strip()
+    # constant-time comparison
+    if len(supplied) != len(expected):
+        raise HTTPException(status_code=401, detail="Token không hợp lệ")
+    ok = 0
+    for a, b in zip(supplied.encode(), expected.encode()):
+        ok |= a ^ b
+    if ok != 0:
+        raise HTTPException(status_code=401, detail="Token không hợp lệ")
+
+
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
 class PrivacyModeBody(BaseModel):

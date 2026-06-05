@@ -163,7 +163,7 @@ class SessionBackend(ABC):
         """Return False if writes should be considered unsafe."""
         return True
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027 — default no-op, subclasses override
         """Optional resource cleanup."""
 
 

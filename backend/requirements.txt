@@ -20,3 +20,7 @@ fakeredis>=2.20
 # pre-fill. ``qrcode[pil]`` pulls Pillow (already present) and a tiny
 # pure-Python QR encoder — <100KB combined.
 qrcode[pil]>=7.4
+# Dev-only: ruff is the lint baseline (`ruff check app/` must be
+# clean — see pyproject.toml for the rule set). Pinned to a major
+# version so CI doesn't flip when upstream rolls out new lint rules.
+ruff>=0.15,<1.0

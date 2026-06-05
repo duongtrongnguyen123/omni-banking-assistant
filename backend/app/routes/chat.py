@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-
 from pydantic import BaseModel, Field
 
-from ..models.schemas import OmniResponse
 from ..context.session import session_for
+from ..models.schemas import OmniResponse
 from ..services.orchestrator import (
     begin_telemetry,
     cancel_contact_draft,
@@ -18,6 +17,7 @@ from ..services.orchestrator import (
     handle_message,
     select_candidate,
 )
+from ._ratelimit import enforce_user_rate_limit
 from .deps import current_user
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -42,6 +42,7 @@ def chat(
     user_id: str = Depends(current_user),
     dev: int = Query(default=0, description="Set dev=1 to populate response.telemetry"),
 ) -> OmniResponse:
+    enforce_user_rate_limit(user_id)
     if dev:
         begin_telemetry()
     try:

@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Optional
 
 from ..models.schemas import NLUResult
+
+# Add-contact fills (bank_name / alias / save-verb name) live in a sibling
+# module so the canonical "Lưu <Name> STK <num> <Bank>" demo phrasing
+# produces a complete contact_draft under the rule-only fallback too.
+from .add_contact_entities import augment as _augment_add_contact
 from .budget_entities import (
     detect_budget_intent,
     detect_goal_intent,
@@ -12,10 +17,6 @@ from .budget_entities import (
     extract_goal_name,
 )
 from .entities import extract
-# Add-contact fills (bank_name / alias / save-verb name) live in a sibling
-# module so the canonical "Lưu <Name> STK <num> <Bank>" demo phrasing
-# produces a complete contact_draft under the rule-only fallback too.
-from .add_contact_entities import augment as _augment_add_contact
 from .intent import classify
 from .llm import llm_understand
 
