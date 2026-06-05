@@ -11,6 +11,7 @@ import { ScheduleDraftCard } from "./ScheduleDraftCard";
 import { BudgetDraftCard, GoalDraftCard } from "./BudgetDraftCard";
 import { RecurringList } from "./RecurringList";
 import { AtmCard } from "./AtmCard";
+import { HelpCard } from "./HelpCard";
 import { speak } from "../lib/tts";
 
 interface Props {
@@ -87,6 +88,12 @@ export const Message = ({
         <div className="bubble bubble--omni">
           {message.pending ? <span className="typing"><i /><i /><i /></span> : message.text}
         </div>
+        {r?.help_sections && r.help_sections.length > 0 && (
+          <HelpCard
+            sections={r.help_sections}
+            onPrefill={(text) => onPrefill?.(text)}
+          />
+        )}
         {r?.draft && r.draft.candidates.length > 0 && r.draft.recipient === null && (
           <DisambiguationCard
             draft={r.draft}

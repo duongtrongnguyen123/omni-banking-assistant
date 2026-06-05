@@ -207,8 +207,16 @@ export interface OmniResponse {
   recurring_patterns: RecurringPattern[] | null;
   budget_statuses?: BudgetStatus[] | null;
   atms?: AtmHit[] | null;
+  help_sections?: HelpSectionPayload[] | null;
   needs_disambiguation: boolean;
   telemetry?: TelemetryPayload | null;
+}
+
+export interface HelpSectionPayload {
+  id: string;
+  title: string;
+  items?: { label: string; example: string }[];
+  shortcuts?: { keys: string; label: string }[];
 }
 
 export interface MoMEntry {

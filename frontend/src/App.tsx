@@ -8,6 +8,8 @@ import { BudgetCard } from "./components/BudgetCard";
 import { GoalsCard } from "./components/GoalsCard";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
+import { SkillsCard } from "./components/SkillsCard";
+import { TutorialOverlay } from "./components/TutorialOverlay";
 import { VoiceButton } from "./components/VoiceButton";
 import { ReceiveCard } from "./components/ReceiveCard";
 import { QrScanButton } from "./components/QrScanButton";
@@ -543,6 +545,7 @@ export default function App() {
       <MetricsCard />
       <AbTestCard />
       <div className="phone">
+        <TutorialOverlay userMessageCount={messages.filter((m) => m.role === "user").length} draftVisible={actionableDraftIds.size > 0} />
         <ToastStack />
         <DemoRecorder />
         {/*
@@ -809,6 +812,7 @@ export default function App() {
         <BudgetCard refreshKey={suggestRefresh} />
         <GoalsCard refreshKey={suggestRefresh} />
         <QuickScenarios onPick={send} />
+        <SkillsCard onPrefill={pickRecipient} />
         <div className="sidebar__legend">
           <div>
             <strong>Pipeline:</strong> Câu lệnh → Hiểu ý định → Trích xuất →

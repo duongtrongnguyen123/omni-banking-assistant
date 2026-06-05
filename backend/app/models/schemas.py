@@ -274,6 +274,12 @@ class OmniResponse(BaseModel):
     # Populated by the ``atm_finder`` intent. Each entry has the ATM seed
     # fields plus ``distance_km`` when the user shared their location.
     atms: Optional[list[dict]] = None
+    # Populated by the ``/help`` (and Vietnamese "trợ giúp") synthetic
+    # intent. Each entry is a section dict ``{"title": str, "items":
+    # list[{"label": str, "example": str}], "shortcut": Optional[str]}``.
+    # Frontend renders this via ``<HelpCard />``; the plain ``text``
+    # field carries an equivalent prose fallback for AT users / replays.
+    help_sections: Optional[list[dict]] = None
     needs_disambiguation: bool = False
     # Populated only when the ``?dev=1`` query param flags the request as
     # a telemetry-overlay client. ``None`` in the default UI path so

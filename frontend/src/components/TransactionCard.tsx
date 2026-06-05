@@ -336,6 +336,7 @@ export const TransactionCard = ({
               className={`btn ${draft.requires_step_up || otpOpen ? "btn--warn" : "btn--primary"}`}
               onClick={handleConfirm}
               disabled={!canSubmit || (otpOpen && cleanOtp.length !== 6)}
+              data-onboarding="confirm"
             >
               {otpOpen ? "Xác minh & chuyển" : "Xác nhận"}
             </button>
