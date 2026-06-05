@@ -135,8 +135,10 @@ if __name__ == "__main__":
             evaluate((1.0, 0.0, 0.0), "tree only"),
             evaluate((0.0, 1.0, 0.0), "freq only"),
             evaluate((0.0, 0.0, 1.0), "rule only"),
+            evaluate((0.0, 0.5, 0.5), "rule + freq (no tree)"),
             evaluate((0.60, 0.40, 0.00), "tree + freq (no rule)"),
-            evaluate((0.35, 0.25, 0.40), "hybrid (default)"),
+            evaluate((0.35, 0.25, 0.40), "balanced hybrid"),
+            evaluate((0.55, 0.30, 0.15), "tree-heavy (default ≥200)"),
             evaluate((0.20, 0.20, 0.60), "rule-heavy"),
         ]
         for r in rows:

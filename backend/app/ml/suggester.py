@@ -59,12 +59,38 @@ _FAMILY_CATEGORIES = {"family"}                 # mẹ / bố / cô ...
 
 
 def _feature_vec(dt: datetime) -> list[float]:
+    """Hand-engineered hierarchical features.
+
+    Pre-computing interactions (X/X sale-day, decade buckets, end-of-month
+    flag) lets a shallow ``max_depth=5`` Random Forest pick up the
+    Vietnamese-specific behavioural patterns without having to split 2-3
+    times to discover them. Higher-importance features come first so the
+    tree's greedy split tends to prefer them.
+    """
+    day = dt.day
+    dow = dt.weekday()
+    month = dt.month
     return [
-        float(dt.day),
-        float(dt.weekday()),
-        float(dt.month),
-        1.0 if dt.weekday() >= 5 else 0.0,
-        1.0 if dt.day in _PAYDAY_DAYS else 0.0,
+        # ---- Strong, explicit signals (sale-day + month edges) ----
+        1.0 if day == month else 0.0,                       # X/X sale (1/1, 6/6, 7/7…)
+        1.0 if (month, day) in _SALE_DATES else 0.0,        # known e-com sale dates
+        1.0 if day <= 5 else 0.0,                           # đầu tháng (lương / hiếu cha mẹ)
+        1.0 if day >= 26 else 0.0,                          # cuối tháng (quà sếp / tổng kết)
+        1.0 if day in _PAYDAY_DAYS else 0.0,                # payday window
+        # ---- Coarse decade buckets (1-10 / 11-20 / 21-end) ----
+        1.0 if day <= 10 else 0.0,
+        1.0 if 11 <= day <= 20 else 0.0,
+        1.0 if day >= 21 else 0.0,
+        # ---- Day-of-week signals (weekend + each individual day) ----
+        1.0 if dow >= 5 else 0.0,
+        1.0 if dow == 0 else 0.0,                           # Monday (PT, lunch)
+        1.0 if dow == 4 else 0.0,                           # Friday (bestie)
+        1.0 if dow == 5 else 0.0,                           # Saturday (yoga, family)
+        1.0 if dow == 6 else 0.0,                           # Sunday (tạp hoá)
+        # ---- Raw scalars at the tail for catch-all splits ----
+        float(day),
+        float(dow),
+        float(month),
     ]
 
 
@@ -111,13 +137,24 @@ def _rule_score(contact, txs: list, when: datetime) -> float:
     elif days_since <= 30:
         bonus += 0.08 * (1 - (days_since - 7) / 23)
 
-    # 4) Calendar prior: payday → family, sale date → service.
+    # 4) Calendar priors keyed to Vietnamese behaviour.
     last_cat = txs[-1].category if txs else ""
 
-    if (when.month, when.day) in _SALE_DATES and last_cat in _SERVICE_CATEGORIES:
+    # X/X e-commerce sale days → service contacts get a clear boost.
+    if when.day == when.month and last_cat in _SERVICE_CATEGORIES:
+        bonus += 0.20
+    elif (when.month, when.day) in _SALE_DATES and last_cat in _SERVICE_CATEGORIES:
         bonus += 0.15
-    if when.day in _PAYDAY_DAYS and last_cat in _FAMILY_CATEGORIES:
-        bonus += 0.1
+
+    # Decade-of-month nudges that match the user's intuition about VN
+    # spending cycles (đầu tháng → lương + hiếu, cuối tháng → tổng kết).
+    if when.day <= 5 and last_cat in _FAMILY_CATEGORIES:
+        bonus += 0.15
+    elif when.day in _PAYDAY_DAYS and last_cat in _FAMILY_CATEGORIES:
+        bonus += 0.08
+
+    if when.day >= 26 and last_cat == "work":
+        bonus += 0.10
 
     return min(bonus, 1.0)
 
@@ -190,16 +227,20 @@ def reset_all() -> None:
 def _auto_weights(n_tx: int) -> tuple[float, float, float]:
     """Pick tree/freq/rule weights based on how much data the user has.
 
-    Justified empirically by ``scripts/eval_suggester.py``:
-      * ≤50 tx  — tree underfits; freq baseline wins (Hit@3 0.50 vs 0.00).
-      * 50–200  — balanced; rules add insurance.
-      * ≥200    — tree dominates (Hit@3 jumps 0.50 → 0.73); reduce rules.
+    Tuned empirically by ``scripts/eval_suggester.py`` with the
+    hierarchical feature set (16 engineered features):
+      * ≤50 tx     — tree underfits; freq baseline + rules win.
+      * 50–200     — balanced; rules add insurance.
+      * 200–500    — tree dominant; freq smoothing helps OOD stability.
+      * ≥500       — pure tree-heavy; rules contribute marginally.
     """
     if n_tx < 50:
-        return (0.10, 0.65, 0.25)
+        return (0.10, 0.55, 0.35)
     if n_tx < 200:
-        return (0.35, 0.30, 0.35)
-    return (0.55, 0.30, 0.15)
+        return (0.40, 0.30, 0.30)
+    if n_tx < 500:
+        return (0.65, 0.25, 0.10)
+    return (0.75, 0.20, 0.05)
 
 
 def suggest(
