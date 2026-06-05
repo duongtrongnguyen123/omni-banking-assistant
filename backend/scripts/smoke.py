@@ -15,7 +15,10 @@ USER = "u_an"
 
 
 def _reset():
-    session_for(USER).clear_draft()
+    s = session_for(USER)
+    s.clear_draft()
+    s.clear_contact_draft()
+    s.clear_schedule_draft()
 
 
 def _line(s: str = "") -> None:
@@ -102,6 +105,29 @@ def main() -> None:
         "KB06 — Lên lịch định kỳ",
         "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng",
     )
+
+    # KB07 — Lưu danh bạ (informal phrasing — exercises the regex pin)
+    case(
+        "KB07 — Lưu danh bạ",
+        "Lưu Lê Mai STK 0123987654 Vietcombank tên gọi tắt chị Mai",
+    )
+
+    # KB08 — Recurring detector (read-only mining of history)
+    case(
+        "KB08 — Khoản định kỳ",
+        "Mình có khoản nào trả đều hàng tháng không?",
+    )
+
+    # Insights direct check — proves /api/insights/summary code path works
+    try:
+        from app.ml.insights import summary as _insights
+        _line("\n=== Insights summary (direct call) ===")
+        s = _insights(USER)
+        _line(f"  MoM categories: {len(s.get('mom', {}))}")
+        _line(f"  Anomalies: {len(s.get('anomalies', []))}")
+        _line(f"  Subscriptions: {len(s.get('subscriptions', []))}")
+    except Exception as e:
+        _line(f"\n=== Insights summary FAILED: {e}")
 
     _line()
     _line("Final balance:")
