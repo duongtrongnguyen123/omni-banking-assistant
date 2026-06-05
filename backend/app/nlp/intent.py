@@ -35,6 +35,7 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "nhieu hon thang truoc", "it hon thang truoc",
         "so voi thang truoc", "so sanh thang truoc",
         "bat thuong",  # "giao dịch nào bất thường", "có gì bất thường"
+        "kha nghi",    # "có gì khả nghi", "thấy gì khả nghi không"
         "co diem la",
         "dang ky dich vu", "subscription", "thue bao hang thang",
         "co the cat giam", "khoan nao thua",

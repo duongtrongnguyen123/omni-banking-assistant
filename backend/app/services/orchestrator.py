@@ -59,6 +59,10 @@ from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
 from ..safety.rules import evaluate, is_blocked, requires_step_up
 from ..store import get_store, new_id, now
+# Insights chat handler — lives in a sibling module so the dispatch site
+# here is the only thing that needs touching. Keeps the long handler body
+# out of the way of in-flight merges to this file.
+from .insights_handler import handle_insights as _handle_insights
 
 _CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
 _CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
@@ -247,6 +251,9 @@ def _dispatch_intent(
 
     if nlu.intent == "recurring":
         return _handle_recurring(user_id, nlu, history_msgs)
+
+    if nlu.intent == "insights":
+        return _handle_insights(user_id, nlu, history_msgs)
 
     if nlu.intent == "add_contact":
         return _handle_add_contact(user_id, nlu)

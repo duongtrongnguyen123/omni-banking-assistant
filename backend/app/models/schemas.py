@@ -13,6 +13,12 @@ Intent = Literal[
     "recurring",
     "reminder",
     "add_contact",
+    # Proactive analytics — "có giao dịch nào bất thường?", "so với tháng
+    # trước?", "phân tích chi tiêu". The rule classifier emits this string
+    # from its Tier-1 keyword list; this Literal entry is what stops
+    # NLUResult from raising ValidationError under the rule-only fallback
+    # (LLM rate-limited / CI / Playwright).
+    "insights",
     "smalltalk",
     "unknown",
 ]
