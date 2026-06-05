@@ -67,16 +67,20 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
-  voiceText: (response: OmniResponse) =>
-    jsonFetch<{ text: string }>("/api/speech/voice-text", {
+  stt: async (audio: Blob): Promise<string> => {
+    const form = new FormData();
+    const ext = audio.type.includes("webm")
+      ? "webm"
+      : audio.type.includes("ogg")
+        ? "ogg"
+        : audio.type.includes("mp4")
+          ? "m4a"
+          : "wav";
+    form.append("audio", audio, `recording.${ext}`);
+    const res = await fetch("/api/speech/stt", {
       method: "POST",
-      body: JSON.stringify({ response }),
-    }),
-  tts: async (text: string, voice?: string): Promise<Blob> => {
-    const res = await fetch("/api/speech/tts", {
-      method: "POST",
-      headers: HEADERS,
-      body: JSON.stringify({ text, voice: voice ?? "vi-VN-HoaiMyNeural" }),
+      headers: { "x-user-id": "u_an" }, // no Content-Type for FormData
+      body: form,
     });
     if (!res.ok) {
       let detail = "";
@@ -87,7 +91,8 @@ export const api = {
       }
       throw new Error(`${res.status} ${detail || res.statusText}`);
     }
-    return res.blob();
+    const data = (await res.json()) as { text: string };
+    return data.text;
   },
   recentRecipients: async (max = 5): Promise<RecentRecipient[]> => {
     const txs = await jsonFetch<

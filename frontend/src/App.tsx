@@ -5,7 +5,7 @@ import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { RecentRecipients } from "./components/RecentRecipients";
-import { VoiceMode } from "./components/VoiceMode";
+import { MicButton } from "./components/MicButton";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -24,7 +24,6 @@ export default function App() {
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -252,36 +251,27 @@ export default function App() {
                 send(input);
               }
             }}
-            placeholder="Nhập câu lệnh, hoặc nhấn 🎙 để nói…"
+            placeholder="Nhập câu lệnh, hoặc bấm mic để nói…"
             disabled={busy}
           />
-          {input.trim() ? (
-            <button
-              className="btn btn--primary btn--send"
-              onClick={() => send(input)}
-              disabled={busy}
-              aria-label="Gửi"
-            >
-              ➤
-            </button>
-          ) : (
-            <button
-              className="btn btn--send voice-trigger"
-              onClick={() => setVoiceOpen(true)}
-              disabled={busy}
-              aria-label="Trò chuyện bằng giọng nói"
-              title="Trò chuyện bằng giọng nói"
-            >
-              🎙
-            </button>
-          )}
+          <MicButton
+            disabled={busy}
+            onText={(t) => {
+              setInput(t);
+              requestAnimationFrame(() => {
+                inputRef.current?.focus();
+              });
+            }}
+          />
+          <button
+            className="btn btn--primary btn--send"
+            onClick={() => send(input)}
+            disabled={busy || !input.trim()}
+            aria-label="Gửi"
+          >
+            ➤
+          </button>
         </div>
-
-        <VoiceMode
-          open={voiceOpen}
-          onClose={() => setVoiceOpen(false)}
-          send={send}
-        />
       </div>
 
       <aside className="sidebar">

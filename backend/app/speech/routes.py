@@ -1,60 +1,68 @@
-"""Speech endpoints: voice-text (redact for TTS) and tts (audio stream).
+"""Speech endpoint: STT via faster-whisper.
 
-Frontend usage:
-1. POST /api/speech/voice-text with the OmniResponse JSON to get the spoken,
-   redacted Vietnamese text (`{"text": "..."}`).
-2. POST /api/speech/tts with `{text, voice?}` to stream MP3 audio."""
+POST /api/speech/stt
+  multipart/form-data with field `audio` (audio/* file)
+  → {"text": "<vietnamese transcript>"}"""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import os
+import tempfile
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from ..routes.deps import current_user
-from .redact import to_voice_text
-from .tts import DEFAULT_VOICE, normalize_voice, synthesize
+from .stt import transcribe_file
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
 
 
-class VoiceTextRequest(BaseModel):
-    # Accept arbitrary OmniResponse-shaped dict so the schema stays loose
-    # (the frontend forwards whatever /api/chat returned).
-    response: dict[str, Any]
-
-
-class VoiceTextResponse(BaseModel):
+class STTResponse(BaseModel):
     text: str
 
 
-class TTSRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
-    voice: Literal["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"] = DEFAULT_VOICE
+def _suffix_for(filename: str | None, content_type: str | None) -> str:
+    if filename and "." in filename:
+        return "." + filename.rsplit(".", 1)[1].lower()
+    if content_type:
+        if "webm" in content_type:
+            return ".webm"
+        if "ogg" in content_type:
+            return ".ogg"
+        if "mp4" in content_type or "m4a" in content_type:
+            return ".m4a"
+        if "wav" in content_type:
+            return ".wav"
+        if "mpeg" in content_type or "mp3" in content_type:
+            return ".mp3"
+    return ".webm"
 
 
-@router.post("/voice-text", response_model=VoiceTextResponse)
-def voice_text(
-    req: VoiceTextRequest,
+@router.post("/stt", response_model=STTResponse)
+async def stt(
+    audio: UploadFile = File(...),
     user_id: str = Depends(current_user),
-) -> VoiceTextResponse:
-    """Convert an OmniResponse into safely-spoken Vietnamese text."""
-    return VoiceTextResponse(text=to_voice_text(req.response))
-
-
-@router.post("/tts")
-async def tts(
-    req: TTSRequest,
-    user_id: str = Depends(current_user),
-) -> StreamingResponse:
-    """Stream MP3 audio for the given text."""
-    voice = normalize_voice(req.voice)
+) -> STTResponse:
+    suffix = _suffix_for(audio.filename, audio.content_type)
+    data = await audio.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Audio rỗng.")
+    if len(data) > 10 * 1024 * 1024:  # 10MB hard cap
+        raise HTTPException(status_code=413, detail="Audio quá lớn (>10MB).")
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix="omni-stt-")
     try:
-        return StreamingResponse(
-            synthesize(req.text, voice),
-            media_type="audio/mpeg",
-        )
-    except Exception as exc:  # network/TTS service issue
-        raise HTTPException(status_code=503, detail=f"TTS unavailable: {exc}")
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        try:
+            text = transcribe_file(path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Lỗi nhận diện giọng nói: {exc}"
+            )
+        return STTResponse(text=text)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
