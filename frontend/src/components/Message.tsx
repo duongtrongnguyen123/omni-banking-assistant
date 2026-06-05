@@ -10,7 +10,10 @@ import { ScheduleDraftCard } from "./ScheduleDraftCard";
 
 interface Props {
   message: ChatMessage;
-  onConfirm: (draftId: string, otp: string, sourceAccountId?: string) => void;
+  onConfirm: (
+    draftId: string,
+    opts: { otp?: string; sourceAccountId?: string; biometricVerified?: boolean },
+  ) => void;
   onCancel: (draftId: string) => void;
   onSelectCandidate: (draftId: string, contact: Contact) => void;
   onConfirmContact: (draftId: string) => void;
@@ -61,7 +64,7 @@ export const Message = ({
         {r?.draft && r.draft.recipient && (
           <TransactionCard
             draft={r.draft}
-            onConfirm={(otp, sourceAccountId) => onConfirm(r.draft!.id, otp, sourceAccountId)}
+            onConfirm={(opts) => onConfirm(r.draft!.id, opts)}
             onCancel={() => onCancel(r.draft!.id)}
             disabled={busy}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}

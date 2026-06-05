@@ -25,10 +25,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
-  confirm: (draftId: string, otp: string, sourceAccountId?: string) =>
+  confirm: (
+    draftId: string,
+    opts: { otp?: string; sourceAccountId?: string; biometricVerified?: boolean },
+  ) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
+      body: JSON.stringify({
+        otp: opts.otp,
+        source_account_id: opts.sourceAccountId,
+        biometric_verified: opts.biometricVerified ?? false,
+      }),
     }),
   cancel: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {

@@ -99,7 +99,40 @@ export default function App() {
     action: () => Promise<OmniResponse>,
     actionLabel: string,
     closeDraftId?: string,
+    inlineDraftId?: string,
   ) => {
+    if (inlineDraftId) {
+      setBusy(true);
+      try {
+        const resp = await action();
+        if (closeDraftId && !resp.draft) {
+          setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
+        }
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.response?.draft?.id === inlineDraftId
+              ? { ...m, text: resp.text, response: resp, pending: false }
+              : m,
+          ),
+        );
+      } catch (e) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.response?.draft?.id === inlineDraftId
+              ? {
+                  ...m,
+                  text: `Lá»—i: ${String(e instanceof Error ? e.message : e)}`,
+                  pending: false,
+                }
+              : m,
+          ),
+        );
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     appendUser(actionLabel);
     const pendingId = appendOmniPending();
     setBusy(true);
@@ -116,10 +149,11 @@ export default function App() {
     }
   };
 
-  const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) =>
+  const onConfirm = (draftId: string, opts: { otp?: string; sourceAccountId?: string; biometricVerified?: boolean }) =>
     sendDraftAction(
-      () => api.confirm(draftId, otp, sourceAccountId),
+      () => api.confirm(draftId, opts),
       "Xác minh OTP",
+      draftId,
       draftId,
     );
 
