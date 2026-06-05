@@ -122,12 +122,17 @@ export const TransactionCard = ({
   // unmistakable in the demo. The same message is also in `draft.flags`
   // below, but a top banner makes the *security posture* visible at a
   // glance instead of buried under the amount.
+  //
+  // ``fraud_risk_high`` is the Isolation Forest signal — the slide deck's
+  // headline fraud metric. Must surface alongside the rule-based warns
+  // so judges see the IF model actually drive the OTP step-up.
   const stepUpReason = draft.requires_step_up
     ? draft.flags.find(
         (f) =>
           f.severity === "warn" &&
           (f.code === "new_recipient_large_amount" ||
-            f.code === "amount_above_average"),
+            f.code === "amount_above_average" ||
+            f.code === "fraud_risk_high"),
       )
     : undefined;
 
