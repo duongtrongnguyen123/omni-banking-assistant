@@ -130,12 +130,19 @@ def suggest(
     when: Optional[datetime] = None,
     k: int = 5,
     tree_weight: float = 0.6,
+    include_all: bool = False,
 ) -> list[dict]:
     """Top-K suggested contacts for ``when`` (defaults to "now").
 
-    Each item: ``{contact, score, reason}``. The score is the mixed
-    tree+prior probability; the reason is a short Vietnamese phrase
-    derived from the user's past behaviour with that contact.
+    Each item: ``{contact, score, reason}``. The score mixes the tree's
+    ``predict_proba`` with a frequency baseline; the reason is a short
+    Vietnamese phrase derived from the user's past behaviour with that
+    contact.
+
+    When ``include_all`` is True, every contact the user has (including
+    those with no transaction history) is returned ranked. Unseen
+    contacts get score 0 and are sorted to the bottom alphabetically —
+    so the "Danh bạ" picker can show one ranked list of everyone.
     """
     when = when or datetime.now().astimezone()
 
@@ -143,22 +150,35 @@ def suggest(
     if state is None:
         train_for(user_id)
         state = _STATE.get(user_id)
-    if state is None:
-        return []
 
     store = get_store()
     contacts = {c.id: c for c in store.contacts_of(user_id)}
 
-    if state["model"] is not None:
-        proba = state["model"].predict_proba([_feature_vec(when)])[0]
-        scored: list[tuple[str, float]] = []
-        for label, p in zip(state["labels"], proba):
-            mixed = tree_weight * float(p) + (1 - tree_weight) * state["prior"].get(label, 0.0)
-            scored.append((label, mixed))
-    else:
-        scored = list(state["prior"].items())
+    scored: list[tuple[str, float]] = []
+    if state is not None:
+        if state["model"] is not None:
+            proba = state["model"].predict_proba([_feature_vec(when)])[0]
+            for label, p in zip(state["labels"], proba):
+                mixed = tree_weight * float(p) + (1 - tree_weight) * state["prior"].get(label, 0.0)
+                scored.append((label, mixed))
+        else:
+            scored = list(state["prior"].items())
 
-    scored.sort(key=lambda x: x[1], reverse=True)
+    # Fold in contacts the model doesn't know about yet (no tx history).
+    if include_all:
+        seen = {cid for cid, _ in scored}
+        unseen = sorted(
+            (c for cid, c in contacts.items() if cid not in seen),
+            key=lambda c: c.display_name,
+        )
+        scored.extend((c.id, 0.0) for c in unseen)
+
+    def _sort_key(item: tuple[str, float]) -> tuple[float, str]:
+        cid, score = item
+        c = contacts.get(cid)
+        return (-score, c.display_name if c else "")
+
+    scored.sort(key=_sort_key)
 
     # Cache history per-contact for reason generation so we don't re-scan.
     txs_by_contact: dict[str, list] = {}
@@ -166,7 +186,7 @@ def suggest(
         txs_by_contact.setdefault(t.contact_id, []).append(t)
 
     out: list[dict] = []
-    for cid, score in scored[:k]:
+    for cid, score in scored[: k if not include_all else len(scored)]:
         c = contacts.get(cid)
         if c is None:
             continue

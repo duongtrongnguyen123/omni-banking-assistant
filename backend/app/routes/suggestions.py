@@ -17,12 +17,19 @@ def recipients(
         None,
         description="ISO-8601 timestamp. Defaults to the server's current local time.",
     ),
-    limit: int = Query(5, ge=1, le=20),
+    limit: int = Query(5, ge=1, le=200),
+    all: bool = Query(
+        False,
+        description=(
+            "Include every contact the user has — unseen ones get score 0 "
+            "and sort below model-ranked rows. Powers the Danh bạ picker."
+        ),
+    ),
     user_id: str = Depends(current_user),
 ) -> list[dict]:
     """Top-K next-transfer suggestions for the caller, given a point in time."""
     dt = datetime.fromisoformat(when).astimezone() if when else None
-    return suggest(user_id, dt, limit)
+    return suggest(user_id, dt, k=limit, include_all=all)
 
 
 @router.post("/train")

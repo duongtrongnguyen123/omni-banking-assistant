@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { ChatMessage, Contact, OmniResponse } from "./types";
+import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
-import { SuggestionsPanel } from "./components/SuggestionsPanel";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -21,8 +21,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
-  const [suggestionsKey, setSuggestionsKey] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -120,16 +121,7 @@ export default function App() {
 
   const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) =>
     sendDraftAction(
-      async () => {
-        const resp = await api.confirm(draftId, otp, sourceAccountId);
-        // Refresh the suggestion panel — the model retrains on the
-        // backend after every executed transfer, so we bump the key
-        // to refetch and reflect the new ranking.
-        if (!resp.draft || !resp.draft.recipient) {
-          setSuggestionsKey((k) => k + 1);
-        }
-        return resp;
-      },
+      () => api.confirm(draftId, otp, sourceAccountId),
       "Xác minh OTP",
       draftId,
     );
@@ -222,7 +214,23 @@ export default function App() {
         </div>
 
         <div className="phone__input">
+          <button
+            type="button"
+            className="phone__contacts-btn"
+            onClick={() => setPickerOpen(true)}
+            aria-label="Mở danh bạ"
+            title="Danh bạ"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 5h18v14H3z" />
+              <path d="M16 3v4" />
+              <path d="M8 3v4" />
+              <circle cx="12" cy="13" r="2.5" />
+              <path d="M8 18c.5-1.5 2-2.5 4-2.5s3.5 1 4 2.5" />
+            </svg>
+          </button>
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -243,6 +251,14 @@ export default function App() {
             ➤
           </button>
         </div>
+        <ContactPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onPick={(t) => {
+            setInput(t);
+            setTimeout(() => inputRef.current?.focus(), 0);
+          }}
+        />
       </div>
 
       <aside className="sidebar">
@@ -253,7 +269,6 @@ export default function App() {
           Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng — Team One
           Last Token.
         </p>
-        <SuggestionsPanel onPick={(t) => setInput(t)} refreshKey={suggestionsKey} />
         <QuickScenarios onPick={send} />
         <div className="sidebar__legend">
           <div>

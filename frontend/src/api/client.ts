@@ -60,4 +60,8 @@ export const api = {
     jsonFetch<RecipientSuggestion[]>(
       `/api/suggestions/recipients?limit=${limit}`,
     ),
+  rankedContacts: () =>
+    jsonFetch<RecipientSuggestion[]>(
+      `/api/suggestions/recipients?all=true&limit=200`,
+    ),
 };
