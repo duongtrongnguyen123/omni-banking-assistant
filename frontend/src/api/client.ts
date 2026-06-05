@@ -192,4 +192,46 @@ export const api = {
     jsonFetch<AtmHit[]>(
       `/api/atm/by-bank/${encodeURIComponent(bank)}`,
     ),
+  qrGenerate: (body: {
+    bank: string;
+    account_number: string;
+    amount?: number | null;
+    message?: string | null;
+  }) =>
+    jsonFetch<{ qr_base64: string; payload_text: string }>(
+      "/api/qr/generate",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          bank: body.bank,
+          account_number: body.account_number,
+          amount: body.amount ?? null,
+          message: body.message ?? null,
+        }),
+      },
+    ),
+  qrDecode: (payloadText: string) =>
+    jsonFetch<{
+      bank: string;
+      account_number: string;
+      amount: number | null;
+      message: string | null;
+    }>("/api/qr/decode", {
+      method: "POST",
+      body: JSON.stringify({ payload_text: payloadText }),
+    }),
+  me: () =>
+    jsonFetch<{
+      id: string;
+      display_name: string;
+      phone: string;
+      accounts: Array<{
+        id: string;
+        bank: string;
+        number: string;
+        balance: number;
+        currency: string;
+        primary: boolean;
+      }>;
+    }>("/api/me"),
 };

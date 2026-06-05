@@ -1598,3 +1598,173 @@ textarea:focus-visible,
   font-size: 11.5px; color: #555;
   margin-top: 1px;
 }
+
+/* ----------------------------------------------------------------- */
+/* QR scan + receive modals                                          */
+/* ----------------------------------------------------------------- */
+
+.phone__receive-btn {
+  appearance: none; border: 0; cursor: pointer;
+  padding: 6px 12px; border-radius: 14px;
+  background: var(--orange); color: white;
+  font-family: inherit; font-size: 12.5px; font-weight: 700;
+  transition: background .15s, transform .05s;
+}
+.phone__receive-btn:hover { background: #e07315; transform: translateY(-1px); }
+.phone__receive-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.phone__qr-btn {
+  appearance: none; border: 1px solid var(--line); cursor: pointer;
+  width: 44px; height: 44px; padding: 0; border-radius: 50%;
+  background: #f4f3fa; color: var(--ink);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: inherit;
+  transition: background .15s, transform .05s;
+  flex: 0 0 auto;
+}
+.phone__qr-btn:not(:disabled):hover {
+  background: #ebe9f4; transform: translateY(-1px);
+}
+.phone__qr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Receive ("Nhận tiền") modal --------------------------------------- */
+
+.receive-modal {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+}
+.receive-modal__backdrop {
+  position: absolute; inset: 0;
+  background: rgba(15,17,58,0.55);
+}
+.receive-modal__card {
+  position: relative; z-index: 1;
+  width: min(360px, 92vw);
+  background: white; border-radius: 20px;
+  padding: 18px 18px 16px;
+  box-shadow: 0 20px 40px -10px rgba(15,17,58,0.4);
+  display: grid; gap: 12px;
+}
+.receive-modal__header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.receive-modal__title {
+  margin: 0; font-size: 16px; font-weight: 700; color: var(--ink);
+}
+.receive-modal__close {
+  appearance: none; border: 0; background: transparent;
+  width: 32px; height: 32px; border-radius: 50%;
+  font-size: 22px; cursor: pointer; color: var(--muted);
+}
+.receive-modal__close:hover { background: var(--bg); color: var(--ink); }
+.receive-modal__qr-wrap {
+  display: grid; place-items: center;
+  min-height: 240px;
+  background: white;
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 10px;
+}
+.receive-modal__qr {
+  width: 220px; height: 220px; display: block;
+  image-rendering: pixelated;
+}
+.receive-modal__qr-placeholder {
+  font-size: 13px; color: var(--muted);
+}
+.receive-modal__owner {
+  text-align: center; display: grid; gap: 2px;
+}
+.receive-modal__owner-name {
+  font-size: 15px; font-weight: 700; color: var(--ink);
+}
+.receive-modal__owner-bank {
+  font-size: 12.5px; color: var(--muted);
+}
+.receive-modal__owner-account {
+  font-size: 14px; font-variant-numeric: tabular-nums; letter-spacing: 0.06em;
+  color: var(--ink); font-weight: 600;
+}
+.receive-modal__amount-line {
+  font-size: 13px; color: var(--ink); margin-top: 4px;
+}
+.receive-modal__amount-row {
+  display: grid; gap: 6px;
+}
+.receive-modal__amount-label {
+  font-size: 12px; color: var(--muted);
+}
+.receive-modal__amount-row input {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  font-family: inherit; font-size: 14px;
+}
+.receive-modal__error {
+  background: #fee2e2; color: #991b1b;
+  border-radius: 10px; padding: 8px 10px;
+  font-size: 12.5px;
+}
+.receive-modal__actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.receive-modal__payload {
+  font-size: 11px; color: var(--muted);
+}
+.receive-modal__payload code {
+  display: block; word-break: break-all;
+  margin-top: 4px;
+  background: var(--bg); padding: 6px 8px;
+  border-radius: 6px; line-height: 1.4;
+}
+
+/* Scan QR modal ----------------------------------------------------- */
+
+.qr-scan-modal {
+  position: fixed; inset: 0; z-index: 210;
+  display: flex; align-items: center; justify-content: center;
+}
+.qr-scan-modal__backdrop {
+  position: absolute; inset: 0; background: rgba(15,17,58,0.7);
+}
+.qr-scan-modal__card {
+  position: relative; z-index: 1;
+  width: min(360px, 92vw);
+  background: white; border-radius: 20px;
+  padding: 14px;
+  display: grid; gap: 10px;
+  box-shadow: 0 20px 40px -10px rgba(15,17,58,0.5);
+}
+.qr-scan-modal__header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.qr-scan-modal__title {
+  margin: 0; font-size: 16px; font-weight: 700; color: var(--ink);
+}
+.qr-scan-modal__close {
+  appearance: none; border: 0; background: transparent;
+  width: 32px; height: 32px; border-radius: 50%;
+  font-size: 22px; cursor: pointer; color: var(--muted);
+}
+.qr-scan-modal__close:hover { background: var(--bg); color: var(--ink); }
+.qr-scan-modal__viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #000; overflow: hidden;
+  border-radius: 14px;
+}
+.qr-scan-modal__video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.qr-scan-modal__reticle {
+  position: absolute; inset: 12% 12% 12% 12%;
+  border: 2px solid rgba(245,130,32,0.85);
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.25);
+  pointer-events: none;
+}
+.qr-scan-modal__status {
+  margin: 0; text-align: center;
+  font-size: 12.5px; color: var(--muted);
+  min-height: 18px;
+}
