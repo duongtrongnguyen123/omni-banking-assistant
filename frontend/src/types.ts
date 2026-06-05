@@ -118,6 +118,17 @@ export interface OmniResponse {
   needs_disambiguation: boolean;
 }
 
+export interface RecentRecipient {
+  contact: {
+    id: string;
+    display_name: string;
+    bank: string;
+    account_masked: string;
+    label: string | null;
+  };
+  last_at: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "omni";
