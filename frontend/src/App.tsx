@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { ChatMessage, Contact, OmniResponse } from "./types";
 import { Message } from "./components/Message";
@@ -6,18 +6,26 @@ import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { RecentRecipients } from "./components/RecentRecipients";
 import { MicButton } from "./components/MicButton";
+import { setLang as persistLang, useT } from "./i18n/strings";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
-const WELCOME: ChatMessage = {
-  id: "welcome",
-  role: "omni",
-  text:
-    "Chào An! Mình là Omni — bạn cần chuyển tiền, xem số dư, hay tra lịch sử? Hãy nói thật tự nhiên nhé.",
-};
-
 export default function App() {
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const { t, lang } = useT();
+  const welcomeMessage: ChatMessage = useMemo(
+    () => ({ id: "welcome", role: "omni", text: t("welcome") }),
+    [t],
+  );
+  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
+  // Keep the welcome message in sync when the user toggles the language —
+  // only if it's still the lone welcome (don't overwrite real history).
+  useEffect(() => {
+    setMessages((prev) =>
+      prev.length === 1 && prev[0].id === "welcome"
+        ? [welcomeMessage]
+        : prev,
+    );
+  }, [welcomeMessage]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
@@ -63,7 +71,7 @@ export default function App() {
         m.id === id
           ? {
               ...m,
-              text: `Lỗi: ${String(err instanceof Error ? err.message : err)}`,
+              text: `${t("errorPrefix")}${String(err instanceof Error ? err.message : err)}`,
               pending: false,
             }
           : m,
@@ -131,22 +139,22 @@ export default function App() {
   ) => {
     const label =
       payload.otp && payload.biometric_verified
-        ? "Xác minh OTP + sinh trắc học"
+        ? t("verifyOtpBioLabel")
         : payload.biometric_verified
-          ? "Xác minh sinh trắc học"
+          ? t("verifyBioLabel")
           : payload.otp
-            ? "Xác minh OTP"
-            : "Xác nhận";
+            ? t("verifyOtpLabel")
+            : t("confirmLabel");
     return sendDraftAction(() => api.confirm(draftId, payload), label, draftId);
   };
 
   const onCancel = (draftId: string) =>
-    sendDraftAction(() => api.cancel(draftId), "Huỷ", draftId);
+    sendDraftAction(() => api.cancel(draftId), t("cancelLabel"), draftId);
 
   const onSelectCandidate = (draftId: string, contact: Contact) =>
     sendDraftAction(
       () => api.select(draftId, contact.id),
-      `Chọn ${contact.display_name}`,
+      `${t("pickLabel")}${contact.display_name}`,
     );
 
   const actionableDraftIds = new Set<string>();
@@ -159,10 +167,10 @@ export default function App() {
   }
 
   const onConfirmContact = (draftId: string) =>
-    sendDraftAction(() => api.confirmContact(draftId), "Lưu danh bạ");
+    sendDraftAction(() => api.confirmContact(draftId), t("saveContactLabel"));
 
   const onCancelContact = (draftId: string) =>
-    sendDraftAction(() => api.cancelContact(draftId), "Huỷ lưu danh bạ");
+    sendDraftAction(() => api.cancelContact(draftId), t("cancelContactLabel"));
 
   const onConfirmSchedule = (
     draftId: string,
@@ -177,11 +185,11 @@ export default function App() {
         }
         return resp;
       },
-      "Xác minh OTP",
+      t("verifyOtpLabel"),
     );
 
   const onCancelSchedule = (draftId: string) =>
-    sendDraftAction(() => api.cancelSchedule(draftId), "Huỷ đặt lịch");
+    sendDraftAction(() => api.cancelSchedule(draftId), t("cancelScheduleLabel"));
 
   const actionableScheduleDraftIds = new Set<string>();
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -201,14 +209,24 @@ export default function App() {
           <div className="phone__title">
             <div className="phone__brand">OMNI</div>
             <div className="phone__sub">
-              <span className="online-dot" /> Trợ lý đang trực tuyến
+              <span className="online-dot" /> {t("headerOnline")}
             </div>
           </div>
+          <button
+            type="button"
+            className="lang-toggle"
+            onClick={() => persistLang(lang === "vi" ? "en" : "vi")}
+            aria-label={t("langToggleAria")}
+            title={t("langToggleAria")}
+          >
+            <span aria-hidden="true">{lang === "vi" ? "🇻🇳" : "🇬🇧"}</span>
+            <span className="lang-toggle__code">{lang.toUpperCase()}</span>
+          </button>
           <div className="user-pill">AN</div>
         </header>
 
         <div className="phone__chat" ref={scrollRef}>
-          <div className="day-divider">Hôm nay · 08:14</div>
+          <div className="day-divider">{t("dayDividerToday")} · 08:14</div>
           {messages.map((m) => (
             <Message
               key={m.id}
@@ -231,7 +249,7 @@ export default function App() {
           <RecentRecipients
             disabled={busy}
             onPick={(name) => {
-              const prefix = `Chuyển cho ${name} `;
+              const prefix = `${t("transferPrefix")}${name} `;
               setInput(prefix);
               requestAnimationFrame(() => {
                 const el = inputRef.current;
@@ -251,13 +269,13 @@ export default function App() {
                 send(input);
               }
             }}
-            placeholder="Nhập câu lệnh, hoặc bấm mic để nói…"
+            placeholder={t("inputPlaceholder")}
             disabled={busy}
           />
           <MicButton
             disabled={busy}
-            onText={(t) => {
-              setInput(t);
+            onText={(text) => {
+              setInput(text);
               requestAnimationFrame(() => {
                 inputRef.current?.focus();
               });
@@ -267,7 +285,7 @@ export default function App() {
             className="btn btn--primary btn--send"
             onClick={() => send(input)}
             disabled={busy || !input.trim()}
-            aria-label="Gửi"
+            aria-label={t("sendAria")}
           >
             ➤
           </button>
@@ -278,18 +296,14 @@ export default function App() {
         <h1 className="sidebar__brand">
           Omni <span>AI Assistant</span>
         </h1>
-        <p className="sidebar__lead">
-          Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng — Team One
-          Last Token.
-        </p>
-        <QuickScenarios onPick={(t) => send(t)} />
+        <p className="sidebar__lead">{t("sidebarLead")}</p>
+        <QuickScenarios onPick={(text) => send(text)} />
         <div className="sidebar__legend">
           <div>
-            <strong>Pipeline:</strong> Câu lệnh → Hiểu ý định → Trích xuất →
-            Ngữ cảnh cá nhân → Kiểm tra an toàn → Thực thi.
+            <strong>{t("pipelineLabel")}</strong> {t("sidebarPipeline")}
           </div>
           <div>
-            <strong>Mock user:</strong> An — số dư tài khoản chính 24.350.000đ.
+            <strong>{t("mockUserLabel")}</strong> {t("sidebarMockUser")}
           </div>
         </div>
       </aside>

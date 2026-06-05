@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..models.schemas import OmniResponse
@@ -15,7 +17,36 @@ from ..services.orchestrator import (
     handle_message,
     select_candidate,
 )
+from ..services.responses import detect_lang, t as response_t
 from .deps import current_user
+
+
+# Known-template substitutions. Whenever the orchestrator's deterministic
+# templates produce one of these Vietnamese strings, we swap the EN
+# equivalent in before returning. This keeps the LLM-phrased path
+# untouched — only the safety-critical, hand-built lines get translated.
+#
+# Kept tiny (top-10 visible lines) — the language pill in the UI calls
+# the shots, the actual transfer execution remains data-driven.
+_KNOWN_VI_TO_KEY = {
+    "Đã huỷ giao dịch.": "transfer_cancelled",
+    "Đã huỷ đặt lịch.": "schedule_cancelled",
+    "Vui lòng nhập OTP để xác minh giao dịch. Mã demo: 123456.": "otp_prompt",
+    "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé.": "otp_failed",
+    (
+        "Mình chưa rõ ý bạn. Bạn thử nói cụ thể hơn nhé — ví dụ "
+        "\"chuyển cho mẹ 2 triệu\" hoặc \"tháng này tiêu bao nhiêu?\""
+    ): "unknown_fallback",
+}
+
+
+def _translate(resp: OmniResponse, lang: str) -> OmniResponse:
+    if lang != "en":
+        return resp
+    key = _KNOWN_VI_TO_KEY.get(resp.text)
+    if key:
+        resp.text = response_t(key, lang)
+    return resp
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -35,8 +66,14 @@ class ConfirmTransactionRequest(BaseModel):
 
 
 @router.post("/chat", response_model=OmniResponse)
-def chat(req: ChatRequest, user_id: str = Depends(current_user)) -> OmniResponse:
-    return handle_message(user_id, req.message)
+def chat(
+    req: ChatRequest,
+    user_id: str = Depends(current_user),
+    accept_language: Optional[str] = Header(default=None, alias="accept-language"),
+    lang: Optional[str] = Query(default=None),
+) -> OmniResponse:
+    resolved = detect_lang(accept_language=accept_language, query_lang=lang)
+    return _translate(handle_message(user_id, req.message), resolved)
 
 
 @router.post("/transactions/{draft_id}/confirm", response_model=OmniResponse)
@@ -44,6 +81,8 @@ def confirm(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
+    accept_language: Optional[str] = Header(default=None, alias="accept-language"),
+    lang: Optional[str] = Query(default=None),
 ) -> OmniResponse:
     resp = confirm_draft(
         user_id,
@@ -54,12 +93,20 @@ def confirm(
     )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
-    return resp
+    return _translate(resp, detect_lang(accept_language=accept_language, query_lang=lang))
 
 
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
-def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
-    return cancel_draft(user_id, draft_id)
+def cancel(
+    draft_id: str,
+    user_id: str = Depends(current_user),
+    accept_language: Optional[str] = Header(default=None, alias="accept-language"),
+    lang: Optional[str] = Query(default=None),
+) -> OmniResponse:
+    return _translate(
+        cancel_draft(user_id, draft_id),
+        detect_lang(accept_language=accept_language, query_lang=lang),
+    )
 
 
 @router.post("/transactions/{draft_id}/select", response_model=OmniResponse)

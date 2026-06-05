@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { RecentRecipient } from "../types";
+import { useT } from "../i18n/strings";
 
 const PeopleIcon = () => (
   <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -18,6 +19,7 @@ export const RecentRecipients = ({
   onPick: (display_name: string) => void;
   disabled?: boolean;
 }) => {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<RecentRecipient[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,23 +69,28 @@ export const RecentRecipients = ({
         className="btn btn--ghost btn--icon recents__trigger"
         onClick={toggle}
         disabled={disabled}
-        aria-label="Người nhận gần đây"
+        aria-label={t("recentRecipientsAria")}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Người nhận gần đây"
+        title={t("recentRecipientsAria")}
       >
         <PeopleIcon />
       </button>
       {open && (
         <div className="recents__popover" role="listbox">
-          <div className="recents__title">Người nhận gần đây</div>
+          <div className="recents__title">{t("recentRecipientsTitle")}</div>
           <div className="recents__list">
             {items === null && !error && (
-              <div className="recents__empty">Đang tải…</div>
+              <div className="recents__empty">{t("recentLoading")}</div>
             )}
-            {error && <div className="recents__empty">Lỗi: {error}</div>}
+            {error && (
+              <div className="recents__empty">
+                {t("recentErrorPrefix")}
+                {error}
+              </div>
+            )}
             {items && items.length === 0 && (
-              <div className="recents__empty">Chưa có giao dịch nào.</div>
+              <div className="recents__empty">{t("recentEmpty")}</div>
             )}
             {items?.map((r) => {
               const initial = r.contact.display_name

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { TransactionDraft } from "../types";
 import { formatVND } from "../format";
+import { useT } from "../i18n/strings";
 
 interface ConfirmPayload {
   otp?: string;
@@ -50,6 +51,7 @@ export const TransactionCard = ({
   disabled,
   actionable = true,
 }: Props) => {
+  const { t, lang } = useT();
   const [authOpen, setAuthOpen] = useState(false);
   const [otp, setOtp] = useState("");
   const [bioLoading, setBioLoading] = useState(false);
@@ -142,14 +144,14 @@ export const TransactionCard = ({
     >
       {draft.amount != null && (
         <div className="tx-card__amount">
-          <div className="tx-card__label">SỐ TIỀN</div>
-          <div className="tx-card__amount-value">{formatVND(draft.amount)}</div>
+          <div className="tx-card__label">{t("txAmountLabel")}</div>
+          <div className="tx-card__amount-value">{formatVND(draft.amount, lang)}</div>
         </div>
       )}
       {r && (
         <>
           <div className="tx-row">
-            <span className="tx-row__label">Người nhận</span>
+            <span className="tx-row__label">{t("txRecipient")}</span>
             <div className="tx-row__value">
               {r.label && <span className="tx-tag">♥ {r.label}</span>}
               <div className="tx-recipient">
@@ -157,7 +159,7 @@ export const TransactionCard = ({
                 <div className="tx-recipient__meta">
                   {r.bank} · {r.account_masked}{" "}
                   {r.verified && (
-                    <span className="tx-verified">· Đã xác minh</span>
+                    <span className="tx-verified">· {t("txVerified")}</span>
                   )}
                 </div>
               </div>
@@ -165,13 +167,13 @@ export const TransactionCard = ({
           </div>
           {draft.description && (
             <div className="tx-row">
-              <span className="tx-row__label">Nội dung</span>
+              <span className="tx-row__label">{t("txDescription")}</span>
               <span className="tx-row__value">{draft.description}</span>
             </div>
           )}
           {draft.source_accounts.length > 0 && (
             <div className="tx-row">
-              <span className="tx-row__label">Tài khoản nguồn</span>
+              <span className="tx-row__label">{t("txSourceAccount")}</span>
               <div className="tx-row__value">
                 <select
                   className="account-select"
@@ -181,16 +183,15 @@ export const TransactionCard = ({
                 >
                   {draft.source_accounts.map((account) => (
                     <option key={account.id} value={account.id}>
-                      {account.primary ? "Chính" : "Phụ"} · {account.bank} ·
+                      {account.primary ? t("txAccountPrimary") : t("txAccountSecondary")} · {account.bank} ·
                       ••••{account.number.slice(-4)} ·{" "}
-                      {formatVND(account.balance)}
+                      {formatVND(account.balance, lang)}
                     </option>
                   ))}
                 </select>
                 {selectedBalanceBlocks && (
                   <div className="account-select__hint">
-                    Tài khoản này không đủ số dư, hãy chọn tài khoản khác hoặc
-                    huỷ.
+                    {t("txInsufficientHint")}
                   </div>
                 )}
               </div>
@@ -226,20 +227,20 @@ export const TransactionCard = ({
             <div className="auth-panel">
               <div className="auth-panel__copy">
                 {needOtp && needBio
-                  ? "Giao dịch cần OTP và xác minh sinh trắc học."
+                  ? t("authBothNeeded")
                   : needOtp
-                    ? "Nhập OTP để xác minh giao dịch. Mã demo: 123456"
-                    : "Cần xác minh sinh trắc học để tiếp tục."}
+                    ? t("authOtpOnly")
+                    : t("authBioOnly")}
               </div>
 
               {(needOtp || otpDone) && (
                 <div className="auth-step">
                   <div className="auth-step__head">
                     <span className="auth-step__num">1</span>
-                    <span className="auth-step__title">OTP</span>
+                    <span className="auth-step__title">{t("authOtp")}</span>
                     {otpDone && (
                       <span className="auth-step__done">
-                        <CheckIcon /> Đã xác minh
+                        <CheckIcon /> {t("authDone")}
                       </span>
                     )}
                   </div>
@@ -261,10 +262,10 @@ export const TransactionCard = ({
                 <div className="auth-step">
                   <div className="auth-step__head">
                     <span className="auth-step__num">{needOtp ? 2 : 1}</span>
-                    <span className="auth-step__title">Sinh trắc học</span>
+                    <span className="auth-step__title">{t("authBio")}</span>
                     {bioDone && (
                       <span className="auth-step__done">
-                        <CheckIcon /> Đã xác minh
+                        <CheckIcon /> {t("authDone")}
                       </span>
                     )}
                   </div>
@@ -283,9 +284,7 @@ export const TransactionCard = ({
                         )}
                       </span>
                       <span>
-                        {bioLoading
-                          ? "Đang quét sinh trắc…"
-                          : "Quét vân tay / khuôn mặt"}
+                        {bioLoading ? t("bioScanning") : t("bioPrompt")}
                       </span>
                     </button>
                   )}
@@ -300,7 +299,7 @@ export const TransactionCard = ({
               onClick={onCancel}
               disabled={disabled}
             >
-              Huỷ
+              {t("txCancel")}
             </button>
             {onEdit && (
               <button
@@ -308,7 +307,7 @@ export const TransactionCard = ({
                 onClick={onEdit}
                 disabled={disabled}
               >
-                Sửa
+                {t("txEdit")}
               </button>
             )}
             {!hardBlocked && (
@@ -321,13 +320,13 @@ export const TransactionCard = ({
                 onClick={handleConfirmClick}
                 disabled={!canSubmit || (authOpen && !primaryReady)}
               >
-                {authOpen ? "Xác minh & chuyển" : "Xác nhận"}
+                {authOpen ? t("txVerifyAndSend") : t("txConfirm")}
               </button>
             )}
           </div>
         </>
       ) : (
-        <div className="tx-status">Giao dịch này đã được xử lý.</div>
+        <div className="tx-status">{t("txDone")}</div>
       )}
     </div>
   );

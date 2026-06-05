@@ -83,9 +83,22 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     if not temporal_ref:
         return "this_month"
     folded = normalize_alias(temporal_ref)
-    if "thang truoc" in folded or "lan truoc" in folded:
+    # English aliases — "last month" / "previous month" → last_month.
+    if (
+        "thang truoc" in folded
+        or "lan truoc" in folded
+        or "last month" in folded
+        or "previous month" in folded
+    ):
         return "last_month"
-    if "tuan truoc" in folded or "hom qua" in folded or "vua roi" in folded:
+    if (
+        "tuan truoc" in folded
+        or "hom qua" in folded
+        or "vua roi" in folded
+        or "last week" in folded
+        or "previous week" in folded
+        or "yesterday" in folded
+    ):
         return "recent_30d"
     return "this_month"
 

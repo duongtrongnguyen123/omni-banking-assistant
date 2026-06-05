@@ -1,4 +1,5 @@
 import { useRecorder } from "../hooks/useRecorder";
+import { useT } from "../i18n/strings";
 
 const MicIcon = ({ off = false }: { off?: boolean }) => (
   <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -68,6 +69,7 @@ const fmt = (ms: number) => {
 };
 
 export const MicButton = ({ disabled, onText }: Props) => {
+  const { t } = useT();
   const { status, error, elapsedMs, start, stop, cancel } = useRecorder({
     onText,
   });
@@ -87,14 +89,14 @@ export const MicButton = ({ disabled, onText }: Props) => {
   };
 
   const title = unsupported
-    ? "Trình duyệt không hỗ trợ ghi âm"
+    ? t("micUnsupported")
     : recording
-      ? `Đang ghi âm ${fmt(elapsedMs)} — bấm để dừng và gửi`
+      ? `${t("micRecording")} ${fmt(elapsedMs)} ${t("micRecordingHint")}`
       : processing
-        ? "Đang nhận diện…"
+        ? t("micListening")
         : error
-          ? `Lỗi: ${error}. Bấm để thử lại.`
-          : "Bấm để ghi âm";
+          ? `${t("micErrorPrefix")}${error}${t("micRetry")}`
+          : t("micStart");
 
   let content: React.ReactNode;
   if (processing) content = <Spinner />;
@@ -111,9 +113,9 @@ export const MicButton = ({ disabled, onText }: Props) => {
             type="button"
             className="mic-status__cancel"
             onClick={cancel}
-            aria-label="Huỷ ghi âm"
+            aria-label={t("micCancel")}
           >
-            Huỷ
+            {t("txCancel")}
           </button>
         </div>
       )}

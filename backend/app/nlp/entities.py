@@ -44,13 +44,24 @@ _TEMPORAL_PATTERNS = [
     r"tuan\s+truoc",
     r"vừa\s+rồi",
     r"vua\s+roi",
+    # English temporal aliases — keep them in the same alternation so
+    # downstream `_period_from_temporal` matches against the ascii-folded
+    # form ("last month", "last week", etc.).
+    r"like\s+last\s+month",
+    r"same\s+as\s+last\s+month",
+    r"last\s+month",
+    r"previous\s+month",
+    r"last\s+week",
+    r"previous\s+week",
+    r"yesterday",
+    r"previous",
 ]
 _TEMPORAL_RE = re.compile("|".join(_TEMPORAL_PATTERNS), re.IGNORECASE)
 
 _DESC_RE = re.compile(
-    r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu|tiền|tien)\s+"
+    r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu|tiền|tien|note|memo)\s+"
     r"([^,.\n?!]+?)"
-    r"(?:$|[,.\n?!]| như | nhu |\s+cho\s+|\s+với\s+|\s+voi\s+)",
+    r"(?:$|[,.\n?!]| như | nhu |\s+cho\s+|\s+với\s+|\s+voi\s+|\s+like\s+)",
     re.IGNORECASE,
 )
 
@@ -82,9 +93,10 @@ _STOP_LOOKAHEAD = (
     r"|[,.?!\n]"
 )
 
-# Preposition-led: "cho|tới|đến X" — high precision.
+# Preposition-led: "cho|tới|đến X" — high precision. English forms
+# "to X" and "for X" piggy-back on the same handler.
 _RECIPIENT_PREP_RE = re.compile(
-    r"(?:cho|tới|toi|đến|den)\s+(?P<who>[^\d,.\n?!]+?)"
+    r"(?:cho|tới|toi|đến|den|to|for)\s+(?P<who>[^\d,.\n?!]+?)"
     rf"(?=\s*(?:{_STOP_LOOKAHEAD}))",
     re.IGNORECASE,
 )
@@ -92,7 +104,7 @@ _RECIPIENT_PREP_RE = re.compile(
 # Verb-led fallback: "chuyển|gửi|trả|nạp X <amount>" — used only when the
 # preposition pattern finds nothing (otherwise "chuyển cho X" double-matches).
 _RECIPIENT_VERB_RE = re.compile(
-    r"(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
+    r"(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer|pay|wire)\s+"
     r"(?P<who>[^\d,.\n?!]+?)"
     rf"(?=\s*(?:{_STOP_LOOKAHEAD}))",
     re.IGNORECASE,
@@ -108,7 +120,7 @@ _ACCOUNT_HINT_RE = re.compile(
 def _clean_recipient(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     s = re.sub(
-        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen)\s+",
+        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen|to|for|send|transfer|pay|wire)\s+",
         "",
         s,
         flags=re.IGNORECASE,

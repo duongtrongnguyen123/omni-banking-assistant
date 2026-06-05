@@ -16,14 +16,21 @@ _UNITS = {
     "ty": 1_000_000_000,
     "tỉ": 1_000_000_000,
     "ti": 1_000_000_000,
+    # EN — "billion" needs to come before "tr"/"m" in greedy ordering, but
+    # the table is sorted by len in `_UNIT_KEYS` so this just works.
+    "billion": 1_000_000_000,
+    "bn": 1_000_000_000,
     "triệu": 1_000_000,
     "trieu": 1_000_000,
+    "million": 1_000_000,
+    "mil": 1_000_000,
     "tr": 1_000_000,
     "m": 1_000_000,
     "nghìn": 1_000,
     "nghin": 1_000,
     "ngàn": 1_000,
     "ngan": 1_000,
+    "thousand": 1_000,
     "k": 1_000,
 }
 

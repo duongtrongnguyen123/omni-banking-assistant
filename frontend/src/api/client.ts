@@ -1,11 +1,26 @@
 import type { OmniResponse, RecentRecipient } from "../types";
+import { getLang } from "../i18n/strings";
 
-const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
+const BASE_HEADERS = {
+  "Content-Type": "application/json",
+  "x-user-id": "u_an",
+};
+
+// Resolved at request time so the language pill in the header takes
+// effect without a page reload. EN passes through as `en` and the
+// backend `detect_lang()` helper turns it into `Lang = "en"`.
+const langHeaders = (): Record<string, string> => ({
+  "accept-language": getLang() === "en" ? "en-US,en;q=0.9" : "vi-VN,vi;q=0.9",
+});
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
-    headers: { ...HEADERS, ...(init?.headers ?? {}) },
+    headers: {
+      ...BASE_HEADERS,
+      ...langHeaders(),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!res.ok) {
     let detail = "";
