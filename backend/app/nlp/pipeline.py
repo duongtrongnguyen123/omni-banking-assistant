@@ -12,6 +12,10 @@ from .budget_entities import (
     extract_goal_name,
 )
 from .entities import extract
+# Add-contact fills (bank_name / alias / save-verb name) live in a sibling
+# module so the canonical "Lưu <Name> STK <num> <Bank>" demo phrasing
+# produces a complete contact_draft under the rule-only fallback too.
+from .add_contact_entities import augment as _augment_add_contact
 from .intent import classify
 from .llm import llm_understand
 
@@ -67,6 +71,7 @@ def understand(
         # Merge: rule-based extractor often catches amount/description better
         # than the LLM for short Vietnamese inputs; only fill blanks.
         rule_entities = extract(text)
+        _augment_add_contact(rule_entities, text)
         merged = llm_result.entities.model_copy()
         for field in merged.model_fields:
             if getattr(merged, field) in (None, ""):
@@ -76,6 +81,7 @@ def understand(
 
     intent, confidence = classify(text)
     entities = extract(text)
+    _augment_add_contact(entities, text)
     # Schedule cron only makes sense under schedule intent.
     if intent != "schedule":
         entities.schedule_cron = None
