@@ -20,6 +20,7 @@ from ..models.schemas import (
     SafetyFlag,
     Transaction,
 )
+from . import fraud_model
 
 
 ANOMALY_MULTIPLIER = 10
@@ -33,6 +34,7 @@ def evaluate(
     recipient: Optional[Contact],
     transactions: list[Transaction],
     account: Optional[Account],
+    user_id: Optional[str] = None,
 ) -> list[SafetyFlag]:
     flags: list[SafetyFlag] = []
 
@@ -118,6 +120,28 @@ def evaluate(
                     )
                 )
 
+        # ML-based fraud risk — runs only when a per-user model is loaded.
+        # See `app/safety/fraud_model.py` for the feature set + training.
+        if user_id is not None:
+            score = fraud_model.score_draft(
+                user_id=user_id,
+                amount=amount,
+                recipient=recipient,
+            )
+            if score is not None and score >= fraud_model.FRAUD_RISK_THRESHOLD:
+                pct = int(round(score * 100))
+                flags.append(
+                    SafetyFlag(
+                        code="fraud_risk_high",
+                        severity="warn",
+                        message=(
+                            f"Giao dịch có dấu hiệu bất thường so với thói quen "
+                            f"của bạn (mức rủi ro ~{pct}%). Omni khuyến nghị "
+                            f"kiểm tra kỹ trước khi xác nhận."
+                        ),
+                    )
+                )
+
         # Balance check
         if account is not None and amount > account.balance:
             flags.append(
@@ -137,7 +161,13 @@ def evaluate(
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
     """Whether OTP / step-up auth is required to proceed."""
     return any(
-        f.code in ("large_amount", "new_recipient_large_amount", "amount_above_average")
+        f.code
+        in (
+            "large_amount",
+            "new_recipient_large_amount",
+            "amount_above_average",
+            "fraud_risk_high",
+        )
         and f.severity == "warn"
         for f in flags
     )

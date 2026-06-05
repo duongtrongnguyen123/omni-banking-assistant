@@ -72,6 +72,7 @@ export const TransactionCard = ({
     draft.auth_required.length === 0 &&
     blockFlags.some((f) => f.code !== "insufficient_balance");
   const warned = draft.flags.some((f) => f.severity === "warn");
+  const fraudFlag = draft.flags.find((f) => f.code === "fraud_risk_high");
   const r = draft.recipient;
   const selectedAccount = draft.source_accounts.find(
     (a) => a.id === sourceAccountId,
@@ -137,9 +138,33 @@ export const TransactionCard = ({
   return (
     <div
       className={`tx-card ${warned ? "tx-card--warn" : ""} ${
-        !actionable ? "tx-card--done" : ""
-      }`}
+        fraudFlag ? "tx-card--fraud" : ""
+      } ${!actionable ? "tx-card--done" : ""}`}
     >
+      {fraudFlag && (
+        <div
+          className="tx-fraud-banner"
+          role="alert"
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "flex-start",
+            background: "#fee2e2",
+            color: "#991b1b",
+            border: "1px solid #f87171",
+            borderRadius: 8,
+            padding: "10px 12px",
+            fontSize: 13,
+            fontWeight: 600,
+            marginBottom: 12,
+          }}
+        >
+          <span aria-hidden="true">⚠</span>
+          <span>
+            Giao dịch có dấu hiệu bất thường — Omni khuyến nghị kiểm tra kỹ.
+          </span>
+        </div>
+      )}
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>
@@ -201,7 +226,8 @@ export const TransactionCard = ({
 
       {(() => {
         const visibleFlags = draft.flags.filter(
-          (f) => f.code !== "insufficient_balance",
+          (f) =>
+            f.code !== "insufficient_balance" && f.code !== "fraud_risk_high",
         );
         if (visibleFlags.length === 0) return null;
         return (

@@ -105,6 +105,7 @@ class SafetyFlag(BaseModel):
         "large_amount",
         "new_recipient_large_amount",
         "amount_above_average",
+        "fraud_risk_high",
         "insufficient_balance",
         "ok",
     ]
