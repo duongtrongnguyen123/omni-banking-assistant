@@ -9,3 +9,10 @@ python-multipart==0.0.12
 websockets==13.1
 python-dotenv==1.0.1
 google-generativeai==0.8.3
+# Optional persistence backends. Both are tiny pure-Python wheels; the
+# session module imports them lazily so the demo still runs if they're
+# absent. ``redis-py`` for production deployments, ``fakeredis`` for
+# the test suite and for judges who want to see the Redis wire path
+# without running a docker container.
+redis>=5.0
+fakeredis>=2.20
