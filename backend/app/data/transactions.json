@@ -37,5 +37,106 @@
 
   {"id":"t_050","owner_id":"u_an","contact_id":"c_lan","amount":5000000,"description":"Tiền sinh hoạt tháng 6","category":"family","status":"completed","created_at":"2026-06-01T08:00:00+07:00"},
   {"id":"t_051","owner_id":"u_an","contact_id":"c_bo_hung","amount":2000000,"description":"Tiền hiếu bố tháng 6","category":"family","status":"completed","created_at":"2026-06-01T08:05:00+07:00"},
-  {"id":"t_052","owner_id":"u_an","contact_id":"c_shipper","amount":60000,"description":"GrabFood bữa sáng","category":"daily","status":"completed","created_at":"2026-06-02T07:30:00+07:00"}
+  {"id":"t_052","owner_id":"u_an","contact_id":"c_shipper","amount":60000,"description":"GrabFood bữa sáng","category":"daily","status":"completed","created_at":"2026-06-02T07:30:00+07:00"},
+
+  {"id":"t_100","owner_id":"u_an","contact_id":"c_netflix","amount":260000,"description":"Thuê bao Netflix","category":"entertainment","status":"completed","created_at":"2026-02-05T09:12:00+07:00"},
+  {"id":"t_101","owner_id":"u_an","contact_id":"c_netflix","amount":260000,"description":"Thuê bao Netflix","category":"entertainment","status":"completed","created_at":"2026-03-05T09:08:00+07:00"},
+  {"id":"t_102","owner_id":"u_an","contact_id":"c_netflix","amount":264000,"description":"Thuê bao Netflix","category":"entertainment","status":"completed","created_at":"2026-04-06T09:15:00+07:00"},
+  {"id":"t_103","owner_id":"u_an","contact_id":"c_netflix","amount":260000,"description":"Thuê bao Netflix","category":"entertainment","status":"completed","created_at":"2026-05-05T09:10:00+07:00"},
+
+  {"id":"t_110","owner_id":"u_an","contact_id":"c_spotify","amount":89000,"description":"Thuê bao Spotify Premium","category":"entertainment","status":"completed","created_at":"2026-02-10T20:30:00+07:00"},
+  {"id":"t_111","owner_id":"u_an","contact_id":"c_spotify","amount":89000,"description":"Thuê bao Spotify Premium","category":"entertainment","status":"completed","created_at":"2026-03-10T20:25:00+07:00"},
+  {"id":"t_112","owner_id":"u_an","contact_id":"c_spotify","amount":89000,"description":"Thuê bao Spotify Premium","category":"entertainment","status":"completed","created_at":"2026-04-11T20:40:00+07:00"},
+  {"id":"t_113","owner_id":"u_an","contact_id":"c_spotify","amount":89000,"description":"Thuê bao Spotify Premium","category":"entertainment","status":"completed","created_at":"2026-05-10T20:35:00+07:00"},
+
+  {"id":"t_120","owner_id":"u_an","contact_id":"c_gym_hn","amount":1200000,"description":"Phí thành viên phòng gym","category":"health","status":"completed","created_at":"2026-02-15T18:00:00+07:00"},
+  {"id":"t_121","owner_id":"u_an","contact_id":"c_gym_hn","amount":1200000,"description":"Phí thành viên phòng gym","category":"health","status":"completed","created_at":"2026-03-16T18:05:00+07:00"},
+  {"id":"t_122","owner_id":"u_an","contact_id":"c_gym_hn","amount":1210000,"description":"Phí thành viên phòng gym","category":"health","status":"completed","created_at":"2026-04-15T18:02:00+07:00"},
+  {"id":"t_123","owner_id":"u_an","contact_id":"c_gym_hn","amount":1200000,"description":"Phí thành viên phòng gym","category":"health","status":"completed","created_at":"2026-05-15T18:10:00+07:00"},
+
+  {"id":"t_130","owner_id":"u_an","contact_id":"c_chu_nha","amount":5000000,"description":"Tiền thuê nhà","category":"rent","status":"completed","created_at":"2026-02-02T10:00:00+07:00"},
+  {"id":"t_131","owner_id":"u_an","contact_id":"c_chu_nha","amount":5000000,"description":"Tiền thuê nhà","category":"rent","status":"completed","created_at":"2026-03-02T10:05:00+07:00"},
+  {"id":"t_132","owner_id":"u_an","contact_id":"c_chu_nha","amount":5000000,"description":"Tiền thuê nhà","category":"rent","status":"completed","created_at":"2026-04-03T10:00:00+07:00"},
+  {"id":"t_133","owner_id":"u_an","contact_id":"c_chu_nha","amount":5000000,"description":"Tiền thuê nhà","category":"rent","status":"completed","created_at":"2026-05-01T09:55:00+07:00"},
+
+  {"id":"t_140","owner_id":"u_an","contact_id":"c_lan","amount":2500000,"description":"Gửi mẹ tiền chợ","category":"family","status":"completed","created_at":"2026-02-05T08:20:00+07:00"},
+  {"id":"t_141","owner_id":"u_an","contact_id":"c_lan","amount":2000000,"description":"Mẹ mua thuốc bổ","category":"family","status":"completed","created_at":"2026-02-18T18:30:00+07:00"},
+  {"id":"t_142","owner_id":"u_an","contact_id":"c_lan","amount":2200000,"description":"Tiền tiêu vặt cho mẹ","category":"family","status":"completed","created_at":"2026-03-12T07:45:00+07:00"},
+  {"id":"t_143","owner_id":"u_an","contact_id":"c_lan","amount":3000000,"description":"Đóng tiền điện nhà mẹ","category":"family","status":"completed","created_at":"2026-03-25T19:00:00+07:00"},
+  {"id":"t_144","owner_id":"u_an","contact_id":"c_lan","amount":2500000,"description":"Gửi mẹ tiền chợ","category":"family","status":"completed","created_at":"2026-04-28T08:15:00+07:00"},
+  {"id":"t_145","owner_id":"u_an","contact_id":"c_lan","amount":3000000,"description":"Mẹ đi khám sức khoẻ","category":"family","status":"completed","created_at":"2026-05-20T10:10:00+07:00"},
+
+  {"id":"t_150","owner_id":"u_an","contact_id":"c_pt_nga","amount":2000000,"description":"Học phí PT tháng 2","category":"health","status":"completed","created_at":"2026-02-09T07:00:00+07:00"},
+  {"id":"t_151","owner_id":"u_an","contact_id":"c_yoga_duc","amount":1000000,"description":"Yoga tháng 2","category":"health","status":"completed","created_at":"2026-02-13T19:30:00+07:00"},
+  {"id":"t_152","owner_id":"u_an","contact_id":"c_bo_hung","amount":2000000,"description":"Tiền hiếu bố tháng 2","category":"family","status":"completed","created_at":"2026-02-04T09:00:00+07:00"},
+  {"id":"t_153","owner_id":"u_an","contact_id":"c_lan","amount":5000000,"description":"Tiền sinh hoạt tháng 2","category":"family","status":"completed","created_at":"2026-02-01T08:25:00+07:00"},
+
+  {"id":"t_160","owner_id":"u_an","contact_id":"c_shipper","amount":75000,"description":"GrabFood cơm trưa","category":"food","status":"completed","created_at":"2026-02-06T12:20:00+07:00"},
+  {"id":"t_161","owner_id":"u_an","contact_id":"c_shipper","amount":110000,"description":"GrabFood cơm tối","category":"food","status":"completed","created_at":"2026-02-11T19:35:00+07:00"},
+  {"id":"t_162","owner_id":"u_an","contact_id":"c_shipper","amount":65000,"description":"GrabFood bún chả","category":"food","status":"completed","created_at":"2026-02-19T11:50:00+07:00"},
+  {"id":"t_163","owner_id":"u_an","contact_id":"c_com_lan","amount":160000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-02-23T11:55:00+07:00"},
+  {"id":"t_164","owner_id":"u_an","contact_id":"c_tap_hoa","amount":280000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-02-27T17:10:00+07:00"},
+
+  {"id":"t_165","owner_id":"u_an","contact_id":"c_shipper","amount":90000,"description":"GrabFood cơm trưa","category":"food","status":"completed","created_at":"2026-03-04T12:25:00+07:00"},
+  {"id":"t_166","owner_id":"u_an","contact_id":"c_shipper","amount":140000,"description":"GrabFood lẩu tối","category":"food","status":"completed","created_at":"2026-03-13T19:50:00+07:00"},
+  {"id":"t_167","owner_id":"u_an","contact_id":"c_com_lan","amount":175000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-03-19T12:00:00+07:00"},
+  {"id":"t_168","owner_id":"u_an","contact_id":"c_tap_hoa","amount":320000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-03-22T17:40:00+07:00"},
+
+  {"id":"t_170","owner_id":"u_an","contact_id":"c_shipper","amount":95000,"description":"GrabFood cơm trưa","category":"food","status":"completed","created_at":"2026-04-07T12:30:00+07:00"},
+  {"id":"t_171","owner_id":"u_an","contact_id":"c_shipper","amount":130000,"description":"GrabFood cơm tối","category":"food","status":"completed","created_at":"2026-04-14T19:45:00+07:00"},
+  {"id":"t_172","owner_id":"u_an","contact_id":"c_com_lan","amount":180000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-04-17T11:55:00+07:00"},
+  {"id":"t_173","owner_id":"u_an","contact_id":"c_tap_hoa","amount":350000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-04-24T17:20:00+07:00"},
+  {"id":"t_174","owner_id":"u_an","contact_id":"c_shipper","amount":85000,"description":"GrabFood sáng","category":"food","status":"completed","created_at":"2026-04-26T07:40:00+07:00"},
+
+  {"id":"t_175","owner_id":"u_an","contact_id":"c_shipper","amount":100000,"description":"GrabFood cơm trưa","category":"food","status":"completed","created_at":"2026-05-06T12:15:00+07:00"},
+  {"id":"t_176","owner_id":"u_an","contact_id":"c_com_lan","amount":195000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-05-14T11:50:00+07:00"},
+  {"id":"t_177","owner_id":"u_an","contact_id":"c_tap_hoa","amount":380000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-05-19T17:30:00+07:00"},
+  {"id":"t_178","owner_id":"u_an","contact_id":"c_shipper","amount":115000,"description":"GrabFood phở tối","category":"food","status":"completed","created_at":"2026-05-26T19:50:00+07:00"},
+
+  {"id":"t_180","owner_id":"u_an","contact_id":"c_bao","amount":25000000,"description":"Đặt cọc thuê xe hè Đà Nẵng","category":"friends","status":"completed","created_at":"2026-04-30T15:00:00+07:00"},
+  {"id":"t_181","owner_id":"u_an","contact_id":"c_minh_mb","amount":25000000,"description":"Trả lại bro tiền cọc nhà","category":"friends","status":"completed","created_at":"2026-05-22T16:30:00+07:00"},
+
+  {"id":"t_190","owner_id":"u_an","contact_id":"c_linh","amount":250000,"description":"Trà sữa cuối tuần với bestie","category":"friends","status":"completed","created_at":"2026-02-21T16:20:00+07:00"},
+  {"id":"t_191","owner_id":"u_an","contact_id":"c_huy","amount":300000,"description":"Chia tiền nhậu cuối tuần","category":"friends","status":"completed","created_at":"2026-02-28T22:00:00+07:00"},
+  {"id":"t_192","owner_id":"u_an","contact_id":"c_ha_hr","amount":150000,"description":"Đóng góp quỹ lớp","category":"work","status":"completed","created_at":"2026-02-25T16:30:00+07:00"},
+  {"id":"t_193","owner_id":"u_an","contact_id":"c_nam_dev","amount":120000,"description":"Chia tiền sách kỹ thuật","category":"work","status":"completed","created_at":"2026-03-30T14:10:00+07:00"},
+  {"id":"t_194","owner_id":"u_an","contact_id":"c_minh_tcb","amount":400000,"description":"Cafe gặp mặt đầu năm","category":"work","status":"completed","created_at":"2026-02-08T15:00:00+07:00"},
+  {"id":"t_195","owner_id":"u_an","contact_id":"c_huy","amount":350000,"description":"Chia tiền nhậu","category":"friends","status":"completed","created_at":"2026-04-19T21:30:00+07:00"},
+  {"id":"t_196","owner_id":"u_an","contact_id":"c_bao","amount":500000,"description":"Đi xem phim cuối tuần","category":"friends","status":"completed","created_at":"2026-05-09T20:00:00+07:00"},
+
+  {"id":"t_200","owner_id":"u_an","contact_id":"c_shipper","amount":70000,"description":"GrabFood cơm sáng","category":"food","status":"completed","created_at":"2026-03-08T07:35:00+07:00"},
+  {"id":"t_201","owner_id":"u_an","contact_id":"c_shipper","amount":105000,"description":"GrabFood bữa trưa","category":"food","status":"completed","created_at":"2026-05-30T12:40:00+07:00"},
+  {"id":"t_202","owner_id":"u_an","contact_id":"c_com_lan","amount":150000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-05-04T11:45:00+07:00"},
+
+  {"id":"t_210","owner_id":"u_an","contact_id":"c_shipper","amount":68000,"description":"GrabFood phở sáng","category":"food","status":"completed","created_at":"2026-02-14T07:50:00+07:00"},
+  {"id":"t_211","owner_id":"u_an","contact_id":"c_shipper","amount":92000,"description":"GrabFood cơm trưa","category":"food","status":"completed","created_at":"2026-02-24T12:20:00+07:00"},
+  {"id":"t_212","owner_id":"u_an","contact_id":"c_tap_hoa","amount":210000,"description":"Mua dầu ăn và gia vị","category":"groceries","status":"completed","created_at":"2026-02-16T17:00:00+07:00"},
+  {"id":"t_213","owner_id":"u_an","contact_id":"c_com_lan","amount":140000,"description":"Cơm trưa giữa tuần","category":"food","status":"completed","created_at":"2026-02-12T11:30:00+07:00"},
+
+  {"id":"t_220","owner_id":"u_an","contact_id":"c_shipper","amount":115000,"description":"GrabFood lẩu cuối tuần","category":"food","status":"completed","created_at":"2026-03-21T20:05:00+07:00"},
+  {"id":"t_221","owner_id":"u_an","contact_id":"c_com_lan","amount":160000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-03-26T11:55:00+07:00"},
+  {"id":"t_222","owner_id":"u_an","contact_id":"c_tap_hoa","amount":260000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-03-15T17:25:00+07:00"},
+
+  {"id":"t_230","owner_id":"u_an","contact_id":"c_shipper","amount":98000,"description":"GrabFood cơm trưa","category":"food","status":"completed","created_at":"2026-04-09T12:15:00+07:00"},
+  {"id":"t_231","owner_id":"u_an","contact_id":"c_com_lan","amount":170000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-04-23T11:50:00+07:00"},
+  {"id":"t_232","owner_id":"u_an","contact_id":"c_tap_hoa","amount":290000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-04-12T17:45:00+07:00"},
+
+  {"id":"t_240","owner_id":"u_an","contact_id":"c_shipper","amount":125000,"description":"GrabFood lẩu cuối tuần","category":"food","status":"completed","created_at":"2026-05-23T20:10:00+07:00"},
+  {"id":"t_241","owner_id":"u_an","contact_id":"c_com_lan","amount":165000,"description":"Cơm văn phòng tuần","category":"food","status":"completed","created_at":"2026-05-21T11:55:00+07:00"},
+  {"id":"t_242","owner_id":"u_an","contact_id":"c_tap_hoa","amount":340000,"description":"Mua đồ tạp hoá hàng tuần","category":"groceries","status":"completed","created_at":"2026-05-12T17:10:00+07:00"},
+
+  {"id":"t_250","owner_id":"u_an","contact_id":"c_huy","amount":280000,"description":"Chia tiền bia với team","category":"friends","status":"completed","created_at":"2026-03-17T22:00:00+07:00"},
+  {"id":"t_251","owner_id":"u_an","contact_id":"c_linh","amount":220000,"description":"Cafe bestie tan ca","category":"friends","status":"completed","created_at":"2026-04-11T18:00:00+07:00"},
+  {"id":"t_252","owner_id":"u_an","contact_id":"c_nam_dev","amount":150000,"description":"Chia tiền sách kỹ thuật","category":"work","status":"completed","created_at":"2026-04-22T14:00:00+07:00"},
+  {"id":"t_253","owner_id":"u_an","contact_id":"c_huy","amount":260000,"description":"Chia tiền nhậu","category":"friends","status":"completed","created_at":"2026-05-25T22:10:00+07:00"},
+  {"id":"t_254","owner_id":"u_an","contact_id":"c_linh","amount":180000,"description":"Trà sữa bestie","category":"friends","status":"completed","created_at":"2026-03-08T17:00:00+07:00"},
+
+  {"id":"t_260","owner_id":"u_an","contact_id":"c_minh_mb","amount":300000,"description":"Cafe cuối tuần","category":"friends","status":"completed","created_at":"2026-02-22T15:30:00+07:00"},
+  {"id":"t_261","owner_id":"u_an","contact_id":"c_minh_mb","amount":450000,"description":"Đi ăn lẩu","category":"friends","status":"completed","created_at":"2026-03-07T19:45:00+07:00"},
+  {"id":"t_262","owner_id":"u_an","contact_id":"c_minh_mb","amount":350000,"description":"Cafe sau giờ làm","category":"friends","status":"completed","created_at":"2026-03-29T15:20:00+07:00"},
+  {"id":"t_263","owner_id":"u_an","contact_id":"c_minh_mb","amount":500000,"description":"Chia tiền bia hơi","category":"friends","status":"completed","created_at":"2026-05-02T21:30:00+07:00"},
+  {"id":"t_264","owner_id":"u_an","contact_id":"c_minh_mb","amount":250000,"description":"Cafe gặp mặt","category":"friends","status":"completed","created_at":"2026-05-17T16:00:00+07:00"},
+  {"id":"t_265","owner_id":"u_an","contact_id":"c_bao","amount":300000,"description":"Cafe cuối tuần","category":"friends","status":"completed","created_at":"2026-02-15T16:00:00+07:00"},
+  {"id":"t_266","owner_id":"u_an","contact_id":"c_bao","amount":450000,"description":"Đi ăn tối","category":"friends","status":"completed","created_at":"2026-03-23T19:30:00+07:00"},
+  {"id":"t_267","owner_id":"u_an","contact_id":"c_bao","amount":380000,"description":"Cafe sau giờ làm","category":"friends","status":"completed","created_at":"2026-05-06T15:30:00+07:00"}
 ]
