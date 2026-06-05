@@ -65,7 +65,7 @@ BASELINE_HEAVY_VERY_FAST = 12
 # it scans every completed tx, computes per-contact z-scores, and runs the
 # subscription miner. The cap here is generous because each call is
 # isolated — no compounding effect across iterations.
-INSIGHTS_CAP = 12
+INSIGHTS_CAP = 5
 
 
 # ---------------------------------------------------------------------------
@@ -207,13 +207,19 @@ def bench_chat(client: httpx.Client, iters: int) -> list[dict]:
     return results
 
 
+def _report(row: dict) -> dict:
+    print(f"[bench]   {row['label']} done: P50={row['p50']:.1f}ms "
+          f"P95={row['p95']:.1f}ms", flush=True)
+    return row
+
+
 def bench_suggestions(client: httpx.Client, iters: int) -> dict:
     print(f"[bench]   suggestions/recipients ({iters} iters) …", flush=True)
 
     def _hit() -> None:
         r = client.get("/api/suggestions/recipients?limit=5", timeout=120.0)
         r.raise_for_status()
-    return _measure("suggestions/recipients", _hit, iters)
+    return _report(_measure("suggestions/recipients", _hit, iters))
 
 
 def bench_insights(client: httpx.Client, iters: int) -> Optional[dict]:
@@ -230,7 +236,7 @@ def bench_insights(client: httpx.Client, iters: int) -> Optional[dict]:
         r.raise_for_status()
     insights_iters = min(iters, INSIGHTS_CAP)
     print(f"[bench]   insights/summary ({insights_iters} iters) …", flush=True)
-    return _measure("insights/summary", _hit, insights_iters)
+    return _report(_measure("insights/summary", _hit, insights_iters))
 
 
 def bench_alias_resolution(iters: int) -> dict:
@@ -262,8 +268,7 @@ def bench_alias_resolution(iters: int) -> dict:
 
     n = max(iters // 5, 40)
     print(f"[bench]   alias_resolution (×50 queries × {n} iters) …", flush=True)
-    res = _measure("alias_resolution (×50q)", _hit, n)
-    return res
+    return _report(_measure("alias_resolution (×50q)", _hit, n))
 
 
 def bench_suggester_inference(iters: int) -> dict:
@@ -279,7 +284,7 @@ def bench_suggester_inference(iters: int) -> dict:
         suggest(USER, k=5)
 
     print(f"[bench]   suggester.suggest(k=5) ({iters} iters) …", flush=True)
-    return _measure("suggester.suggest(k=5)", _hit, iters)
+    return _report(_measure("suggester.suggest(k=5)", _hit, iters))
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +321,10 @@ def main() -> None:
                         help="Skip HTTP-backed benches (chat/insights/suggestions)")
     parser.add_argument("--skip-inproc", action="store_true",
                         help="Skip in-process benches (alias/suggester)")
+    parser.add_argument("--skip-chat", action="store_true",
+                        help="Skip the chat-flow benches but still run "
+                             "suggestions + insights (useful when iterating "
+                             "on the heavy non-chat endpoints).")
     parser.add_argument(
         "--baseline", action="store_true",
         help=("Lower per-flow caps for the unoptimised baseline so the run "
@@ -364,7 +373,8 @@ def main() -> None:
 
                 print(f"\n[bench] {args.iters} iterations per flow (+{WARMUP} warmup)")
 
-                all_rows.extend(bench_chat(client, args.iters))
+                if not args.skip_chat:
+                    all_rows.extend(bench_chat(client, args.iters))
                 all_rows.append(bench_suggestions(client, args.iters))
                 ins = bench_insights(client, args.iters)
                 if ins is not None:
