@@ -1,4 +1,4 @@
-.PHONY: install backend frontend smoke check reset test-nlu test verify dev clean
+.PHONY: install backend frontend smoke check reset test-nlu test verify docker-build docker-run docker-redis dev clean
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
@@ -47,6 +47,26 @@ verify:
 	@cd frontend && npm run build --silent
 	@echo ""
 	@echo "All checks green. Safe to demo."
+
+# Portable demo image (see backend/Dockerfile). Build time ~90s cold,
+# ~5s warm (pip wheel cache).
+docker-build:
+	cd backend && docker build -t omni-backend:latest .
+
+# Run the built image standalone (memory-backed sessions, no Redis).
+# Surfaces /docs at http://localhost:8000/docs, frontend Vite at :5173.
+docker-run:
+	docker run --rm -p 8000:8000 \
+	    -e OMNI_SKIP_EMBED_BACKFILL=1 \
+	    -e OFFLINE_DEMO=$${OFFLINE_DEMO:-0} \
+	    --name omni-backend \
+	    omni-backend:latest
+
+# Start the optional Redis container so the backend can use OMNI_SESSION_BACKEND=redis.
+# See docker-compose.yml at the repo root.
+docker-redis:
+	docker compose up -d redis
+	@echo "Redis on localhost:6379. Start backend with OMNI_SESSION_BACKEND=redis."
 
 dev:
 	@echo "Run 'make backend' and 'make frontend' in two terminals."
