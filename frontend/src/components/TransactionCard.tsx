@@ -134,12 +134,28 @@ export const TransactionCard = ({
 
   const primaryReady = otpReady && bioReady;
 
+  const openExplainer = () => {
+    // The drawer listens for this event; we don't know the audit id from the
+    // draft alone, so we open the drawer at the most-recent event (the one
+    // tied to this draft).
+    window.dispatchEvent(new CustomEvent("omni-audit-open"));
+  };
+
   return (
     <div
       className={`tx-card ${warned ? "tx-card--warn" : ""} ${
         !actionable ? "tx-card--done" : ""
       }`}
     >
+      <button
+        type="button"
+        className="tx-card__why"
+        onClick={openExplainer}
+        aria-label="Vì sao Omni quyết định như vậy?"
+        title="Vì sao Omni quyết định như vậy?"
+      >
+        ?
+      </button>
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>

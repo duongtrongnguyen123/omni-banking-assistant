@@ -41,6 +41,32 @@ def _is_cancel(text: str) -> bool:
     return bool(_CANCEL_RE.search(text.strip().lower()))
 
 
+def _audit_summary_text(user_id: str, limit: int = 5) -> str:
+    """Render the last `limit` audit events as a plain text bubble for
+    the /audit slash command."""
+    events = get_store().audit_of(user_id, limit)
+    if not events:
+        return "Chưa có sự kiện audit nào trong phiên này."
+    lines = [f"5 quyết định gần nhất của Omni:"]
+    for i, ev in enumerate(events, 1):
+        ts = ev.created_at.strftime("%H:%M:%S")
+        who = ev.resolved_recipient or "—"
+        amt = (ev.entities or {}).get("amount")
+        amt_str = (
+            f"{amt:,}đ".replace(",", ".") if isinstance(amt, int) else "—"
+        )
+        flags = ", ".join(ev.safety_flags) if ev.safety_flags else "—"
+        lines.append(
+            f"{i}. [{ts}] {ev.intent} → {ev.decision} · "
+            f"người nhận: {who} · số tiền: {amt_str} · "
+            f"cờ: {flags} · NLU: {ev.nlu_source}"
+        )
+    lines.append(
+        "Mở khay \"?\" ở góc dưới phải để xem từng bước lập luận chi tiết."
+    )
+    return "\n".join(lines)
+
+
 def _record_audit(
     user_id: str,
     *,
@@ -93,6 +119,14 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
 def handle_message(user_id: str, text: str) -> OmniResponse:
     text = text.strip()
     session = session_for(user_id)
+
+    # Slash command: /audit — return last 5 audit events as plain-text
+    # bubble. Useful when judges aren't reaching for the drawer.
+    if text.lower().startswith("/audit"):
+        body = _audit_summary_text(user_id, limit=5)
+        session.append("user", text)
+        session.append("omni", body)
+        return OmniResponse(intent="smalltalk", text=body)
     # Snapshot history *before* we append the current turn so the LLM
     # receives previous turns as context, with the current one as the new
     # user message.
