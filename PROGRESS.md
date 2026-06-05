@@ -49,6 +49,9 @@ Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 - ✅ **Privacy mode** — `OMNI_PRIVACY_MODE={off,redact,local-only}`, 5 PII classes, LLM audit ring buffer
 - ✅ **Budgets + savings goals** — 4 new intents, monthly envelopes, progress tracking
 - ✅ **Metrics + Prometheus** — 7 metric series, `/api/metrics` exposition, live dashboard
+- ✅ **Health probes + lifespan** — `/health/{live,ready,version}`, graceful shutdown, k8s hints
+- ✅ **A/B + Thompson bandit** — 4 weight arms, online learning, winner tree_freq at 67.55%
+- ✅ **ATM/branch finder** — 15-seed mock dataset, Haversine distance, NLU "ATM gần nhất"
 - ✅ **Cross-user synth eval** — pre-registered protocol, in-dist 0.54 / RAW 0.00 / mapped 0.57
 
 ### Quality gates (all green)
