@@ -370,16 +370,33 @@ def _handle_recurring(
     # Surface the structured pattern list so the UI can render a recurring
     # card. We populate recipient_name / recipient_bank here (rather than in
     # the detector) so the detector stays a pure function of (tx, ref_now).
+    # We also attach a one-tap schedule suggestion derived from the pattern
+    # so the UI can offer "đặt lịch ngay" without round-tripping to the LLM.
+    existing_schedules = store.schedules_of(user_id)
     enriched: list = []
     for p in top:
         c = contacts_by_id.get(p.contact_id)
+        suggested_cron = f"0 9 {p.typical_day} * *"
+        # Skip the CTA if an active schedule already covers this pattern
+        # (same contact + amount within ±20% of typical) — otherwise the
+        # demo shows "đặt lịch" on a row the user already automated.
+        already = any(
+            s.active
+            and s.contact_id == p.contact_id
+            and abs(s.amount - p.typical_amount) <= max(p.typical_amount * 0.2, 10_000)
+            for s in existing_schedules
+        )
         enriched.append(
             p.model_copy(
                 update={
                     "recipient_name": c.display_name if c else None,
                     "recipient_bank": c.bank if c else None,
                 }
-            ).model_dump(mode="json")
+            ).model_dump(mode="json") | {
+                "suggested_cron": suggested_cron,
+                "suggested_cron_label": _cron_label(suggested_cron),
+                "is_already_scheduled": already,
+            }
         )
 
     return OmniResponse(intent="recurring", text=body, recurring_patterns=enriched)
