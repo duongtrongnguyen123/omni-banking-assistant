@@ -164,9 +164,12 @@ checked into `backend/scripts/`.
 | `backend/scripts/load_contest_full.py` | Ingest 521k contest tx into SQLite |
 | `backend/scripts/load_czech.py` | Ingest Czech PKDD'99 dataset + permanent-orders ground truth |
 | `backend/scripts/load_banksim.py` | Ingest BankSim (594k rows) preserving `fraud` labels |
-| `backend/scripts/generate_synthetic_data.py` | Pattern-rich synthetic seed |
+| `backend/scripts/generate_synthetic_data.py` | Pattern-rich synthetic seed (single user) |
+| `backend/scripts/gen_synthetic_users.py` | Parameterised multi-user synthetic generator (seeded, reproducible) → `omni_synth_v2.db` |
+| `backend/scripts/eval_suggester_holdout.py` | Pre-registered in-dist + cross-user Hit@K on synthetic v2 |
 | `backend/scripts/smoke.py` / `demo.py` | End-to-end demo scenarios |
-| `docs/eval-real-data.md` | Public-dataset evaluation report (Czech recurring + BankSim fraud + BankSim Hit@K) |
+| `docs/eval-real-data.md` | Public-dataset evaluation report (Czech recurring + BankSim fraud + BankSim Hit@K + synthetic v2 cross-user) |
+| `docs/eval-protocol.md` | Pre-registered eval protocol for synthetic v2 (seed, hyperparams, sample-size analysis) |
 
 ## Intent reference
 
