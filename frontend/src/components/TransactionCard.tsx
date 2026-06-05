@@ -21,7 +21,11 @@ export const TransactionCard = ({
   const r = draft.recipient;
 
   return (
-    <div className={`tx-card ${warned ? "tx-card--warn" : ""}`}>
+    <div
+      className={`tx-card ${warned ? "tx-card--warn" : ""}`}
+      data-testid="tx-card"
+      data-step-up={draft.requires_step_up ? "true" : "false"}
+    >
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>
@@ -53,9 +57,13 @@ export const TransactionCard = ({
       )}
 
       {draft.flags.length > 0 && (
-        <div className="tx-flags">
+        <div className="tx-flags" data-testid="tx-flags">
           {draft.flags.map((f, i) => (
-            <div key={i} className={`tx-flag tx-flag--${f.severity}`}>
+            <div
+              key={i}
+              className={`tx-flag tx-flag--${f.severity}`}
+              data-testid={`tx-flag-${f.code}`}
+            >
               {f.severity === "block" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}{" "}
               {f.message}
             </div>
@@ -68,6 +76,7 @@ export const TransactionCard = ({
           className="btn btn--ghost"
           onClick={onCancel}
           disabled={disabled}
+          data-testid="tx-cancel-btn"
         >
           Huỷ
         </button>
@@ -76,6 +85,7 @@ export const TransactionCard = ({
             className="btn btn--ghost"
             onClick={onEdit}
             disabled={disabled}
+            data-testid="tx-edit-btn"
           >
             Sửa
           </button>
@@ -84,6 +94,7 @@ export const TransactionCard = ({
           className={`btn ${draft.requires_step_up ? "btn--warn" : "btn--primary"}`}
           onClick={onConfirm}
           disabled={disabled || blocked || draft.amount == null || r == null}
+          data-testid="tx-confirm-btn"
         >
           {draft.requires_step_up ? "Xác minh OTP & xác nhận" : "Xác nhận"}
         </button>

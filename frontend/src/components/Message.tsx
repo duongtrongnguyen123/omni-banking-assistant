@@ -33,18 +33,24 @@ export const Message = ({
 }: Props) => {
   if (message.role === "user") {
     return (
-      <div className="msg msg--user">
-        <div className="bubble bubble--user">{message.text}</div>
+      <div className="msg msg--user" data-testid="msg-user">
+        <div className="bubble bubble--user" data-testid="user-bubble">
+          {message.text}
+        </div>
       </div>
     );
   }
 
   const r = message.response;
   return (
-    <div className="msg msg--omni">
+    <div className="msg msg--omni" data-testid="msg-omni">
       <OmniAvatar />
       <div className="msg__stack">
-        <div className="bubble bubble--omni">
+        <div
+          className="bubble bubble--omni"
+          data-testid="omni-bubble"
+          data-pending={message.pending ? "true" : "false"}
+        >
           {message.pending ? <span className="typing"><i /><i /><i /></span> : message.text}
         </div>
         {r?.draft && r.draft.candidates.length > 0 && r.draft.recipient === null && (

@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const ContactDraftCard = ({ draft, onConfirm, onCancel, disabled }: Props) => (
-  <div className="tx-card">
+  <div className="tx-card" data-testid="contact-draft-card">
     <div className="tx-card__label">DANH BẠ MỚI</div>
     <div className="contact-draft__name">{draft.display_name}</div>
     <div className="tx-row">
@@ -38,10 +38,20 @@ export const ContactDraftCard = ({ draft, onConfirm, onCancel, disabled }: Props
       </div>
     </div>
     <div className="tx-actions">
-      <button className="btn btn--ghost" onClick={onCancel} disabled={disabled}>
+      <button
+        className="btn btn--ghost"
+        onClick={onCancel}
+        disabled={disabled}
+        data-testid="contact-cancel-btn"
+      >
         Huỷ
       </button>
-      <button className="btn btn--primary" onClick={onConfirm} disabled={disabled}>
+      <button
+        className="btn btn--primary"
+        onClick={onConfirm}
+        disabled={disabled}
+        data-testid="contact-confirm-btn"
+      >
         Lưu danh bạ
       </button>
     </div>

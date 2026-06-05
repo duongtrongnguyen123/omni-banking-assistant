@@ -7,7 +7,7 @@ export const ScheduleCard = ({ schedule }: { schedule: Schedule }) => {
     Math.ceil((new Date(schedule.next_run).getTime() - Date.now()) / 86400000),
   );
   return (
-    <div className="sched-card">
+    <div className="sched-card" data-testid="schedule-card">
       <div className="sched-card__title">✓ Lịch định kỳ</div>
       <div className="sched-card__amount">{formatVND(schedule.amount)}</div>
       {schedule.description && (

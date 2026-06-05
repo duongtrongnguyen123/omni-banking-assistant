@@ -75,3 +75,14 @@ def session_for(user_id: str) -> ConversationMemory:
         if user_id not in _sessions:
             _sessions[user_id] = ConversationMemory()
         return _sessions[user_id]
+
+
+def reset_session(user_id: str) -> None:
+    """Drop the in-memory session for `user_id`.
+
+    Used by the e2e suite to give each test a clean draft / history slate
+    without restarting the uvicorn process. Safe to call on a session
+    that doesn't exist — it's a no-op in that case.
+    """
+    with _lock:
+        _sessions.pop(user_id, None)

@@ -9,7 +9,7 @@ interface Props {
 }
 
 export const ScheduleDraftCard = ({ draft, onConfirm, onCancel, disabled }: Props) => (
-  <div className="tx-card">
+  <div className="tx-card" data-testid="schedule-draft-card">
     <div className="tx-card__label">LỊCH ĐỊNH KỲ MỚI</div>
     <div className="tx-card__amount">
       <div className="tx-card__amount-value">{formatVND(draft.amount)}</div>
@@ -43,10 +43,20 @@ export const ScheduleDraftCard = ({ draft, onConfirm, onCancel, disabled }: Prop
       </div>
     </div>
     <div className="tx-actions">
-      <button className="btn btn--ghost" onClick={onCancel} disabled={disabled}>
+      <button
+        className="btn btn--ghost"
+        onClick={onCancel}
+        disabled={disabled}
+        data-testid="schedule-cancel-btn"
+      >
         Huỷ
       </button>
-      <button className="btn btn--primary" onClick={onConfirm} disabled={disabled}>
+      <button
+        className="btn btn--primary"
+        onClick={onConfirm}
+        disabled={disabled}
+        data-testid="schedule-confirm-btn"
+      >
         Tạo lịch
       </button>
     </div>

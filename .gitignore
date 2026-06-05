@@ -1,10 +1,17 @@
 backend/.venv/
+backend/.venv
 backend/.env
 backend/**/__pycache__/
 backend/**/*.pyc
 
 frontend/node_modules/
 frontend/dist/
+
+# Playwright e2e
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.playwright/
 
 .DS_Store
 .vscode/

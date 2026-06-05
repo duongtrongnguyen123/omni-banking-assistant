@@ -7,13 +7,14 @@ interface Props {
 }
 
 export const DisambiguationCard = ({ draft, onSelect, disabled }: Props) => (
-  <div className="tx-card tx-card--disambig">
+  <div className="tx-card tx-card--disambig" data-testid="disambig-card">
     {draft.candidates.map((c) => (
       <button
         key={c.id}
         className="candidate-row"
         onClick={() => onSelect(c)}
         disabled={disabled}
+        data-testid={`disambig-candidate-${c.id}`}
       >
         <div className="candidate-avatar">
           {c.display_name

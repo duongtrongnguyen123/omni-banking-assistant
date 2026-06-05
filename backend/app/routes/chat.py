@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from ..context import reset_session
 from ..models.schemas import OmniResponse
 from ..services.orchestrator import (
     cancel_contact_draft,
@@ -81,3 +82,15 @@ def confirm_schedule(draft_id: str, user_id: str = Depends(current_user)) -> Omn
 @router.post("/schedules/{draft_id}/cancel", response_model=OmniResponse)
 def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     return cancel_schedule_draft(user_id, draft_id)
+
+
+@router.post("/session/reset")
+def reset_session_route(user_id: str = Depends(current_user)) -> dict:
+    """Drop the in-process conversation memory for the caller.
+
+    Intended for the e2e suite — each spec calls this in `beforeEach` so
+    dangling drafts from a previous test don't leak into the next.
+    Safe to call when there's no active session.
+    """
+    reset_session(user_id)
+    return {"ok": True, "user_id": user_id}

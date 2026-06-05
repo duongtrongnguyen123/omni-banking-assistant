@@ -18,11 +18,21 @@ export const QuickScenarios = ({ onPick }: { onPick: (text: string) => void }) =
   <div className="quick-scenarios">
     <div className="quick-scenarios__title">Kịch bản demo nhanh</div>
     <div className="quick-scenarios__list">
-      {SCENARIOS.map((s) => (
-        <button key={s.text} className="quick-chip" onClick={() => onPick(s.text)}>
-          {s.label}
-        </button>
-      ))}
+      {SCENARIOS.map((s) => {
+        // Stable e2e hook — extract "KB1" / "KB2" / ... prefix so tests
+        // can target a chip by scenario code regardless of label wording.
+        const code = s.label.split("·")[0].trim();
+        return (
+          <button
+            key={s.text}
+            className="quick-chip"
+            data-testid={`quick-chip-${code}`}
+            onClick={() => onPick(s.text)}
+          >
+            {s.label}
+          </button>
+        );
+      })}
     </div>
   </div>
 );

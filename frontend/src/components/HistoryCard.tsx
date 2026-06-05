@@ -4,9 +4,9 @@ import { formatVND, formatDateTime } from "../format";
 export const HistoryCard = ({ history }: { history: HistoryResult }) => {
   const periodLabel = history.period === "this_month" ? "Tháng này" : "Tháng trước";
   return (
-    <div className="hist-card">
-      <div className="hist-card__period">{periodLabel}</div>
-      <div className="hist-card__total">{formatVND(history.total)}</div>
+    <div className="hist-card" data-testid="history-card">
+      <div className="hist-card__period" data-testid="history-period">{periodLabel}</div>
+      <div className="hist-card__total" data-testid="history-total">{formatVND(history.total)}</div>
       <div className="hist-card__meta">
         {history.count} giao dịch · TB {formatVND(history.average)}/lần
       </div>

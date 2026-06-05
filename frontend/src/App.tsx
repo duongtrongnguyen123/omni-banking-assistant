@@ -172,12 +172,14 @@ export default function App() {
             }}
             placeholder="Nhập câu lệnh, ví dụ: chuyển cho mẹ 2 triệu…"
             disabled={busy}
+            data-testid="chat-input"
           />
           <button
             className="btn btn--primary btn--send"
             onClick={() => send(input)}
             disabled={busy || !input.trim()}
             aria-label="Gửi"
+            data-testid="chat-send-btn"
           >
             ➤
           </button>
