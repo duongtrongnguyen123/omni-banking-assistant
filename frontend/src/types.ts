@@ -133,6 +133,37 @@ export interface RecentRecipient {
   last_at: string;
 }
 
+export interface DedupCandidate {
+  id: string;
+  display_name: string;
+  bank: string;
+  account_number: string;
+  account_masked: string;
+  aliases: string[];
+  label: string | null;
+  tx_count: number;
+  tx_total: number;
+}
+
+export interface DedupGroup {
+  primary: DedupCandidate;
+  candidates: DedupCandidate[];
+  reason:
+    | "same_account_number"
+    | "same_bank_prefix_and_alias_overlap"
+    | "alias_exact_match";
+  overlap: number;
+}
+
+export interface MergeContactsResult {
+  merged_tx_count: number;
+  retained_aliases: string[];
+  audit: {
+    primary_id: string;
+    merged_candidates: Array<{ id: string; display_name: string }>;
+  };
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "omni";

@@ -1,4 +1,9 @@
-import type { OmniResponse, RecentRecipient } from "../types";
+import type {
+  DedupGroup,
+  MergeContactsResult,
+  OmniResponse,
+  RecentRecipient,
+} from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -94,6 +99,13 @@ export const api = {
     const data = (await res.json()) as { text: string };
     return data.text;
   },
+  contactDuplicates: () =>
+    jsonFetch<DedupGroup[]>("/api/contacts/duplicates"),
+  mergeContacts: (primary_id: string, candidate_ids: string[]) =>
+    jsonFetch<MergeContactsResult>("/api/contacts/merge", {
+      method: "POST",
+      body: JSON.stringify({ primary_id, candidate_ids }),
+    }),
   recentRecipients: async (max = 5): Promise<RecentRecipient[]> => {
     const txs = await jsonFetch<
       { id: string; created_at: string; contact: RecentRecipient["contact"] }[]

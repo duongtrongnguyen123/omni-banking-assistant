@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { RecentRecipient } from "../types";
+import { DedupCard } from "./DedupCard";
 
 const PeopleIcon = () => (
   <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -76,6 +77,17 @@ export const RecentRecipients = ({
       </button>
       {open && (
         <div className="recents__popover" role="listbox">
+          <DedupCard
+            onMerged={() => {
+              // After a merge, refresh recents so the list reflects the
+              // primary contact and drops the merged candidates.
+              setItems(null);
+              api
+                .recentRecipients(10)
+                .then(setItems)
+                .catch(() => {});
+            }}
+          />
           <div className="recents__title">Người nhận gần đây</div>
           <div className="recents__list">
             {items === null && !error && (
