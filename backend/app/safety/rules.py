@@ -182,6 +182,17 @@ def evaluate(
             if f.code == "amount_above_average" and f.severity == "warn":
                 _events.publish_anomaly_warning(user_id, message=f.message)
 
+    # Metrics: one counter increment per fired flag, labelled by code +
+    # severity. Wrapped in try/except so a broken metrics module can't
+    # break the safety contract.
+    try:
+        from ..services import metrics as _m
+
+        for f in flags:
+            _m.safety_flag_total.inc(code=f.code, severity=f.severity)
+    except Exception:
+        pass
+
     return flags
 
 

@@ -1218,6 +1218,55 @@ textarea:focus-visible,
 .telem__row--meta .telem__v { color: #64748b; font-size: 10px; }
 
 /* ---------------------------------------------------------------------
+ * Live metrics card (?metrics=1) — fixed bottom-right widget.
+ * Polls /api/metrics every 2s; renders SLO numbers an on-call would read.
+ * Strict 200x300 footprint so it never overlaps the chat phone frame.
+ * ------------------------------------------------------------------ */
+.metrics-card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 9000;
+  width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  opacity: 0.85;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.metrics-card__header {
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 4px;
+}
+.metrics-card__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+.metrics-card__row--sub {
+  color: #94a3b8;
+  padding-left: 8px;
+  font-size: 10px;
+}
+.metrics-card__err {
+  color: #f87171;
+  padding: 2px 0;
+  font-size: 10px;
+}
+
+/* ---------------------------------------------------------------------
  * Demo recorder (?demo=1) — small toolbar floating top-right of phone.
  * ------------------------------------------------------------------ */
 .demo-rec {
