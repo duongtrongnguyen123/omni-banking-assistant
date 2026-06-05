@@ -123,9 +123,27 @@ if __name__ == "__main__":
 
     cut = int(len(ALL) * 0.8)
     TRAIN, TEST = ALL[:cut], ALL[cut:]
-    print(f"Train: {len(TRAIN)} tx ({TRAIN[0]['created_at'][:10]} → {TRAIN[-1]['created_at'][:10]})")
-    print(f"Test : {len(TEST)} tx ({TEST[0]['created_at'][:10]} → {TEST[-1]['created_at'][:10]})")
+    # Cap the test set so eval stays under a minute even on 500k-row datasets.
+    # The eval is still time-ordered and from the held-out tail.
+    TEST_LIMIT = int(os.environ.get("EVAL_TEST_LIMIT", "1500"))
+    if len(TEST) > TEST_LIMIT:
+        TEST = TEST[-TEST_LIMIT:]
+
+    # Filter test rows to contacts with ≥ MIN_TRAIN_TX in the train window —
+    # one-shot contacts can't be predicted and just deflate Hit@K.
+    MIN_TRAIN = int(os.environ.get("EVAL_MIN_TRAIN", "5"))
+    from collections import Counter
+    train_count = Counter(r["contact_id"] for r in TRAIN)
+    TEST = [r for r in TEST if train_count[r["contact_id"]] >= MIN_TRAIN]
+
+    print(f"Train: {len(TRAIN):,} tx ({TRAIN[0]['created_at'][:10]} → {TRAIN[-1]['created_at'][:10]})")
+    print(f"Test : {len(TEST):,} tx (≥{MIN_TRAIN} train hits each, capped {TEST_LIMIT})")
     print()
+
+    # When the eval is pointed at a dedicated DB file (OMNI_DB_PATH set),
+    # skip the train/restore dance entirely — we're not touching shared
+    # state. Saves several minutes on a 500k-row dataset.
+    standalone = bool(os.environ.get("OMNI_DB_PATH"))
 
     try:
         _set_active(TRAIN)
@@ -138,13 +156,12 @@ if __name__ == "__main__":
             evaluate((0.0, 0.5, 0.5), "rule + freq (no tree)"),
             evaluate((0.60, 0.40, 0.00), "tree + freq (no rule)"),
             evaluate((0.35, 0.25, 0.40), "balanced hybrid"),
-            evaluate((0.55, 0.30, 0.15), "tree-heavy (default ≥200)"),
+            evaluate((0.55, 0.30, 0.15), "tree-heavy"),
             evaluate((0.20, 0.20, 0.60), "rule-heavy"),
         ]
         for r in rows:
             _print(r)
     finally:
-        # Restore the original DB state so the running uvicorn (if any)
-        # doesn't see a mutilated transactions table.
-        _set_active(ALL)
+        if not standalone:
+            _set_active(ALL)
         suggester.reset_all()

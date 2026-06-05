@@ -100,54 +100,44 @@ def _feature_vec(dt: datetime) -> list[float]:
 # ---------------------------------------------------------------------------
 
 
-def _rule_score(contact, txs: list, when: datetime) -> float:
-    """Heuristic bonus in [0, 1]. Designed so that:
-
-      * Paying mom on the 5th every month for 6 months → mom scores high
-        on the 4th–6th regardless of the tree's verdict.
-      * Saturday-only yoga payments → yoga boosts on Saturdays.
-      * GrabFood orders last 3 days → shipper stays warm even if rare.
-      * On 6/6 / 11/11 / etc., service contacts get a sale-day boost.
+def _rule_score(stats: Optional[dict], when: datetime) -> float:
+    """Heuristic bonus in [0, 1], computed from precomputed per-contact
+    stats (see ``_per_contact_stats``). The previous implementation took
+    the raw transaction list and re-derived these on every call — fine
+    for 30 contacts × 7 tx, but quadratic on contest-scale data where
+    each contact may have 500+ rows.
     """
-    if not txs:
+    if not stats:
         return 0.0
 
     bonus = 0.0
 
-    # 1) Day-of-month proximity. Use the *median* past day to be robust to
-    #    one-off transactions (e.g. an emergency tx for mom on day 22).
-    days = sorted(t.created_at.day for t in txs)
-    med_day = days[len(days) // 2]
-    delta = abs(med_day - when.day)
+    # 1) Day-of-month proximity (median past day vs query day).
+    delta = abs(stats["median_day"] - when.day)
     if delta <= 2:
-        bonus += 0.4 * (1 - delta / 3)  # max 0.4 at exact match
+        bonus += 0.4 * (1 - delta / 3)
     elif delta <= 5:
         bonus += 0.15 * (1 - (delta - 2) / 4)
 
-    # 2) Day-of-week match — strong signal for weekend services.
-    dows = [t.created_at.weekday() for t in txs]
-    dow_match = dows.count(when.weekday()) / len(dows)
+    # 2) Day-of-week match.
+    dow_total = stats["n"]
+    dow_match = stats["dow_counts"].get(when.weekday(), 0) / dow_total if dow_total else 0
     bonus += 0.25 * dow_match
 
-    # 3) Recency decay — touched in last week stays warm.
-    most_recent = max(t.created_at for t in txs)
-    days_since = (when.date() - most_recent.date()).days
+    # 3) Recency decay.
+    days_since = (when.date() - stats["most_recent"].date()).days
     if days_since <= 7:
-        bonus += 0.2 * (1 - days_since / 7)
+        bonus += 0.2 * (1 - max(days_since, 0) / 7)
     elif days_since <= 30:
         bonus += 0.08 * (1 - (days_since - 7) / 23)
 
-    # 4) Calendar priors keyed to Vietnamese behaviour.
-    last_cat = txs[-1].category if txs else ""
-
-    # X/X e-commerce sale days → service contacts get a clear boost.
+    # 4) Calendar priors.
+    last_cat = stats["last_category"]
     if when.day == when.month and last_cat in _SERVICE_CATEGORIES:
         bonus += 0.20
     elif (when.month, when.day) in _SALE_DATES and last_cat in _SERVICE_CATEGORIES:
         bonus += 0.15
 
-    # Decade-of-month nudges that match the user's intuition about VN
-    # spending cycles (đầu tháng → lương + hiếu, cuối tháng → tổng kết).
     if when.day <= 5 and last_cat in _FAMILY_CATEGORIES:
         bonus += 0.15
     elif when.day in _PAYDAY_DAYS and last_cat in _FAMILY_CATEGORIES:
@@ -162,6 +152,28 @@ def _rule_score(contact, txs: list, when: datetime) -> float:
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
+
+def _per_contact_stats(txs: list) -> dict:
+    """Precompute the per-contact stats used by ``_rule_score`` so each
+    call doesn't re-scan the whole history. Speed-up is essential when
+    eval runs hundreds of inferences across hundreds of contacts."""
+    stats: dict[str, dict] = {}
+    by_c: dict[str, list] = {}
+    for t in txs:
+        by_c.setdefault(t.contact_id, []).append(t)
+    for cid, items in by_c.items():
+        days = sorted(t.created_at.day for t in items)
+        dow_counter: Counter = Counter(t.created_at.weekday() for t in items)
+        stats[cid] = {
+            "median_day": days[len(days) // 2],
+            "dow_counts": dict(dow_counter),
+            "n": len(items),
+            "most_recent": max(t.created_at for t in items),
+            "last_category": items[-1].category,
+            "payday_hits": sum(1 for d in days if d in _PAYDAY_DAYS),
+        }
+    return stats
 
 
 def train_for(user_id: str) -> Optional[dict]:
@@ -184,23 +196,27 @@ def train_for(user_id: str) -> Optional[dict]:
     freq = Counter(y)
     total = len(y)
     prior = {c: freq[c] / total for c in labels}
+    contact_stats = _per_contact_stats(txs)
 
     if len(labels) < 2:
-        # Single-class corpus — predict_proba would be degenerate. Frequency
-        # baseline alone is enough.
         with _LOCK:
             _STATE[user_id] = {
                 "model": None, "labels": labels, "prior": prior, "n": total,
+                "contact_stats": contact_stats,
             }
         return {"trained_on": total, "labels": len(labels), "kind": "freq-only"}
 
-    model = RandomForestClassifier(
-        n_estimators=50,
-        max_depth=5,
-        min_samples_leaf=1,
-        random_state=42,
-        class_weight="balanced",
-    )
+    # Auto-tune RF cost based on dataset shape. With 1000 classes
+    # + class_weight=balanced + bootstrap, training on 100k+ samples can
+    # take 10+ minutes — way too slow for online retrain after each
+    # transfer. Drop n_estimators and parallelise across cores when the
+    # dataset is large.
+    if total >= 10_000:
+        rf_kwargs = dict(n_estimators=20, max_depth=8, min_samples_leaf=5, n_jobs=-1)
+    else:
+        rf_kwargs = dict(n_estimators=50, max_depth=5, min_samples_leaf=1,
+                         class_weight="balanced")
+    model = RandomForestClassifier(random_state=42, **rf_kwargs)
     model.fit(X, y)
 
     with _LOCK:
@@ -209,6 +225,7 @@ def train_for(user_id: str) -> Optional[dict]:
             "labels": list(model.classes_),
             "prior": prior,
             "n": total,
+            "contact_stats": contact_stats,
         }
     return {"trained_on": total, "labels": len(labels), "kind": "random_forest"}
 
@@ -281,11 +298,6 @@ def suggest(
     store = get_store()
     contacts = {c.id: c for c in store.contacts_of(user_id)}
 
-    # Pre-bucket txs per contact for the rule scorer.
-    txs_by_contact: dict[str, list] = {}
-    for t in store.transactions_of(user_id):
-        txs_by_contact.setdefault(t.contact_id, []).append(t)
-
     scored: list[tuple[str, float]] = []
     if state is not None:
         tree_proba: dict[str, float] = {}
@@ -293,10 +305,11 @@ def suggest(
             proba = state["model"].predict_proba([_feature_vec(when)])[0]
             tree_proba = dict(zip(state["labels"], proba))
 
+        contact_stats = state.get("contact_stats", {})
         for cid in state["prior"]:
             p_tree = float(tree_proba.get(cid, 0.0))
             p_freq = state["prior"][cid]
-            p_rule = _rule_score(contacts.get(cid), txs_by_contact.get(cid, []), when)
+            p_rule = _rule_score(contact_stats.get(cid), when)
             mixed = tw * p_tree + fw * p_freq + rw * p_rule
             scored.append((cid, mixed))
 
@@ -316,12 +329,16 @@ def suggest(
 
     scored.sort(key=_sort_key)
 
-    # Cache history per-contact for reason generation so we don't re-scan.
-    txs_by_contact: dict[str, list] = {}
-    for t in store.transactions_of(user_id):
-        txs_by_contact.setdefault(t.contact_id, []).append(t)
-
+    # Reason-string generation needs the actual tx list; only build it
+    # for the rows we return.
     out: list[dict] = []
+    needed_ids = {cid for cid, _ in scored[: k if not include_all else len(scored)]}
+    txs_for_reasons: dict[str, list] = {}
+    if needed_ids:
+        for t in store.transactions_of(user_id):
+            if t.contact_id in needed_ids:
+                txs_for_reasons.setdefault(t.contact_id, []).append(t)
+
     for cid, score in scored[: k if not include_all else len(scored)]:
         c = contacts.get(cid)
         if c is None:
@@ -329,7 +346,7 @@ def suggest(
         out.append({
             "contact": c.model_dump(),
             "score": round(score, 4),
-            "reason": _reason(txs_by_contact.get(cid, []), when),
+            "reason": _reason(txs_for_reasons.get(cid, []), when),
         })
     return out
 
