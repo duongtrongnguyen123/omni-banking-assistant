@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
-from ..context.alias import filter_by_account_hint
+from ..context.alias import filter_by_account_hint, resolve_by_account_hint
 from ..models.schemas import (
     AuditEvent,
     Contact,
@@ -74,6 +74,11 @@ def _record_audit(
 
 # A4: temporal-reference → history period. Strip diacritics so both
 # "tháng trước" and "thang truoc" map correctly.
+def _default_transfer_description(user_id: str) -> str:
+    user = get_store().get_user(user_id)
+    return f"{user.display_name} chuyển tiền"
+
+
 def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     if not temporal_ref:
         return "this_month"
@@ -622,8 +627,14 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     candidates = (
         resolve_recipient(e.recipient_text, contacts) if e.recipient_text else []
     )
+    account_hint_mismatch = False
     if e.account_hint:
-        candidates = filter_by_account_hint(candidates, e.account_hint)
+        if candidates:
+            filtered_candidates = filter_by_account_hint(candidates, e.account_hint)
+            account_hint_mismatch = not filtered_candidates
+            candidates = filtered_candidates
+        else:
+            candidates = resolve_by_account_hint(e.account_hint, contacts)
 
     chosen: Optional[Contact] = None
     if len(candidates) == 1:
@@ -650,6 +661,9 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             if chosen is None and not candidates:
                 chosen = store.contacts.get(referenced_tx.contact_id)
 
+    if not description:
+        description = _default_transfer_description(user_id)
+
     flags = evaluate(
         amount=amount,
         recipient_candidates=candidates,
@@ -657,6 +671,22 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         transactions=txs,
         account=account,
     )
+    if account_hint_mismatch:
+        flags = [
+            f
+            for f in flags
+            if f.code not in ("missing_recipient", "ambiguous_recipient")
+        ]
+        flags.append(
+            SafetyFlag(
+                code="account_hint_mismatch",
+                severity="block",
+                message=(
+                    "Số tài khoản bạn nhập không khớp với người nhận trong danh bạ. "
+                    "Mình sẽ không thực hiện giao dịch này."
+                ),
+            )
+        )
     required_auth = auth_policy(flags)
 
     draft = TransactionDraft(
@@ -952,6 +982,11 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
 
 
 def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
+    if any(f.code == "account_hint_mismatch" for f in draft.flags):
+        return next(
+            f.message for f in draft.flags if f.code == "account_hint_mismatch"
+        )
+
     if any(f.code == "ambiguous_recipient" for f in draft.flags):
         names = ", ".join(c.display_name for c in draft.candidates)
         return f"Bạn muốn chuyển cho ai trong số: {names}?"

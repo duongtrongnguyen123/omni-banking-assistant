@@ -100,6 +100,7 @@ class SafetyFlag(BaseModel):
         "missing_amount",
         "missing_recipient",
         "ambiguous_recipient",
+        "account_hint_mismatch",
         "large_amount",
         "new_recipient_large_amount",
         "amount_above_average",

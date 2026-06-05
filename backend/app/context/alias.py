@@ -111,5 +111,28 @@ def filter_by_account_hint(
     digits = re.sub(r"\D", "", hint)
     if not digits:
         return candidates
-    keep = [r for r in candidates if digits in r.contact.account_number]
-    return keep or candidates
+    keep = [
+        r
+        for r in candidates
+        if _account_matches_hint(r.contact.account_number, digits)
+    ]
+    return keep
+
+
+def resolve_by_account_hint(
+    hint: str, contacts: list[Contact]
+) -> list[ResolvedRecipient]:
+    digits = re.sub(r"\D", "", hint)
+    if not digits:
+        return []
+    return [
+        ResolvedRecipient(contact=c, matched_from="exact")
+        for c in contacts
+        if _account_matches_hint(c.account_number, digits)
+    ]
+
+
+def _account_matches_hint(account_number: str, digits: str) -> bool:
+    if len(digits) >= 6:
+        return account_number == digits
+    return account_number.endswith(digits)
