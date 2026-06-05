@@ -67,7 +67,7 @@ Return STRICT JSON only, no prose.
 
 Schema:
 {
-  "intent": "transfer|balance|history|schedule|reminder|add_contact|smalltalk|unknown",
+  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|smalltalk|unknown",
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
@@ -85,7 +85,9 @@ Schema:
 Rules:
 - "k" = ×1,000;  "tr"/"triệu" = ×1,000,000;  "tỷ"/"ty" = ×1,000,000,000.
 - "rưỡi" after a unit = + 0.5 of that unit ("5 triệu rưỡi" → 5500000).
-- "đặt lịch / hàng tháng / mỗi tháng / mùng X" → schedule.
+- "đặt lịch / hàng tháng / mỗi tháng / mùng X" → schedule (CREATE).
+- "khoản nào định kỳ / khoản tự động / có khoản nào trả đều / liệt kê lịch
+   tự động" → recurring (READ — show patterns inferred from history).
 - "nhắc nợ / nhắc trả" → reminder.
 - FOLLOW-UPS: when the current message looks like a continuation
   ("còn tháng trước?", "đổi sang Minh", "mà thôi đổi sang X", "cái nào nhiều
@@ -112,8 +114,55 @@ INPUT: "Số dư còn bao nhiêu?"
 NOTE: "tiêu/chi/đã gửi/đã chuyển bao nhiêu" → history (spending question).
 "Số dư/còn bao nhiêu trong tài khoản" → balance.
 
+HISTORY-SPECIFIC EXAMPLES (cover specific month, all-time, limit, top-N,
+description fuzzy filter):
+
+INPUT: "Tháng 4 mình gửi mẹ bao nhiêu?"
+{"intent":"history","confidence":0.95,"entities":{"recipient_text":"mẹ","specific_month":4}}
+
+INPUT: "Tháng 11 năm ngoái mình đã chi bao nhiêu?"
+{"intent":"history","confidence":0.9,"entities":{"specific_month":11,"specific_year":2025}}
+
+INPUT: "Tổng cộng từ trước đến giờ mình gửi mẹ bao nhiêu?"
+{"intent":"history","confidence":0.95,"entities":{"recipient_text":"mẹ","all_time":true}}
+
+INPUT: "Cho mình xem 5 giao dịch gần nhất"
+{"intent":"history","confidence":0.95,"entities":{"limit":5}}
+
+INPUT: "Lần cuối mình gửi mẹ là bao nhiêu?"
+{"intent":"history","confidence":0.95,"entities":{"recipient_text":"mẹ","limit":1}}
+
+INPUT: "3 giao dịch gần nhất với chị Thảo"
+{"intent":"history","confidence":0.95,"entities":{"recipient_text":"chị Thảo","limit":3}}
+
+INPUT: "Tháng trước ai nhận nhiều tiền nhất từ tôi?"
+{"intent":"history","confidence":0.95,"entities":{"temporal_reference":"tháng trước","top_recipient":true}}
+
+INPUT: "Tháng này chủ đề nào tôi tiêu nhiều nhất?"
+{"intent":"history","confidence":0.9,"entities":{"top_category":true}}
+
+INPUT: "Tôi đã tiêu cho ăn uống bao nhiêu tháng trước?"
+{"intent":"history","confidence":0.95,"entities":{"temporal_reference":"tháng trước","semantic_filter":"ăn uống"}}
+
+INPUT: "Khoản chi nào liên quan đến sức khoẻ"
+{"intent":"history","confidence":0.9,"entities":{"semantic_filter":"sức khoẻ"}}
+
 INPUT: "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng"
 {"intent":"schedule","confidence":0.95,"entities":{"recipient_text":"mẹ","amount":2000000,"amount_text":"2tr","schedule_cron":"0 9 1 * *"}}
+
+RECURRING (read-only — detect patterns from history):
+
+INPUT: "Mình có khoản nào trả đều hàng tháng không?"
+{"intent":"recurring","confidence":0.95,"entities":{}}
+
+INPUT: "Liệt kê các khoản định kỳ của mình"
+{"intent":"recurring","confidence":0.95,"entities":{}}
+
+INPUT: "Có khoản nào tự động trả không?"
+{"intent":"recurring","confidence":0.9,"entities":{}}
+
+INPUT: "Khoản định kỳ với mẹ"
+{"intent":"recurring","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
 
 INPUT: "Lưu Nam STK 9990001234 MB Bank tên là anh Nam"
 {"intent":"add_contact","confidence":0.95,"entities":{"recipient_text":"Nam","account_hint":"9990001234","bank_name":"MB Bank","alias":"anh Nam"}}

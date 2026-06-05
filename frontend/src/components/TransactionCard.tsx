@@ -31,8 +31,12 @@ export const TransactionCard = ({
   const warned = draft.flags.some((f) => f.severity === "warn");
   const r = draft.recipient;
   const selectedAccount = draft.source_accounts.find((a) => a.id === sourceAccountId);
+  // Only flag "không đủ số dư" when we know the amount AND it really exceeds
+  // the selected account's balance. Without an amount it's a missing-info
+  // issue, not a balance issue — the missing_amount safety flag below will
+  // surface that separately.
   const selectedBalanceBlocks =
-    selectedAccount && draft.amount != null ? draft.amount > selectedAccount.balance : blocked;
+    !!selectedAccount && draft.amount != null && draft.amount > selectedAccount.balance;
   const canSubmit =
     actionable && !disabled && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
   const cleanOtp = otp.replace(/\D/g, "").slice(0, 6);
@@ -49,8 +53,35 @@ export const TransactionCard = ({
     onConfirm(cleanOtp, sourceAccountId || undefined);
   };
 
+  // Surface the step-up reason as a hero banner so the safety layer is
+  // unmistakable in the demo. The same message is also in `draft.flags`
+  // below, but a top banner makes the *security posture* visible at a
+  // glance instead of buried under the amount.
+  const stepUpReason = draft.requires_step_up
+    ? draft.flags.find(
+        (f) =>
+          f.severity === "warn" &&
+          (f.code === "new_recipient_large_amount" ||
+            f.code === "amount_above_average"),
+      )
+    : undefined;
+
   return (
     <div className={`tx-card ${warned ? "tx-card--warn" : ""} ${!actionable ? "tx-card--done" : ""}`}>
+      {actionable && stepUpReason && (
+        <div className="tx-stepup" role="status">
+          <span className="tx-stepup__icon" aria-hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="11" width="16" height="9" rx="2" />
+              <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+            </svg>
+          </span>
+          <div className="tx-stepup__body">
+            <div className="tx-stepup__title">Cần xác thực OTP</div>
+            <div className="tx-stepup__reason">{stepUpReason.message}</div>
+          </div>
+        </div>
+      )}
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>

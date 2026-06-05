@@ -19,3 +19,14 @@ frontend/dist/
 
 # Large source-derived dataset — regenerate locally with data/transform_banking_dataset.py
 /data/generated/
+
+# Contest CSV bundle — too big for git; regenerate via scripts/load_contest_full.py
+/generated/
+/generated.zip
+
+# Per-DB-file SQLite artefacts (default, contest, synthetic snapshots, demo db)
+backend/app/data/omni*.db
+backend/app/data/omni*.db-*
+data/demo/omni.db
+data/demo/omni.db-*
+

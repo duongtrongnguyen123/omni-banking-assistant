@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from ..banking.recurring import detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
@@ -137,6 +138,9 @@ def _dispatch_intent(
 
     if nlu.intent == "schedule":
         return _handle_schedule(user_id, nlu)
+
+    if nlu.intent == "recurring":
+        return _handle_recurring(user_id, nlu, history_msgs)
 
     if nlu.intent == "add_contact":
         return _handle_add_contact(user_id, nlu)
@@ -282,24 +286,156 @@ def _handle_balance(
     return OmniResponse(intent="balance", text=text, balance=bal)
 
 
+def _handle_recurring(
+    user_id: str, nlu: NLUResult, history_msgs: Optional[list[dict]] = None
+) -> OmniResponse:
+    """Surface monthly recurring payments mined from history.
+
+    Pure read intent — does not write a schedule row. The reply suggests
+    the user can confirm one of the detected lines as a real schedule,
+    but the actual ``schedule`` intent stays in charge of creation so the
+    safety contract (rule-composed confirmation text) is preserved.
+    """
+    store = get_store()
+    txs = store.transactions_of(user_id)
+    contacts = store.contacts_of(user_id)
+    contacts_by_id = {c.id: c for c in contacts}
+
+    patterns = detect_recurring(txs)
+
+    e = nlu.entities
+    if e.recipient_text:
+        candidates = resolve_recipient(e.recipient_text, contacts)
+        wanted = {c.contact.id for c in candidates}
+        if wanted:
+            patterns = [p for p in patterns if p.contact_id in wanted]
+
+    # Cap the slate so the LLM has a tight context and the UI stays readable.
+    top = patterns[:5]
+
+    def _name(cid: str) -> str:
+        c = contacts_by_id.get(cid)
+        return c.display_name if c else "(không rõ)"
+
+    if not top:
+        msg = (
+            "Mình chưa thấy khoản nào đủ dữ liệu để khẳng định là định kỳ "
+            "(cần ít nhất 3 tháng giao dịch giống nhau)."
+        )
+        return OmniResponse(intent="recurring", text=msg)
+
+    facts = {
+        "intent": "recurring",
+        "instruction": (
+            "Tóm tắt các khoản định kỳ trong PATTERNS. Mỗi khoản gồm "
+            "tên người nhận, số tiền điển hình, ngày trong tháng. "
+            "Đoạn ngắn, văn bản trần. Có thể gợi ý người dùng đặt lịch tự "
+            "động nếu muốn — KHÔNG tự lập lịch."
+        ),
+        "patterns": [
+            {
+                "recipient": _name(p.contact_id),
+                "description": p.description,
+                "typical_amount": p.typical_amount,
+                "typical_day": p.typical_day,
+                "months_seen": p.month_count,
+                "last_seen": p.last_seen.date().isoformat(),
+                "next_expected": p.next_run.date().isoformat(),
+                "confidence": p.confidence,
+            }
+            for p in top
+        ],
+    }
+
+    # Deterministic fallback for when the LLM is unreachable.
+    lines = []
+    for p in top:
+        lines.append(
+            f"• {_name(p.contact_id)} — {format_vnd(p.typical_amount)} "
+            f"({p.description}) khoảng ngày {p.typical_day} hàng tháng, "
+            f"đã thấy {p.month_count} tháng."
+        )
+    fallback = "Mình thấy bạn có vài khoản trông như định kỳ:\n" + "\n".join(lines)
+    if len(patterns) > len(top):
+        fallback += f"\n…và {len(patterns) - len(top)} khoản khác."
+
+    body = (
+        llm_phrase(nlu.raw_text, facts, history=history_msgs)
+        or fallback
+    )
+    return OmniResponse(intent="recurring", text=body)
+
+
 def _handle_history(
     user_id: str, nlu: NLUResult, history_msgs: Optional[list[dict]] = None
 ) -> OmniResponse:
     contacts = get_store().contacts_of(user_id)
+    e = nlu.entities
 
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
-    if nlu.entities.recipient_text:
-        candidates = resolve_recipient(nlu.entities.recipient_text, contacts)
+    if e.recipient_text:
+        candidates = resolve_recipient(e.recipient_text, contacts)
         if len(candidates) == 1:
             contact_id = candidates[0].contact.id
             contact_name = candidates[0].contact.display_name
 
-    # A4: normalize temporal phrasing (handles "thang truoc" no-diacritic too).
-    user_asked_specific_period = nlu.entities.temporal_reference is not None
-    period = _period_from_temporal(nlu.entities.temporal_reference)
+    # History-only fallback: when no verb/prep led the NLU extractor to
+    # a recipient (e.g. "PT bao nhiêu tháng trước"), scan the raw message
+    # for any contact alias as a whole word. Matching keeps the original
+    # diacritics so "bảo" (Vũ Quốc Bảo) doesn't fold into "bao" of "bao
+    # nhiêu" and match the wrong contact.
+    if contact_id is None and not e.recipient_text:
+        msg_lower = nlu.raw_text.lower()
+        best: Optional[tuple[int, Contact]] = None
+        for c in contacts:
+            for alias in c.aliases:
+                a = alias.lower()
+                # Require the alias to appear as a whole word in the message.
+                if re.search(rf"(?<!\w){re.escape(a)}(?!\w)", msg_lower):
+                    # Prefer the longest alias (more specific).
+                    if best is None or len(a) > best[0]:
+                        best = (len(a), c)
+                    break
+        if best is not None:
+            contact_id = best[1].id
+            contact_name = best[1].display_name
 
-    hist = get_history(user_id=user_id, contact_id=contact_id, period=period)
+    # A4: normalize temporal phrasing (handles "thang truoc" no-diacritic too).
+    # Specific month / all_time override the temporal reference.
+    user_asked_specific_period = (
+        e.temporal_reference is not None
+        or e.specific_month is not None
+        or e.all_time
+    )
+    period = _period_from_temporal(e.temporal_reference)
+
+    # When the user asked for "N most recent" without a period, search
+    # the full history — defaulting to this_month silently turns "lần
+    # cuối gửi mẹ" into a no-op when mẹ wasn't paid this month.
+    if e.limit is not None and not user_asked_specific_period:
+        e.all_time = True
+        user_asked_specific_period = True
+
+    # Same for semantic filter — "khoản chi liên quan đến sách" shouldn't
+    # be artificially scoped to this month.
+    if e.semantic_filter and not user_asked_specific_period:
+        e.all_time = True
+        user_asked_specific_period = True
+
+    hist = get_history(
+        user_id=user_id,
+        contact_id=contact_id,
+        period=period,
+        specific_month=e.specific_month,
+        specific_year=e.specific_year,
+        all_time=e.all_time,
+        limit=e.limit,
+        semantic_filter=e.semantic_filter,
+    )
+    # get_history may have promoted the period (specific month, all_time);
+    # sync our local var so the label matches what was actually queried.
+    period = hist.get("period", period)
 
     # A3: if the user didn't ask for a specific period and this_month is empty,
     # silently fall back to last_month (with a note in the reply).
@@ -308,6 +444,8 @@ def _handle_history(
         not user_asked_specific_period
         and period == "this_month"
         and hist["count"] == 0
+        and not e.semantic_filter
+        and not e.limit
     ):
         last_hist = get_history(
             user_id=user_id, contact_id=contact_id, period="last_month"
@@ -321,7 +459,13 @@ def _handle_history(
         "this_month": "tháng này",
         "last_month": "tháng trước",
         "recent_30d": "30 ngày gần đây",
+        "all_time": "tất cả thời gian",
     }.get(period, period)
+    # Specific-month labels are emitted as YYYY-MM by get_history; render
+    # them as "Tháng M/YYYY" so the reply reads naturally.
+    if re.fullmatch(r"\d{4}-\d{2}", period):
+        y, m = period.split("-")
+        period_label = f"tháng {int(m)}/{y}"
 
     if hist["count"] == 0:
         body = f"Bạn chưa có giao dịch nào {period_label}"
@@ -335,9 +479,27 @@ def _handle_history(
             f"{format_vnd(hist['total'])} qua {hist['count']} giao dịch. "
             f"Trung bình {format_vnd(hist['average'])} mỗi lần."
         )
+        # Enrich the deterministic fallback with top-N highlights when the
+        # user asked for them — important when the LLM is rate-limited
+        # and can't phrase the answer itself.
+        if e.top_recipient and hist["by_recipient"]:
+            top = max(hist["by_recipient"].items(), key=lambda x: x[1])
+            fallback += f" Người nhận nhiều nhất: {top[0]} ({format_vnd(top[1])})."
+        if e.top_category and hist["by_category"]:
+            top = max(hist["by_category"].items(), key=lambda x: x[1])
+            fallback += f" Chủ đề nhiều nhất: {top[0]} ({format_vnd(top[1])})."
         # Let the LLM phrase the answer using the full breakdown so it can
         # respond to questions like "vào những chủ đề nào", "ai nhận nhiều
         # nhất", etc. — but the data it cites is whatever's in `facts`.
+        # Top-N highlights for the LLM to cite when the user asks aggregations.
+        top_recipient = (
+            max(hist["by_recipient"].items(), key=lambda x: x[1])
+            if hist["by_recipient"] else None
+        )
+        top_category = (
+            max(hist["by_category"].items(), key=lambda x: x[1])
+            if hist["by_category"] else None
+        )
         facts = {
             "intent": "history",
             "period_label": period_label,
@@ -347,13 +509,24 @@ def _handle_history(
             "average": hist["average"],
             "by_category": hist["by_category"],
             "by_recipient": hist["by_recipient"],
+            "top_recipient": (
+                {"name": top_recipient[0], "total": top_recipient[1]}
+                if top_recipient else None
+            ),
+            "top_category": (
+                {"category": top_category[0], "total": top_category[1]}
+                if top_category else None
+            ),
             "fell_back_from_this_month": fell_back,
+            "semantic_filter": e.semantic_filter,
+            "limit_applied": e.limit,
             "descriptions": [
                 {
                     "recipient": t["contact"]["display_name"],
                     "amount": t["amount"],
                     "description": t["description"],
                     "category": t["category"],
+                    "created_at": t["created_at"],
                 }
                 for t in hist["items"]
             ],
@@ -367,6 +540,22 @@ def _handle_history(
                 "Tháng này bạn chưa có giao dịch nào, mình lấy dữ liệu tháng trước nhé. "
                 + fallback
             )
+        elif e.limit:
+            # User asked for N most recent — list them, don't aggregate.
+            lines = [
+                f"{i+1}. {it['contact']['display_name']} — "
+                f"{format_vnd(it['amount'])} ({it['description']})"
+                for i, it in enumerate(hist["items"])
+            ]
+            body = (
+                f"{e.limit} giao dịch gần nhất"
+                + (f" với {contact_name}" if contact_name else "")
+                + ":\n" + "\n".join(lines)
+            )
+            # Try LLM phrasing too — it sometimes produces nicer flow text.
+            llm_text = llm_phrase(nlu.raw_text, facts, history=history_msgs)
+            if llm_text:
+                body = llm_text
         else:
             body = llm_phrase(nlu.raw_text, facts, history=history_msgs) or fallback
     return OmniResponse(intent="history", text=body, history=hist)
@@ -628,7 +817,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
                 description = referenced_tx.description
             # If recipient was implied but not matched, take it from the past tx.
             if chosen is None and not candidates:
-                chosen = store.contacts.get(referenced_tx.contact_id)
+                chosen = store.get_contact(referenced_tx.contact_id)
 
     flags = evaluate(
         amount=amount,
@@ -854,6 +1043,16 @@ def _execute_and_record(
         f"({draft.recipient.bank}){otp_note}. Mã giao dịch: {tx.id}."  # type: ignore[union-attr]
     )
     session.append("omni", text)
+
+    # Retrain the next-recipient suggester so the sidebar reflects this
+    # transfer immediately. Lightweight — fully trained on 35 rows in ~50ms.
+    try:
+        from ..ml.suggester import train_for
+
+        train_for(user_id)
+    except Exception:  # never block on the suggestion side-effect
+        pass
+
     return OmniResponse(intent="transfer", text=text)
 
 

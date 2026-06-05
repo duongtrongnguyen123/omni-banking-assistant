@@ -19,12 +19,13 @@ _UNITS = {
     "triệu": 1_000_000,
     "trieu": 1_000_000,
     "tr": 1_000_000,
-    "m": 1_000_000,
     "nghìn": 1_000,
     "nghin": 1_000,
     "ngàn": 1_000,
     "ngan": 1_000,
     "k": 1_000,
+    # NOTE: deliberately no bare "m" — it causes false positives like
+    # "4 mình" → "4 m" → 4,000,000đ. Users who want millions use "tr"/"triệu".
 }
 
 # Ordered for greedy match: longer keys first.

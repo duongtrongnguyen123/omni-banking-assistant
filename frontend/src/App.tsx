@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { ChatMessage, Contact, OmniResponse } from "./types";
+import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
+import { SuggestionStrip } from "./components/SuggestionStrip";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -21,7 +23,16 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // Bumped after every executed transfer so the suggestion strip re-ranks.
+  const [suggestRefresh, setSuggestRefresh] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const pickRecipient = (text: string) => {
+    setInput(text);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -108,6 +119,11 @@ export default function App() {
       const resp = await action();
       if (closeDraftId && !resp.draft) {
         setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
+        // Transfer was executed (or cancelled) — re-rank the suggestion
+        // strip so the freshly-paid contact moves up or out.
+        if (resp.intent === "transfer") {
+          setSuggestRefresh((n) => n + 1);
+        }
       }
       resolveOmni(pendingId, resp);
     } catch (e) {
@@ -211,12 +227,34 @@ export default function App() {
           ))}
         </div>
 
+        <SuggestionStrip
+          refreshKey={suggestRefresh}
+          busy={busy}
+          onPick={pickRecipient}
+        />
+
         <div className="phone__input">
           <VoiceButton
             onTranscript={(t) => setInput(t)}
             disabled={busy}
           />
+          <button
+            type="button"
+            className="phone__contacts-btn"
+            onClick={() => setPickerOpen(true)}
+            aria-label="Mở danh bạ"
+            title="Danh bạ"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 5h18v14H3z" />
+              <path d="M16 3v4" />
+              <path d="M8 3v4" />
+              <circle cx="12" cy="13" r="2.5" />
+              <path d="M8 18c.5-1.5 2-2.5 4-2.5s3.5 1 4 2.5" />
+            </svg>
+          </button>
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -237,6 +275,11 @@ export default function App() {
             ➤
           </button>
         </div>
+        <ContactPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onPick={pickRecipient}
+        />
       </div>
 
       <aside className="sidebar">

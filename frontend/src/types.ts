@@ -125,3 +125,9 @@ export interface ChatMessage {
   response?: OmniResponse;
   pending?: boolean;
 }
+
+export interface RecipientSuggestion {
+  contact: Contact;
+  score: number;
+  reason: string;
+}
