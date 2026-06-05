@@ -53,6 +53,10 @@ Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 - ✅ **A/B + Thompson bandit** — 4 weight arms, online learning, winner tree_freq at 67.55%
 - ✅ **ATM/branch finder** — 15-seed mock dataset, Haversine distance, NLU "ATM gần nhất"
 - ✅ **Cross-user synth eval** — pre-registered protocol, in-dist 0.54 / RAW 0.00 / mapped 0.57
+- ✅ **VietQR-style generator + camera scan** — custom TLV codec, jsQR as 47kB lazy chunk
+- ✅ **Onboarding wizard** — 4-step tutorial overlay + Skills discovery (13 chips × 5 categories)
+- ✅ **Structured `/help`** — `HelpCard.tsx` renders sections + keyboard shortcuts
+- ✅ **Performance optimizations** — SQL composite index + `_RawTx __slots__`, 500× speedup transfer
 
 ### Quality gates (all green)
 
