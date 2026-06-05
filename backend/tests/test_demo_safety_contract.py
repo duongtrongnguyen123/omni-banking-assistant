@@ -377,6 +377,54 @@ def test_fraud_model_threshold_constant_exists() -> None:
     assert 0.0 <= fraud_model.FRAUD_RISK_THRESHOLD <= 1.0
 
 
+def test_fraud_risk_high_appears_when_score_above_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: when ``fraud_model.score_draft`` returns a score above
+    ``FRAUD_RISK_THRESHOLD``, ``evaluate()`` must produce a ``fraud_risk_high``
+    warn flag. Patches the scorer so the test doesn't need a trained model
+    on disk (CI runs without one)."""
+    from datetime import datetime, timezone
+
+    from app.models.schemas import Account, Contact, Transaction
+    from app.safety import fraud_model
+    from app.safety.rules import evaluate
+
+    high = fraud_model.FRAUD_RISK_THRESHOLD + 0.1
+    monkeypatch.setattr(fraud_model, "score_draft", lambda **kw: high)
+
+    recipient = Contact(
+        id="c_test", owner_id=USER, display_name="Test Recipient",
+        bank="MB", account_number="0123456789", account_masked="6789",
+    )
+    account = Account(
+        id="a_test", bank="Omni", number="987654321",
+        balance=10_000_000, primary=True,
+    )
+    # Build a single past tx so the per-recipient anomaly path has data
+    # but at a similar amount — we want fraud_risk_high to fire, not
+    # amount_above_average (which would suppress it).
+    past = Transaction(
+        id="t_past", owner_id=USER, contact_id="c_test",
+        amount=1_000_000, description="prior tx",
+        category="other", status="completed",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    flags = evaluate(
+        amount=1_000_000,
+        recipient_candidates=[],
+        recipient=recipient,
+        transactions=[past],
+        account=account,
+        user_id=USER,
+    )
+    codes = [f.code for f in flags]
+    assert "fraud_risk_high" in codes, f"expected fraud_risk_high in {codes}"
+    fraud_flag = next(f for f in flags if f.code == "fraud_risk_high")
+    assert fraud_flag.severity == "warn"
+
+
 def test_insights_anomaly_renders_detector_reason() -> None:
     """The MAD anomaly detector returns ``contact_name`` + ``reason``
     (e.g. "cao gấp 8.4 lần mức thường (per-contact)"). The chat reply
