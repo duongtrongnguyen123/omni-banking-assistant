@@ -168,8 +168,28 @@ checked into `backend/scripts/`.
 | `backend/scripts/gen_synthetic_users.py` | Parameterised multi-user synthetic generator (seeded, reproducible) → `omni_synth_v2.db` |
 | `backend/scripts/eval_suggester_holdout.py` | Pre-registered in-dist + cross-user Hit@K on synthetic v2 |
 | `backend/scripts/smoke.py` / `demo.py` | End-to-end demo scenarios |
+| `backend/scripts/check.py` | Pre-pitch green-light: 19 assertions (`make check`) |
+| `backend/scripts/reset_demo.py` | Pitch-day panic button (`make reset`) |
+| `backend/scripts/list_routes.py` | Print all FastAPI routes grouped by prefix |
+| `backend/scripts/record_canonical_demo.py` | Generate `docs/demos/canonical-demo.jsonl` |
+| `backend/scripts/categorize_backfill.py` | Re-categorize legacy tx using the categorizer |
+| `backend/app/ml/categorizer.py` | TF-IDF + rules tx categorizer (13 categories, P=0.95) |
+| `backend/app/ml/insights.py` | MoM + per-recipient z/MAD anomaly + subscription detection |
+| `backend/app/ml/amount_predictor.py` | Median-from-history fill when user omits amount |
+| `backend/app/services/events.py` | Toast event bus + 6 publish helpers (per-user `asyncio.Queue`) |
+| `backend/app/routes/exports.py` | CSV / sao kê HTML / tax-year JSON export endpoints |
+| `backend/app/routes/demo.py` | Demo recorder + replayer (`/api/demo/record/{start,stop,replay}`) |
+| `backend/app/context/session_store.py` | InMemory / Redis / FakeRedis session backends |
+| `frontend/playwright.config.ts` + `frontend/tests/e2e/` | Playwright suite + CI workflow |
+| `Makefile` | `install backend frontend smoke check reset test-nlu test verify docker-build docker-run docker-redis` |
 | `docs/eval-real-data.md` | Public-dataset evaluation report (Czech recurring + BankSim fraud + BankSim Hit@K + synthetic v2 cross-user) |
 | `docs/eval-protocol.md` | Pre-registered eval protocol for synthetic v2 (seed, hyperparams, sample-size analysis) |
+| `docs/honest-pitch.md` | What we can vs cannot honestly claim — judge Q&A crib |
+| `docs/architecture.md` | End-to-end trace of one transfer (file:line pointers) |
+| `docs/demo-script.md` | 4-minute live pitch flow with timing + recovery scripts |
+| `docs/branch-status.md` | What's merged vs pending hand-merge, with merge order |
+| `docs/release-notes-2026-06-06.md` | Today's standup summary (16 features merged in one day) |
+| `PROGRESS.md` | 2-minute judges-facing summary |
 
 ## Intent reference
 
