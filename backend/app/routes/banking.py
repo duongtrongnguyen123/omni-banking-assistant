@@ -13,7 +13,10 @@ router = APIRouter(prefix="/api", tags=["banking"])
 
 @router.get("/me")
 def me(user_id: str = Depends(current_user)):
-    return get_store().get_user(user_id).model_dump()
+    user = get_store().get_user_or_none(user_id)
+    if user is None:
+        return {"id": user_id, "display_name": user_id, "accounts": [], "phone": ""}
+    return user.model_dump()
 
 
 @router.get("/contacts")
@@ -47,6 +50,11 @@ def history(
 @router.get("/schedules")
 def schedules(user_id: str = Depends(current_user)):
     return [s.model_dump(mode="json") for s in get_store().schedules_of(user_id)]
+
+
+@router.get("/audit")
+def audit(user_id: str = Depends(current_user), limit: int = 100):
+    return [e.model_dump(mode="json") for e in get_store().audit_of(user_id, limit)]
 
 
 def _summary(contact_id: str) -> dict:

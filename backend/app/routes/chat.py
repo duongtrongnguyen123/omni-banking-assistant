@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..models.schemas import OmniResponse
+from ..context.session import session_for
 from ..services.orchestrator import (
     cancel_contact_draft,
     cancel_draft,
@@ -30,6 +31,7 @@ class SelectCandidateRequest(BaseModel):
 class ConfirmTransactionRequest(BaseModel):
     otp: str | None = None
     source_account_id: str | None = None
+    biometric_verified: bool = False
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -48,6 +50,7 @@ def confirm(
         draft_id,
         otp=req.otp if req else None,
         source_account_id=req.source_account_id if req else None,
+        biometric_verified=req.biometric_verified if req else False,
     )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
@@ -67,7 +70,12 @@ def select(
 ) -> OmniResponse:
     resp = select_candidate(user_id, draft_id, req.contact_id)
     if resp.intent == "unknown":
-        raise HTTPException(status_code=404, detail=resp.text)
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                "Phiên giao dịch vừa được làm mới. Bạn nhập lại câu chuyển tiền giúp mình nhé."
+            ),
+        )
     return resp
 
 
@@ -104,3 +112,16 @@ def confirm_schedule(
 @router.post("/schedules/{draft_id}/cancel", response_model=OmniResponse)
 def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     return cancel_schedule_draft(user_id, draft_id)
+
+
+@router.post("/session/reset")
+def reset_session(user_id: str = Depends(current_user)) -> dict:
+    """Clear all in-flight drafts and conversation history for the caller.
+    Intended for testing and as the 'fresh chat' button — not exposed in
+    the UI but harmless if hit accidentally."""
+    s = session_for(user_id)
+    s.current_draft = None
+    s.current_contact_draft = None
+    s.current_schedule_draft = None
+    s.history.clear()
+    return {"ok": True, "user_id": user_id}

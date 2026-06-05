@@ -3,7 +3,7 @@
 Mirrors the "Lớp bảo mật và an toàn" layer in the slide architecture:
   - missing-info checks (amount, recipient)
   - ambiguous recipient detection (multiple Minh's)
-  - new-recipient + large-amount flag
+  - large amount and new-recipient + large-amount flags
   - statistical anomaly: amount > 10× user's average for this recipient
   - insufficient balance
 """
@@ -66,8 +66,17 @@ def evaluate(
 
     # If we have a chosen recipient + amount, run anomaly + balance checks.
     if recipient and amount:
-        # New recipient + large amount
-        if not recipient.frequent and amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
+        recipient_txs = [
+            t
+            for t in transactions
+            if t.status == "completed" and t.contact_id == recipient.id
+        ]
+        has_transacted_with_recipient = len(recipient_txs) > 0
+
+        # Large amount always needs a step-up path. If this is also a truly
+        # new recipient, use the stronger warning. "Frequent" is only display
+        # metadata; transaction history is the source of truth here.
+        if amount >= NEW_RECIPIENT_LARGE_THRESHOLD and not has_transacted_with_recipient:
             flags.append(
                 SafetyFlag(
                     code="new_recipient_large_amount",
@@ -78,10 +87,24 @@ def evaluate(
                     ),
                 )
             )
+        elif amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
+            flags.append(
+                SafetyFlag(
+                    code="large_amount",
+                    severity="warn",
+                    message=(
+                        "Số tiền trên 10.000.000đ — mình sẽ yêu cầu xác thực "
+                        "thêm trước khi thực hiện."
+                    ),
+                )
+            )
 
-        # Statistical anomaly vs user's own transaction average
+        # Statistical anomaly vs user's own transaction average. Keep this as
+        # an extra warning for new recipients; known recipients already get the
+        # clearer large-amount warning above, which is easier to explain in the
+        # demo.
         all_amounts = [t.amount for t in transactions if t.status == "completed"]
-        if all_amounts:
+        if all_amounts and not has_transacted_with_recipient:
             avg = mean(all_amounts)
             if amount >= avg * ANOMALY_MULTIPLIER:
                 flags.append(
@@ -114,10 +137,24 @@ def evaluate(
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
     """Whether OTP / step-up auth is required to proceed."""
     return any(
-        f.code in ("new_recipient_large_amount", "amount_above_average")
+        f.code in ("large_amount", "new_recipient_large_amount", "amount_above_average")
         and f.severity == "warn"
         for f in flags
     )
+
+
+def auth_policy(flags: list[SafetyFlag]) -> list[str]:
+    """Risk-based auth policy for MVP.
+
+    Normal transfer: OTP.
+    Warn-level risky transfer: OTP + mock biometric.
+    Blocked transfer: no auth path until the user fixes the blocked state.
+    """
+    if is_blocked(flags):
+        return []
+    if requires_step_up(flags):
+        return ["otp", "biometric"]
+    return ["otp"]
 
 
 def is_blocked(flags: list[SafetyFlag]) -> bool:

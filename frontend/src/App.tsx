@@ -4,6 +4,7 @@ import type { ChatMessage, Contact, OmniResponse } from "./types";
 import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
+import { RecentRecipients } from "./components/RecentRecipients";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -21,6 +22,7 @@ export default function App() {
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -99,40 +101,7 @@ export default function App() {
     action: () => Promise<OmniResponse>,
     actionLabel: string,
     closeDraftId?: string,
-    inlineDraftId?: string,
   ) => {
-    if (inlineDraftId) {
-      setBusy(true);
-      try {
-        const resp = await action();
-        if (closeDraftId && !resp.draft) {
-          setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
-        }
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.response?.draft?.id === inlineDraftId
-              ? { ...m, text: resp.text, response: resp, pending: false }
-              : m,
-          ),
-        );
-      } catch (e) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.response?.draft?.id === inlineDraftId
-              ? {
-                  ...m,
-                  text: `Lá»—i: ${String(e instanceof Error ? e.message : e)}`,
-                  pending: false,
-                }
-              : m,
-          ),
-        );
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-
     appendUser(actionLabel);
     const pendingId = appendOmniPending();
     setBusy(true);
@@ -149,13 +118,24 @@ export default function App() {
     }
   };
 
-  const onConfirm = (draftId: string, opts: { otp?: string; sourceAccountId?: string; biometricVerified?: boolean }) =>
-    sendDraftAction(
-      () => api.confirm(draftId, opts),
-      "Xác minh OTP",
-      draftId,
-      draftId,
-    );
+  const onConfirm = (
+    draftId: string,
+    payload: {
+      otp?: string;
+      biometric_verified?: boolean;
+      source_account_id?: string;
+    },
+  ) => {
+    const label =
+      payload.otp && payload.biometric_verified
+        ? "Xác minh OTP + sinh trắc học"
+        : payload.biometric_verified
+          ? "Xác minh sinh trắc học"
+          : payload.otp
+            ? "Xác minh OTP"
+            : "Xác nhận";
+    return sendDraftAction(() => api.confirm(draftId, payload), label, draftId);
+  };
 
   const onCancel = (draftId: string) =>
     sendDraftAction(() => api.cancel(draftId), "Huỷ", draftId);
@@ -245,7 +225,21 @@ export default function App() {
         </div>
 
         <div className="phone__input">
+          <RecentRecipients
+            disabled={busy}
+            onPick={(name) => {
+              const prefix = `Chuyển cho ${name} `;
+              setInput(prefix);
+              requestAnimationFrame(() => {
+                const el = inputRef.current;
+                if (!el) return;
+                el.focus();
+                el.setSelectionRange(prefix.length, prefix.length);
+              });
+            }}
+          />
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {

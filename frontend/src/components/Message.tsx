@@ -8,12 +8,15 @@ import { ScheduleCard } from "./ScheduleCard";
 import { ContactDraftCard } from "./ContactDraftCard";
 import { ScheduleDraftCard } from "./ScheduleDraftCard";
 
+interface ConfirmPayload {
+  otp?: string;
+  biometric_verified?: boolean;
+  source_account_id?: string;
+}
+
 interface Props {
   message: ChatMessage;
-  onConfirm: (
-    draftId: string,
-    opts: { otp?: string; sourceAccountId?: string; biometricVerified?: boolean },
-  ) => void;
+  onConfirm: (draftId: string, payload: ConfirmPayload) => void;
   onCancel: (draftId: string) => void;
   onSelectCandidate: (draftId: string, contact: Contact) => void;
   onConfirmContact: (draftId: string) => void;
@@ -64,7 +67,7 @@ export const Message = ({
         {r?.draft && r.draft.recipient && (
           <TransactionCard
             draft={r.draft}
-            onConfirm={(opts) => onConfirm(r.draft!.id, opts)}
+            onConfirm={(payload) => onConfirm(r.draft!.id, payload)}
             onCancel={() => onCancel(r.draft!.id)}
             disabled={busy}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}

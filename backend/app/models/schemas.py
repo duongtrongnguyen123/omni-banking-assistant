@@ -87,6 +87,7 @@ class NLUResult(BaseModel):
     confidence: float = 1.0
     entities: ExtractedEntities = Field(default_factory=ExtractedEntities)
     raw_text: str
+    source: Literal["llm", "rule"] = "rule"  # which layer produced this result
 
 
 class ResolvedRecipient(BaseModel):
@@ -100,6 +101,8 @@ class SafetyFlag(BaseModel):
         "missing_amount",
         "missing_recipient",
         "ambiguous_recipient",
+        "account_hint_mismatch",
+        "large_amount",
         "new_recipient_large_amount",
         "amount_above_average",
         "insufficient_balance",
@@ -121,6 +124,8 @@ class TransactionDraft(BaseModel):
     reference_transaction_id: Optional[str] = None
     flags: list[SafetyFlag] = Field(default_factory=list)
     requires_step_up: bool = False
+    auth_required: list[Literal["otp", "biometric"]] = Field(default_factory=list)
+    auth_completed: list[Literal["otp", "biometric"]] = Field(default_factory=list)
 
 
 class ContactDraft(BaseModel):
@@ -157,3 +162,19 @@ class OmniResponse(BaseModel):
     balance: Optional[dict] = None
     schedule: Optional[Schedule] = None
     needs_disambiguation: bool = False
+
+
+class AuditEvent(BaseModel):
+    id: str
+    created_at: datetime
+    user_id: str
+    message: str = ""
+    nlu_source: Literal["rule", "llm", "unknown"] = "unknown"
+    intent: str = "unknown"
+    entities: dict = Field(default_factory=dict)
+    resolved_recipient: Optional[str] = None
+    selected_account: Optional[str] = None
+    safety_flags: list[str] = Field(default_factory=list)
+    auth_required: list[str] = Field(default_factory=list)
+    auth_completed: list[str] = Field(default_factory=list)
+    decision: str
