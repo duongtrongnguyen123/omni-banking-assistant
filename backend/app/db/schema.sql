@@ -63,8 +63,22 @@ CREATE TABLE IF NOT EXISTS transactions (
     embedding    BLOB
 );
 CREATE INDEX IF NOT EXISTS ix_tx_owner_created ON transactions(owner_id, created_at DESC);
+-- OPT-4 (bench): covers ``transactions_of(user_id, contact_id=…)`` plus the
+-- ORDER BY created_at DESC tail so the planner doesn't fall back to a
+-- scan of every owner_id row when the per-contact baseline asks for a
+-- single recipient's history. Without ``created_at`` in the key, SQLite
+-- on a fresh DB (no ANALYZE) picks ``ix_tx_owner_created`` and filters
+-- contact_id in memory — 2.3s vs <10ms on contest data.
+CREATE INDEX IF NOT EXISTS ix_tx_owner_contact_created
+    ON transactions(owner_id, contact_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_tx_owner_contact ON transactions(owner_id, contact_id);
 CREATE INDEX IF NOT EXISTS ix_tx_owner_category ON transactions(owner_id, category);
+-- OPT-4 (bench): covers the per-status filter used by insights and
+-- recurring detection (``status='completed'`` is the only value queried
+-- in the hot path, but the partial index is cheap on a status column
+-- whose cardinality is ~3).
+CREATE INDEX IF NOT EXISTS ix_tx_owner_status_created
+    ON transactions(owner_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS schedules (
     id                 TEXT PRIMARY KEY,

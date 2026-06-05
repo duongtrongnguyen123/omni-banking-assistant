@@ -41,3 +41,4 @@ backend/app/data/bandit_state.json
 backend/app/data/bandit_state.tmp
 
 .claude/
+backend/.venv/

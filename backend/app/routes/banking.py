@@ -26,7 +26,25 @@ def contacts(user_id: str = Depends(current_user)):
 
 @router.get("/transactions")
 def transactions(user_id: str = Depends(current_user), limit: int = 50):
-    txs = get_store().transactions_of(user_id)[:limit]
+    # OPT-3 (bench): push the limit into SQL; the route used to slice
+    # the full materialised history in Python (520k rows on contest data).
+    txs = get_store().transactions_of(user_id, limit=limit)
+    # OPT-2: batch contact resolution rather than one fetch per row.
+    needed = sorted({t.contact_id for t in txs if t.contact_id})
+    contacts_by_id = get_store().contacts_by_ids(needed) if needed else {}
+
+    def _summary(contact_id: str) -> dict:
+        c = contacts_by_id.get(contact_id)
+        if not c:
+            return {}
+        return {
+            "id": c.id,
+            "display_name": c.display_name,
+            "bank": c.bank,
+            "account_masked": c.account_masked,
+            "label": c.label,
+        }
+
     return [
         {**t.model_dump(mode="json"), "contact": _summary(t.contact_id)}
         for t in txs
