@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from ..ml.suggester import suggest, train_for
+from ..services.suggester import suggest_for
 from .deps import current_user
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
@@ -27,9 +28,16 @@ def recipients(
     ),
     user_id: str = Depends(current_user),
 ) -> list[dict]:
-    """Top-K next-transfer suggestions for the caller, given a point in time."""
+    """Top-K next-transfer suggestions for the caller, given a point in time.
+
+    Routed through the A/B framework — the arm picked for ``user_id``
+    overrides the production auto-weight heuristic. When the A/B is
+    disabled (``OMNI_DISABLE_ABTEST=1``) the underlying ``suggest`` runs
+    with its standard auto-weights.
+    """
     dt = datetime.fromisoformat(when).astimezone() if when else None
-    return suggest(user_id, dt, k=limit, include_all=all)
+    _arm, results = suggest_for(user_id, when=dt, k=limit, include_all=all)
+    return results
 
 
 @router.post("/train")

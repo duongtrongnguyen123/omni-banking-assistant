@@ -40,6 +40,20 @@ app.include_router(admin.router)
 
 
 @app.on_event("startup")
+def _register_abtest_arms() -> None:
+    """Register the default suggester-weight arms and restore persisted
+    Beta posteriors. Idempotent. Skipped under ``OMNI_DISABLE_ABTEST=1``."""
+    from .ml import abtest
+
+    if not abtest.is_enabled():
+        return
+    try:
+        abtest.register_defaults()
+    except Exception as e:  # pragma: no cover — startup defensive
+        log.warning("A/B arm registration skipped: %s", e)
+
+
+@app.on_event("startup")
 def _backfill_embeddings() -> None:
     """Warm the local embedder and embed any contact/transaction rows that
     don't yet have a vector. Runs once per process start. Skipped when

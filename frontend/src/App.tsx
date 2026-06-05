@@ -13,6 +13,7 @@ import { SuggestionStrip } from "./components/SuggestionStrip";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
 import { ToastStack } from "./components/ToastStack";
 import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
+import { AbTestCard } from "./components/AbTestCard";
 import { DemoRecorder } from "./components/DemoRecorder";
 import { ExportMenu } from "./components/ExportMenu";
 import { PrivacyBadge } from "./components/PrivacyBadge";
@@ -505,6 +506,7 @@ export default function App() {
   return (
     <div className="page">
       <TelemetryOverlay />
+      <AbTestCard />
       <div className="phone">
         <ToastStack />
         <DemoRecorder />

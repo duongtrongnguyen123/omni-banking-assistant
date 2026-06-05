@@ -1540,6 +1540,16 @@ def _execute_and_record(
     except Exception:  # never block on the suggestion side-effect
         pass
 
+    # Score the A/B arm that produced the last suggestion list for this
+    # user. ``correct = (chosen contact == top-1 we suggested)``. Never
+    # blocks the confirmed transfer.
+    try:
+        from .suggester import consume_outcome
+
+        consume_outcome(user_id, draft.recipient.id)  # type: ignore[union-attr]
+    except Exception:
+        pass
+
     return OmniResponse(intent="transfer", text=text)
 
 
