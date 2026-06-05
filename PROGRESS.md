@@ -41,6 +41,7 @@ Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 - ✅ **Keyboard shortcuts** — Cmd+K focus, Cmd+Enter resend, Cmd+/ palette, ↑/↓ history
 - ✅ **@-mention recipient autocomplete** in chat input
 - ✅ **Redis session backend** with fakeredis fallback + 5-min draft TTL
+- ✅ **Real-time toast notifications** via `/ws/events` — 6 event kinds, per-user queue
 
 ### Quality gates (all green)
 
@@ -60,11 +61,13 @@ Evaluated on **three** datasets:
 | Eval | Dataset | Headline |
 |------|---------|----------|
 | Suggester Hit@K | Contest 520k (uniform) | At random baseline — dataset has no learnable signal |
-| Suggester Hit@K | **BankSim 594k (real merchant labels)** | **Hit@1 = 0.81 · Hit@5 = 0.97** |
+| Suggester Hit@K | **BankSim 594k (real merchant labels)** | **Hit@1 = 0.81 · Hit@5 = 0.97** — headline non-circular number |
+| Suggester Hit@K | Cross-user check (20 synth users, seed=42, pre-registered) | In-dist 0.54 · cross-user RAW 0.00 (no label leakage) · mapped 0.57 |
 | Recurring detector F1 | **Czech PKDD'99 (real bank, ground-truth `permanent_orders`)** | **F1 = 0.74** (P=0.69, R=0.80) |
 | Fraud Isolation Forest | BankSim 7 200 labelled fraud | Recall 0.75 · FP-rate 0.11 at threshold 0.5 — OTP step-up signal |
 
-Full method: [`docs/eval.md`](docs/eval.md), [`docs/eval-real-data.md`](docs/eval-real-data.md).
+Full method: [`docs/eval.md`](docs/eval.md), [`docs/eval-real-data.md`](docs/eval-real-data.md),
+[`docs/eval-protocol.md`](docs/eval-protocol.md) (pre-registered seed + hyperparameters).
 
 ## What we explicitly do NOT claim
 
