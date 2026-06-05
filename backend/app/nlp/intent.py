@@ -29,6 +29,17 @@ def _ascii_fold(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HIGH: list[tuple[Intent, list[str]]] = [
+    # insights (proactive analytics) — before history so "tieu nhieu hon
+    # thang truoc" routes here, not to plain history.
+    ("insights", [
+        "nhieu hon thang truoc", "it hon thang truoc",
+        "so voi thang truoc", "so sanh thang truoc",
+        "bat thuong",  # "giao dịch nào bất thường", "có gì bất thường"
+        "co diem la",
+        "dang ky dich vu", "subscription", "thue bao hang thang",
+        "co the cat giam", "khoan nao thua",
+        "phan tich chi tieu", "phan tich tieu",
+    ]),
     # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
     # hang thang" are queries about existing patterns, not commands to make
     # a new one. Schedule keeps its imperative cues.
@@ -59,6 +70,7 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ]),
     ("add_contact", [
         "luu danh ba", "them danh ba", "luu lien lac", "luu so",
+        "them lien he",
     ]),
     ("smalltalk", ["xin chao", "chao omni", "hello", "cam on"]),
 ]
@@ -94,9 +106,20 @@ _MED: list[tuple[Intent, list[str]]] = [
 ]
 
 
+_LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
+
+
 def classify(text: str) -> tuple[Intent, float]:
     folded = _ascii_fold(text)
     folded = re.sub(r"\s+", " ", folded)
+
+    # Bare "lưu <person> STK <digits>" — informal add-contact pattern that
+    # the Tier-1 keyword list can't capture without false-positiving on
+    # "lưu ý" / "lưu lại". Pin it here, before any tier. CRITICAL: stops the
+    # rule fallback misrouting an add-contact as a money-touching transfer
+    # when both LLM providers are 429 (verifier audit 2026-06-06, H-1).
+    if _LUU_STK_RE.search(folded):
+        return "add_contact", 0.9
 
     # Tier 1 — first match wins, no scoring needed.
     for intent, kws in _HIGH:
