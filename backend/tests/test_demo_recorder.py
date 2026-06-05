@@ -29,10 +29,19 @@ def _seed_demo_user():
         if not target.exists() and (src / name).exists():
             shutil.copyfile(src / name, target)
     # Make sure the SQLite file is fresh so bootstrap re-runs against
-    # the JSON we just copied.
+    # the JSON we just copied. CRITICAL: also drop the in-process Store
+    # / connection cache — otherwise a prior test module's cached
+    # connection still points at the deleted file and reads come back
+    # empty (users KeyError). The Store singleton lazily rebuilds on
+    # next ``get_store()`` and triggers a fresh bootstrap.
     db_file = data_dir / "omni.db"
     if db_file.exists():
         db_file.unlink()
+    from app.db.connection import reset_connection
+    import app.store as _store_mod
+
+    reset_connection()
+    _store_mod._store = None
 
 
 def _client():

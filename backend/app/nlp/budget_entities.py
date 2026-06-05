@@ -1,0 +1,193 @@
+"""Entity extraction for budget-envelope + savings-goal intents.
+
+Kept in a sibling module to ``entities.py`` so the existing transfer
+extractor stays focused. The two are merged at the pipeline boundary
+(see ``pipeline.understand``).
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from typing import Optional
+
+
+def _fold(s: str) -> str:
+    n = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in n if not unicodedata.combining(c)).lower().replace("đ", "d")
+
+
+# Vietnamese surface form → internal category code (matches the
+# categorizer's output codes, so budget aggregations join cleanly
+# against ``transactions.category``). Keys are folded (no diacritics).
+#
+# Ordered: multi-word forms first so "an uong" beats a bare "an" match.
+_BUDGET_CATEGORIES: list[tuple[str, str, str]] = [
+    # (folded keyword, internal code, display label in Vietnamese)
+    ("an uong", "food", "Ăn uống"),
+    ("ca phe tra sua", "food", "Ăn uống"),
+    ("an", "food", "Ăn uống"),
+    ("nhau", "food", "Ăn uống"),
+    ("di lai", "transport", "Đi lại"),
+    ("xe co", "transport", "Đi lại"),
+    ("xang", "transport", "Đi lại"),
+    ("grab", "transport", "Đi lại"),
+    ("di chuyen", "transport", "Đi lại"),
+    ("di cho", "groceries", "Đi chợ"),
+    ("sieu thi", "groceries", "Đi chợ"),
+    ("tap hoa", "groceries", "Đi chợ"),
+    ("giai tri", "entertainment", "Giải trí"),
+    ("phim", "entertainment", "Giải trí"),
+    ("xem phim", "entertainment", "Giải trí"),
+    ("mua sam", "shopping", "Mua sắm"),
+    ("shopping", "shopping", "Mua sắm"),
+    ("quan ao", "shopping", "Mua sắm"),
+    ("hoc phi", "education", "Học hành"),
+    ("hoc", "education", "Học hành"),
+    ("sach", "education", "Học hành"),
+    ("suc khoe", "health", "Sức khoẻ"),
+    ("kham benh", "health", "Sức khoẻ"),
+    ("thuoc", "health", "Sức khoẻ"),
+    ("hoa don", "bills", "Hoá đơn"),
+    ("dien nuoc", "bills", "Hoá đơn"),
+    ("internet", "bills", "Hoá đơn"),
+    ("tien nha", "rent", "Tiền nhà"),
+    ("thue nha", "rent", "Tiền nhà"),
+    ("nha cua", "rent", "Tiền nhà"),
+    ("gia dinh", "family", "Gia đình"),
+    ("ban be", "friends", "Bạn bè"),
+    ("du lich", "travel", "Du lịch"),
+    ("travel", "travel", "Du lịch"),
+]
+
+
+_BUDGET_VERBS_RE = re.compile(
+    r"(?:đặt|dat|tao|tạo|thiet lap|thiết lập|đặt lại|dat lai)\s+"
+    r"(?:ngân sách|ngan sach|han muc|hạn mức|budget)",
+    re.IGNORECASE,
+)
+
+# Match standalone "ngân sách <category> <amount>" without a leading verb
+# — common informal phrasing.
+_BUDGET_NOUN_RE = re.compile(r"ngan sach|ngân sách|hạn mức|han muc|budget", re.IGNORECASE)
+
+# Budget status: "tháng này còn bao nhiêu cho ăn uống" / "ngân sách ăn
+# uống còn". The "còn bao nhiêu" / "còn lại" cues MUST co-occur with a
+# budget anchor (ngân sách / hạn mức / budget) or a "cho <category>" tail
+# — otherwise this regex eats every plain balance question
+# ("Tài khoản còn bao nhiêu" → budget_status). The dedicated
+# "kiểm tra ngân sách" wording is unambiguous on its own and stays.
+_BUDGET_STATUS_RE = re.compile(
+    r"(?:"
+    r"(?:con bao nhieu|còn bao nhiêu|da tieu het|đã tiêu hết|tien con|tiền còn|con lai|còn lại)"
+    r"[^\n]{0,40}?(?:ngan sach|ngân sách|han muc|hạn mức|budget|\bcho\s+\S+)"
+    r"|(?:ngan sach|ngân sách|han muc|hạn mức|budget)[^\n]{0,40}?(?:con bao nhieu|còn bao nhiêu|da tieu het|đã tiêu hết|con lai|còn lại)"
+    r"|kiểm tra ngân sách|kiem tra ngan sach"
+    r"|ngân sách[^\n]{0,40}?(?:còn|the nao|thế nào|ra sao)"
+    r"|ngan sach[^\n]{0,40}?(?:con|the nao|ra sao)"
+    r")",
+    re.IGNORECASE,
+)
+
+_GOAL_VERBS_RE = re.compile(
+    r"(?:đặt|dat|tao|tạo|thiet lap|thiết lập)?\s*"
+    r"(?:mục tiêu|muc tieu|tiet kiem|tiết kiệm|savings? goal|goal)",
+    re.IGNORECASE,
+)
+
+
+def detect_budget_intent(text: str) -> Optional[str]:
+    """Return one of ``set_budget``, ``budget_status`` or ``None``.
+
+    Order matters: status questions look a lot like setters once you
+    fold the verb out, so the status pattern is checked first.
+    """
+    folded = _fold(text)
+    if _BUDGET_STATUS_RE.search(text) or _BUDGET_STATUS_RE.search(folded):
+        return "budget_status"
+    if _BUDGET_VERBS_RE.search(text) or _BUDGET_VERBS_RE.search(folded):
+        return "set_budget"
+    if _BUDGET_NOUN_RE.search(text) or _BUDGET_NOUN_RE.search(folded):
+        return "set_budget"
+    return None
+
+
+def detect_goal_intent(text: str) -> bool:
+    folded = _fold(text)
+    # "mục tiêu" alone is ambiguous (could be life goal); require either
+    # "tiết kiệm" / "savings" anchor, or pair with a target verb.
+    has_savings = (
+        "tiet kiem" in folded
+        or "tiết kiệm" in text
+        or "savings" in folded
+    )
+    has_goal = (
+        "muc tieu" in folded
+        or "mục tiêu" in text
+        or "goal" in folded
+    )
+    return has_savings or (has_goal and re.search(r"\d", folded) is not None)
+
+
+def extract_budget_category(text: str) -> Optional[tuple[str, str]]:
+    """Return (internal_code, display_label) for the first category
+    keyword we find, or None.
+
+    Walks the keyword table in declaration order so multi-word forms
+    win — important so "ăn uống" doesn't fold into the bare "an" rule.
+    """
+    folded = " " + _fold(text) + " "
+    for kw, code, label in _BUDGET_CATEGORIES:
+        if f" {kw} " in folded:
+            return code, label
+        # Allow a category to butt right against punctuation (e.g.
+        # "ngân sách ăn uống?") — strip trailing punctuation tokens.
+        for sep in ("?", ".", ",", "!"):
+            if f" {kw}{sep}" in folded:
+                return code, label
+    return None
+
+
+# "Tết 2027", "Mua xe", "Đầu năm 2027" — captured between the goal verb
+# and the amount. Names can contain digits (years), so we don't strip
+# them; we only stop at the amount unit.
+_GOAL_NAME_RE = re.compile(
+    r"(?:mục tiêu|muc tieu|tiết kiệm|tiet kiem|cho|để|de)\s+"
+    r"(?P<name>[^,.\n?!]+?)"
+    r"\s+(?=\d|tầm|tam|khoảng|khoang)",
+    re.IGNORECASE,
+)
+
+
+def extract_goal_name(text: str) -> Optional[str]:
+    """Try to pull a savings-goal name out of the message.
+
+    Strategy: between the goal anchor word and the first digit, anything
+    short and noun-y is the name. Falls back to None when we can't tell.
+    """
+    m = _GOAL_NAME_RE.search(text)
+    if not m:
+        return None
+    name = m.group("name").strip(" \t,.:;-")
+    # Strip leading filler / anchor words so "mục tiêu tiết kiệm Tết
+    # 50tr" extracts "Tết", not "tiết kiệm Tết".
+    name = re.sub(
+        r"^(?:cho|để|de|là|la|cua|của|một|mot|"
+        r"tiết\s+kiệm|tiet\s+kiem|savings?|goal|mục\s+tiêu|muc\s+tieu)\s+",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    )
+    if _fold(name) in {"tiet kiem", "savings", "goal", "muc tieu"}:
+        return None
+    if not name:
+        return None
+    return name
+
+
+__all__ = [
+    "detect_budget_intent",
+    "detect_goal_intent",
+    "extract_budget_category",
+    "extract_goal_name",
+]

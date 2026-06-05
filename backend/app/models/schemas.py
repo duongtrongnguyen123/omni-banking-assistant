@@ -19,6 +19,9 @@ Intent = Literal[
     # NLUResult from raising ValidationError under the rule-only fallback
     # (LLM rate-limited / CI / Playwright).
     "insights",
+    "set_budget",
+    "set_goal",
+    "budget_status",
     "smalltalk",
     "unknown",
 ]
@@ -95,6 +98,12 @@ class ExtractedEntities(BaseModel):
     semantic_filter: Optional[str] = None  # fuzzy text match on description, e.g. "ăn uống", "Tết"
     top_recipient: bool = False            # "ai nhận nhiều nhất"
     top_category: bool = False             # "chủ đề nào nhiều nhất"
+    # Used by set_budget / budget_status — internal category code
+    # ("food", "transport", …) resolved from Vietnamese surface forms.
+    budget_category: Optional[str] = None
+    # Used by set_goal — the user-supplied name of the savings pot,
+    # e.g. "Tết 2027" or "Mua xe".
+    goal_name: Optional[str] = None
 
 
 class NLUResult(BaseModel):
@@ -161,6 +170,71 @@ class ContactDraft(BaseModel):
     flags: list[SafetyFlag] = Field(default_factory=list)
 
 
+class Budget(BaseModel):
+    """Monthly spending envelope for a single category.
+
+    ``category`` stores the *internal* code ("food", "transport", …) so
+    aggregations against ``transactions.category`` join cleanly. The UI
+    layer renders the Vietnamese label via the same mapping the
+    history breakdown uses.
+    """
+
+    id: str
+    user_id: str
+    category: str
+    monthly_limit_vnd: int
+    created_at: datetime
+
+
+class SavingsGoal(BaseModel):
+    """A named savings pot. ``current_vnd`` is the running total of
+    contributions; ``deadline`` is optional and stored as a date-only
+    ISO string (the contest scope is months/years, not minutes)."""
+
+    id: str
+    user_id: str
+    name: str
+    target_vnd: int
+    current_vnd: int = 0
+    deadline: Optional[str] = None
+    created_at: datetime
+
+
+class BudgetDraft(BaseModel):
+    """Staged budget waiting for chat confirmation. Mirrors the
+    Schedule/Contact draft pattern so the confirm/cancel paths in
+    the orchestrator stay symmetric."""
+
+    id: str
+    category: str
+    category_label: str  # Vietnamese display name
+    monthly_limit_vnd: int
+    replaces_existing: bool = False
+    flags: list[SafetyFlag] = Field(default_factory=list)
+
+
+class GoalDraft(BaseModel):
+    id: str
+    name: str
+    target_vnd: int
+    deadline: Optional[str] = None
+    flags: list[SafetyFlag] = Field(default_factory=list)
+
+
+class BudgetStatus(BaseModel):
+    """Snapshot of one budget vs this month's spend.
+
+    ``ratio`` is ``spent / limit`` — the UI uses it to pick the bar
+    colour (green <0.8 / orange 0.8-1.0 / red >1.0)."""
+
+    category: str
+    category_label: str
+    monthly_limit_vnd: int
+    spent_vnd: int
+    remaining_vnd: int
+    ratio: float
+
+
 class ScheduleDraft(BaseModel):
     id: str
     recipient: Contact
@@ -180,12 +254,15 @@ class OmniResponse(BaseModel):
     draft: Optional[TransactionDraft] = None
     contact_draft: Optional[ContactDraft] = None
     schedule_draft: Optional[ScheduleDraft] = None
+    budget_draft: Optional[BudgetDraft] = None
+    goal_draft: Optional[GoalDraft] = None
     history: Optional[dict] = None
     balance: Optional[dict] = None
     schedule: Optional[Schedule] = None
     # Raw dicts to avoid a schemas ↔ banking.recurring ↔ store cycle.
     # The orchestrator dumps RecurringPattern via model_dump() before attach.
     recurring_patterns: Optional[list[dict]] = None
+    budget_statuses: Optional[list[BudgetStatus]] = None
     needs_disambiguation: bool = False
     # Populated only when the ``?dev=1`` query param flags the request as
     # a telemetry-overlay client. ``None`` in the default UI path so

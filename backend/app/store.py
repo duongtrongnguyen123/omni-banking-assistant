@@ -20,7 +20,15 @@ from typing import Optional
 
 from .db.bootstrap import bootstrap_if_empty
 from .db.connection import get_connection
-from .models.schemas import Account, Contact, Schedule, Transaction, User
+from .models.schemas import (
+    Account,
+    Budget,
+    Contact,
+    SavingsGoal,
+    Schedule,
+    Transaction,
+    User,
+)
 
 
 class Store:
@@ -249,6 +257,181 @@ class Store:
             )
             for r in rows
         ]
+
+
+    # ---- budgets -------------------------------------------------------
+
+    def budgets_of(self, user_id: str) -> list[Budget]:
+        rows = get_connection().execute(
+            """SELECT id, user_id, category, monthly_limit_vnd, created_at
+               FROM budgets WHERE user_id = ? ORDER BY created_at""",
+            (user_id,),
+        ).fetchall()
+        return [
+            Budget(
+                id=r["id"], user_id=r["user_id"], category=r["category"],
+                monthly_limit_vnd=r["monthly_limit_vnd"],
+                created_at=datetime.fromisoformat(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    def get_budget_by_category(
+        self, user_id: str, category: str
+    ) -> Optional[Budget]:
+        row = get_connection().execute(
+            """SELECT id, user_id, category, monthly_limit_vnd, created_at
+               FROM budgets WHERE user_id = ? AND category = ?""",
+            (user_id, category),
+        ).fetchone()
+        if row is None:
+            return None
+        return Budget(
+            id=row["id"], user_id=row["user_id"], category=row["category"],
+            monthly_limit_vnd=row["monthly_limit_vnd"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    def add_budget(self, budget: Budget) -> Budget:
+        """Upsert by (user_id, category). The UNIQUE index on the table
+        means re-adding a budget for the same category overwrites the
+        limit — this matches the chat flow "đặt lại ngân sách ăn uống
+        thành 4 triệu" which should not error."""
+        conn = get_connection()
+        with self._lock:
+            conn.execute(
+                """INSERT INTO budgets
+                   (id, user_id, category, monthly_limit_vnd, created_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(user_id, category) DO UPDATE SET
+                       monthly_limit_vnd = excluded.monthly_limit_vnd""",
+                (
+                    budget.id, budget.user_id, budget.category,
+                    budget.monthly_limit_vnd, budget.created_at.isoformat(),
+                ),
+            )
+        return self.get_budget_by_category(budget.user_id, budget.category) or budget
+
+    def update_budget(
+        self, budget_id: str, monthly_limit_vnd: int
+    ) -> Optional[Budget]:
+        conn = get_connection()
+        with self._lock:
+            cur = conn.execute(
+                """UPDATE budgets SET monthly_limit_vnd = ?
+                   WHERE id = ? RETURNING user_id, category""",
+                (monthly_limit_vnd, budget_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return self.get_budget_by_category(row["user_id"], row["category"])
+
+    def delete_budget(self, budget_id: str) -> bool:
+        conn = get_connection()
+        with self._lock:
+            cur = conn.execute(
+                "DELETE FROM budgets WHERE id = ?",
+                (budget_id,),
+            )
+            return cur.rowcount > 0
+
+    # ---- savings goals -------------------------------------------------
+
+    def goals_of(self, user_id: str) -> list[SavingsGoal]:
+        rows = get_connection().execute(
+            """SELECT id, user_id, name, target_vnd, current_vnd,
+                      deadline, created_at
+               FROM savings_goals WHERE user_id = ? ORDER BY created_at""",
+            (user_id,),
+        ).fetchall()
+        return [
+            SavingsGoal(
+                id=r["id"], user_id=r["user_id"], name=r["name"],
+                target_vnd=r["target_vnd"], current_vnd=r["current_vnd"],
+                deadline=r["deadline"],
+                created_at=datetime.fromisoformat(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    def get_goal(self, goal_id: str) -> Optional[SavingsGoal]:
+        row = get_connection().execute(
+            """SELECT id, user_id, name, target_vnd, current_vnd,
+                      deadline, created_at
+               FROM savings_goals WHERE id = ?""",
+            (goal_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return SavingsGoal(
+            id=row["id"], user_id=row["user_id"], name=row["name"],
+            target_vnd=row["target_vnd"], current_vnd=row["current_vnd"],
+            deadline=row["deadline"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    def add_goal(self, goal: SavingsGoal) -> SavingsGoal:
+        conn = get_connection()
+        with self._lock:
+            conn.execute(
+                """INSERT INTO savings_goals
+                   (id, user_id, name, target_vnd, current_vnd,
+                    deadline, created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (
+                    goal.id, goal.user_id, goal.name, goal.target_vnd,
+                    goal.current_vnd, goal.deadline,
+                    goal.created_at.isoformat(),
+                ),
+            )
+        return goal
+
+    def contribute_to_goal(
+        self, goal_id: str, amount: int
+    ) -> SavingsGoal:
+        """Add ``amount`` to ``current_vnd``. Rejects contributions that
+        would push past ``target_vnd`` — caller is expected to clamp
+        first if they want a partial top-up.
+
+        Raises ``ValueError`` with a Vietnamese message if the
+        contribution is rejected, ``KeyError`` if the goal id is
+        unknown."""
+        if amount <= 0:
+            raise ValueError("Số tiền góp phải lớn hơn 0.")
+        conn = get_connection()
+        with self._lock:
+            conn.execute("BEGIN")
+            try:
+                row = conn.execute(
+                    """SELECT target_vnd, current_vnd
+                       FROM savings_goals WHERE id = ?""",
+                    (goal_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("ROLLBACK")
+                    raise KeyError(goal_id)
+                new_total = row["current_vnd"] + amount
+                if new_total > row["target_vnd"]:
+                    conn.execute("ROLLBACK")
+                    raise ValueError(
+                        "Góp thêm sẽ vượt quá mục tiêu đã đặt."
+                    )
+                conn.execute(
+                    """UPDATE savings_goals SET current_vnd = ?
+                       WHERE id = ?""",
+                    (new_total, goal_id),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                # Belt-and-braces rollback for unexpected sqlite errors;
+                # known branches above already ROLLBACK explicitly.
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        return self.get_goal(goal_id)  # type: ignore[return-value]
 
 
 _store: Optional[Store] = None
