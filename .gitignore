@@ -31,3 +31,4 @@ data/demo/omni.db
 data/demo/omni.db-*
 
 .claude/
+backend/.venv/

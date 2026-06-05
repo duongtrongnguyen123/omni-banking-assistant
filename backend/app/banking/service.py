@@ -10,6 +10,13 @@ from typing import Optional
 from ..models.schemas import Contact, Schedule, Transaction
 from ..store import get_store, new_id, now
 
+# OPT-3 (bench): max items materialised into the response when the caller
+# hasn't asked for a specific ``limit``. Aggregates still reflect the
+# full match set; the cap only affects the rendered list.  At contest
+# scale a semantic_filter query like "ăn uống" matches 2-3k rows and
+# turning all of them into Pydantic dicts dominated the request budget.
+_RENDER_CAP = 100
+
 
 def execute_transfer(
     *,
@@ -129,12 +136,24 @@ def get_history(
         items = _lexical_filter_transactions(items, semantic_filter)
 
     items.sort(key=lambda t: t.created_at, reverse=True)
+    # Aggregates (total / count / by_category / by_recipient) keep working
+    # against the full match set, but the rendered ``items`` array is
+    # capped — at contest scale a semantic_filter query can match
+    # thousands of rows, and shipping them all through Pydantic / JSON
+    # makes the response payload several MB.  ``_RENDER_CAP`` keeps the
+    # UI responsive without losing aggregate fidelity.
+    render_items = items
     if limit is not None and limit > 0:
-        items = items[:limit]
+        render_items = items[:limit]
+    elif len(items) > _RENDER_CAP:
+        render_items = items[:_RENDER_CAP]
 
     # OPT-2: single batch fetch keyed by the contact-ids actually present
     # in this page. Replaces the per-row ``_contact_summary`` query (which
     # itself made two queries — one for the contact, one for its aliases).
+    # We resolve names for every contact in the aggregate set (so
+    # ``by_recipient`` is complete) but skip nothing — the batch query
+    # cost is one round-trip regardless of size.
     needed_ids = sorted({t.contact_id for t in items if t.contact_id})
     contacts_by_id = store.contacts_by_ids(needed_ids) if needed_ids else {}
 
@@ -170,8 +189,9 @@ def get_history(
                 **t.model_dump(mode="json"),
                 "contact": _summary(t.contact_id),
             }
-            for t in items
+            for t in render_items
         ],
+        "items_truncated": len(items) > len(render_items),
         "average": int(mean([t.amount for t in items])) if items else 0,
         "by_category": dict(categories),
         "by_recipient": dict(by_recipient),

@@ -315,6 +315,49 @@ class Store:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def transactions_raw(
+        self,
+        user_id: str,
+        *,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        contact_id: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> list[tuple]:
+        """OPT-3 (bench): bulk fetch of (id, contact_id, amount, description,
+        status, created_at_iso) tuples for callers that don't need Pydantic
+        ``Transaction`` objects.
+
+        At contest scale, the per-row Pydantic construction inside
+        ``transactions_of`` dominates the cost — building a model for each
+        of 520k rows takes ~5s of pure Python.  The recurring detector
+        only reads ``contact_id``, ``amount``, ``description``,
+        ``status``, ``created_at``, so we hand it a tuple list directly.
+        """
+        clauses = ["owner_id = ?"]
+        params: list = [user_id]
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since.isoformat())
+        if until is not None:
+            clauses.append("created_at < ?")
+            params.append(until.isoformat())
+        if contact_id is not None:
+            clauses.append("contact_id = ?")
+            params.append(contact_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        rows = get_connection().execute(
+            f"SELECT id, contact_id, amount, description, status, created_at "
+            f"FROM transactions WHERE {where} ORDER BY created_at DESC",
+            params,
+        ).fetchall()
+        return [(r["id"], r["contact_id"] or "", r["amount"],
+                 r["description"], r["status"], r["created_at"])
+                for r in rows]
+
     def completed_amount_mean(self, user_id: str) -> Optional[float]:
         """OPT-3 (bench): global mean for the cold-contact anomaly
         fallback in ``safety.rules.evaluate``.  Computing this in SQL is

@@ -35,6 +35,36 @@ from ..safety.rules import (
 )
 from ..store import get_store, new_id, now
 
+class _RawTx:
+    """OPT-3 (bench): lightweight stand-in for ``models.schemas.Transaction``
+    on hot paths that read a handful of fields off thousands of rows.
+    Building real Pydantic models for the recurring miner cost ~5 s on
+    contest data and we never used most of the fields.
+
+    Mirrors the attribute surface the detector + safety baseline read:
+    ``id``, ``contact_id``, ``amount``, ``description``, ``status``,
+    ``created_at``. Comparable in memory but ~10× cheaper to construct."""
+
+    __slots__ = ("id", "contact_id", "amount", "description",
+                 "status", "created_at")
+
+    def __init__(self, id, contact_id, amount, description, status, created_at):
+        self.id = id
+        self.contact_id = contact_id
+        self.amount = amount
+        self.description = description
+        self.status = status
+        self.created_at = created_at
+
+
+def _txs_from_raw(rows: list[tuple]) -> list[_RawTx]:
+    from datetime import datetime as _dt
+    return [
+        _RawTx(r[0], r[1], r[2], r[3], r[4], _dt.fromisoformat(r[5]))
+        for r in rows
+    ]
+
+
 def _maybe_global_mean(
     user_id: str,
     recipient: Optional[Contact],
@@ -377,9 +407,13 @@ def _handle_recurring(
     # patterns that ``detect_recurring`` would drop as stale anyway
     # (its ``next_run`` filter rejects anything > 60 days behind ref_now).
     from datetime import timedelta as _td
-    txs = store.transactions_of(
+    # Use the raw-tuple fetch path: building 520k Pydantic Transactions
+    # only to read 4 fields off each was ~5s of pure Python overhead
+    # before being handed to ``detect_recurring``.
+    raw = store.transactions_raw(
         user_id, since=now() - _td(days=400), status="completed",
     )
+    txs = _txs_from_raw(raw)
     contacts = store.contacts_of(user_id)
     contacts_by_id = {c.id: c for c in contacts}
 
