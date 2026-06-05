@@ -38,6 +38,33 @@ _ASK_SUBS = (
     "khoản nào thừa", "khoan nao thua",
 )
 
+# Mirrors the Vietnamese category labels the InsightsCard component uses so
+# the chat reply matches what the user sees in the sidebar.
+_CATEGORY_LABEL = {
+    "family": "Gia đình",
+    "friends": "Bạn bè",
+    "work": "Công việc",
+    "bills": "Hoá đơn",
+    "shopping": "Mua sắm",
+    "food": "Ăn uống",
+    "groceries": "Tạp hoá",
+    "health": "Sức khoẻ",
+    "rent": "Tiền nhà",
+    "utilities": "Tiện ích",
+    "transport": "Đi lại",
+    "entertainment": "Giải trí",
+    "education": "Học hành",
+    "savings": "Tiết kiệm",
+    "daily": "Sinh hoạt",
+    "transfer": "Chuyển khoản",
+    "omni": "Chuyển khoản",
+    "other": "Khác",
+}
+
+
+def _label(cat: str) -> str:
+    return _CATEGORY_LABEL.get(cat, cat.capitalize())
+
 
 def handle_insights(
     user_id: str,
@@ -67,11 +94,25 @@ def handle_insights(
             lines = []
             for a in top:
                 amt = format_vnd(a.get("amount", 0))
-                # MAD detector returns "typical"; older variants "typical_amount" —
-                # accept both so the line still renders cleanly.
-                typ = a.get("typical") or a.get("typical_amount") or 0
-                contact = a.get("contact") or a.get("contact_name") or "(không rõ)"
-                lines.append(f"• {contact}: {amt} (thường ~{format_vnd(typ)})")
+                contact = (
+                    a.get("contact_name") or a.get("contact") or "(không rõ)"
+                )
+                # MAD detector ships a "reason" prose string ("cao gấp 8.4
+                # lần mức thường (per-contact)") which is already exactly
+                # the per-recipient context judges want to see. Prefer it
+                # over re-rendering a "typical" field that older snapshots
+                # never had.
+                reason = a.get("reason")
+                if reason:
+                    lines.append(f"• {contact}: {amt} — {reason}")
+                else:
+                    typ = a.get("typical") or a.get("typical_amount") or 0
+                    if typ:
+                        lines.append(
+                            f"• {contact}: {amt} (thường ~{format_vnd(typ)})"
+                        )
+                    else:
+                        lines.append(f"• {contact}: {amt}")
             parts.append(
                 f"Mình thấy {len(anomalies)} giao dịch nổi bật so với thói "
                 f"quen của bạn:\n" + "\n".join(lines)
@@ -93,7 +134,7 @@ def handle_insights(
             for cat, this_v, last_v, pct in deltas:
                 arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "→")
                 lines.append(
-                    f"• {cat}: {format_vnd(this_v)} {arrow} "
+                    f"• {_label(cat)}: {format_vnd(this_v)} {arrow} "
                     f"{abs(pct):.0f}% so với {format_vnd(last_v)} tháng trước"
                 )
             parts.append(
