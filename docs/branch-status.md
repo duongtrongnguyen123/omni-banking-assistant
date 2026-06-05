@@ -27,6 +27,8 @@ and conflict with each other if auto-merged. Merge order matters:
 |---------|--------|----------------|-----------------|
 | Multi-account picker + biometric step-up | `feat/multi-account` | slash-commands (App.tsx, TransactionCard), schemas (Account.kind) | Merge first — adds the auth_required schema other features assume |
 | Bilingual VI ↔ EN toggle | `feat/i18n` | multi-account (App.tsx, entities.py, intent.py) | Merge second — pulls translation strings around the new account UI |
+| Audit replay UI + per-decision explainer | `feat/audit-explain` | Needs `Store.audit_of` + `AuditEvent.auth_required/auth_completed` (multi-account adds those). Cherry-picks orchestrator+main without those will break. | Merge AFTER multi-account |
+| Fraud Isolation Forest per-user | `feat/fraud-ml` | Adds `fraud_risk_high` to SafetyFlag literal, `_fraud_model` startup hook, `evaluate(user_id=...)` signature change. Numbers: demo precision/recall=1.0/0.96; contest base-rate FP=33%. | Merge AFTER multi-account/audit-explain — touches safety/rules.py + orchestrator at 4 call sites |
 
 ### Merge plan
 
