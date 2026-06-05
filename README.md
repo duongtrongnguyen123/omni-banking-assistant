@@ -28,6 +28,18 @@ Five layers, exactly as proposed on slide 5:
 | 4. Safety | `safety/rules.py` | Rule Engine · JWT (header-based) · "AES-256" stand-in via header pass-through |
 | 5. Banking | `banking/service.py`, `store.py`, `app/data/*.json` | Mock banking sandbox |
 
+## Pitch package
+
+For judges + the team's pitch crew:
+
+- 🎤 **Pitch script** — [`docs/pitch-final.md`](docs/pitch-final.md) — 5-min flow with timestamps
+- 🎴 **Slide deck content** — [`docs/pitch-deck-content.md`](docs/pitch-deck-content.md) — 8 slides
+- ❓ **Judge FAQ** — [`docs/judge-faq.md`](docs/judge-faq.md) — 20 Q&A
+- 📄 **One-pager** — [`docs/one-pager.md`](docs/one-pager.md)
+- ✅ **Final audit** — [`docs/audit-2026-06-07-final.md`](docs/audit-2026-06-07-final.md) — GREEN, 30/30 checks
+- 🧠 **2-minute repo summary** — [`PROGRESS.md`](PROGRESS.md)
+- ⚖️ **Honest framing** — [`docs/honest-pitch.md`](docs/honest-pitch.md) — what we can vs cannot claim
+
 ## Empirical results
 
 Evaluated on **three** datasets so the same models get scored against the
