@@ -33,6 +33,31 @@ from ..store import get_store, new_id, now
 _CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
 _CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
+_HELP_RE = re.compile(r"^\s*(/help|help|trợ giúp|tro giup|hướng dẫn|huong dan|menu)\s*$", re.IGNORECASE)
+
+
+_HELP_TEXT = (
+    "Mình có thể giúp bạn:\n"
+    "• Chuyển tiền: \"chuyển cho mẹ 2 triệu\" — Omni hiểu biệt danh và "
+    "lịch sử để gợi ý số tiền và lời nhắn.\n"
+    "• Xem số dư: \"số dư\" hoặc gõ /balance.\n"
+    "• Lịch sử chi tiêu: \"tháng này tiêu bao nhiêu?\" hoặc /history.\n"
+    "• Lặp lại giao dịch trước: /repeat.\n"
+    "• Đặt lịch định kỳ: \"đặt lịch chuyển mẹ 2tr mùng 1 hàng tháng\".\n"
+    "• Tìm khoản trả định kỳ: \"mình có khoản nào trả đều?\".\n"
+    "• Thêm danh bạ: \"lưu Nam STK 0123 MB Bank\".\n"
+    "\n"
+    "Phím tắt: Cmd/Ctrl+K (focus ô nhập), Cmd/Ctrl+/ (mở slash menu), "
+    "Cmd/Ctrl+Enter (gửi lại tin nhắn vừa rồi), Esc (đóng popup), "
+    "↑ (lịch sử tin nhắn), @ (gợi ý danh bạ)."
+)
+
+
+def _help_response() -> OmniResponse:
+    """Structured help message — surfaced by the /help slash command and by
+    typed help requests. Returns a smalltalk intent so the UI renders it
+    without trying to attach a draft/balance/history payload."""
+    return OmniResponse(intent="smalltalk", text=_HELP_TEXT)
 
 
 def _is_confirm(text: str) -> bool:
@@ -63,6 +88,15 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
     # receives previous turns as context, with the current one as the new
     # user message.
     history_msgs = session.conversation_messages()
+
+    # /help is a synthetic intent — no NLU, no LLM, deterministic copy. The
+    # frontend slash palette dispatches it; users can also type "help" /
+    # "trợ giúp" directly.
+    if _HELP_RE.match(text):
+        resp = _help_response()
+        session.append("user", text)
+        session.append("omni", resp.text)
+        return resp
 
     # OTP step-up: if there's a draft awaiting OTP and the user typed digits,
     # treat the input as the OTP code and route to confirm_draft with the
