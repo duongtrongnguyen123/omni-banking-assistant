@@ -49,10 +49,14 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     # thang truoc" routes here, not to plain history.
     ("insights", [
         "nhieu hon thang truoc", "it hon thang truoc",
+        "tieu nhieu hon thang nay", "chi nhieu hon thang nay",
         "so voi thang truoc", "so sanh thang truoc",
+        "so sanh chi tieu", "so sanh tieu",  # "so sánh chi tiêu tháng này"
         "bat thuong",  # "giao dịch nào bất thường", "có gì bất thường"
         "kha nghi",    # "có gì khả nghi", "thấy gì khả nghi không"
         "co diem la",
+        "chi tieu nao la", "khoan chi nao la",  # "có chi tiêu nào lạ không"
+        "giao dich nao la",
         "dang ky dich vu", "subscription", "thue bao hang thang",
         "co the cat giam", "khoan nao thua",
         "phan tich chi tieu", "phan tich tieu",
@@ -63,9 +67,11 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ("recurring", [
         "khoan dinh ky", "cac khoan dinh ky", "khoan tu dong",
         "khoan nao tu dong", "khoan nao dinh ky", "khoan nao tra deu",
-        "tra deu hang thang", "chi deu hang thang",
+        "khoan nao tra dinh ky", "khoan tra tu dong", "khoan tra dinh ky",
+        "tra deu hang thang", "chi deu hang thang", "tra tu dong",
         "co khoan nao tra", "co khoan nao dinh ky",
         "liet ke lich", "xem lich tu dong", "lich tu dong",
+        "liet ke khoan", "liet ke cac khoan",  # "liệt kê các khoản trả tự động"
         "khoan dinh ky cua toi", "khoan dinh ky cua minh",
     ]),
     ("schedule", [
