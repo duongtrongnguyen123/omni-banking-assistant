@@ -228,7 +228,7 @@ def help_sections_payload() -> list[dict]:
     """Public copy of the structured help payload — used by tests and by
     the orchestrator when composing the OmniResponse. We return a new
     list each call so callers cannot accidentally mutate module state."""
-    sections = [dict(s, items=list(s["items"])) for s in _HELP_SECTIONS]
+    sections: list[dict] = [dict(s, items=list(s["items"])) for s in _HELP_SECTIONS]
     sections.append({"id": "shortcuts", "title": "Phím tắt", "shortcuts": list(_HELP_SHORTCUTS)})
     return sections
 
