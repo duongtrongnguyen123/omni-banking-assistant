@@ -1,0 +1,32 @@
+# Backend Docker build context exclusions.
+# Keep the build context small so `docker build` is fast and reproducible.
+
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local SQLite runtime files (re-bootstrap from JSON seed inside the image)
+app/data/omni.db
+app/data/omni.db-shm
+app/data/omni.db-wal
+app/data/omni_contest.db*
+app/data/omni_czech.db*
+app/data/omni_banksim.db*
+app/data/omni_synth_v2.db*
+
+# Local env
+.env
+.env.*
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Tests don't need to ship in the image
+tests/
