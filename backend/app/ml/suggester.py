@@ -220,11 +220,21 @@ def train_for(user_id: str, txs: Optional[list] = None) -> Optional[dict]:
     # transfer. Drop n_estimators and parallelise across cores when the
     # dataset is large.
     if total >= 10_000:
-        rf_kwargs = dict(n_estimators=20, max_depth=8, min_samples_leaf=5, n_jobs=-1)
+        model = RandomForestClassifier(
+            random_state=42,
+            n_estimators=20,
+            max_depth=8,
+            min_samples_leaf=5,
+            n_jobs=-1,
+        )
     else:
-        rf_kwargs = dict(n_estimators=50, max_depth=5, min_samples_leaf=1,
-                         class_weight="balanced")
-    model = RandomForestClassifier(random_state=42, **rf_kwargs)
+        model = RandomForestClassifier(
+            random_state=42,
+            n_estimators=50,
+            max_depth=5,
+            min_samples_leaf=1,
+            class_weight="balanced",
+        )
     model.fit(X, y)
 
     with _LOCK:
