@@ -87,6 +87,7 @@ class NLUResult(BaseModel):
     confidence: float = 1.0
     entities: ExtractedEntities = Field(default_factory=ExtractedEntities)
     raw_text: str
+    source: Literal["llm", "rule"] = "rule"  # which layer produced this result
 
 
 class ResolvedRecipient(BaseModel):
@@ -121,6 +122,7 @@ class TransactionDraft(BaseModel):
     reference_transaction_id: Optional[str] = None
     flags: list[SafetyFlag] = Field(default_factory=list)
     requires_step_up: bool = False
+    awaiting_otp: bool = False
 
 
 class ContactDraft(BaseModel):

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..models.schemas import OmniResponse
+from ..context.session import session_for
 from ..services.orchestrator import (
     cancel_contact_draft,
     cancel_draft,
@@ -104,3 +105,16 @@ def confirm_schedule(
 @router.post("/schedules/{draft_id}/cancel", response_model=OmniResponse)
 def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     return cancel_schedule_draft(user_id, draft_id)
+
+
+@router.post("/session/reset")
+def reset_session(user_id: str = Depends(current_user)) -> dict:
+    """Clear all in-flight drafts and conversation history for the caller.
+    Intended for testing and as the 'fresh chat' button — not exposed in
+    the UI but harmless if hit accidentally."""
+    s = session_for(user_id)
+    s.current_draft = None
+    s.current_contact_draft = None
+    s.current_schedule_draft = None
+    s.history.clear()
+    return {"ok": True, "user_id": user_id}
