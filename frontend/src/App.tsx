@@ -15,6 +15,7 @@ import { ToastStack } from "./components/ToastStack";
 import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
 import { MetricsCard } from "./components/MetricsCard";
 import { HealthStatus } from "./components/HealthStatus";
+import { AbTestCard } from "./components/AbTestCard";
 import { DemoRecorder } from "./components/DemoRecorder";
 import { ExportMenu } from "./components/ExportMenu";
 import { PrivacyBadge } from "./components/PrivacyBadge";
@@ -508,6 +509,7 @@ export default function App() {
     <div className="page">
       <TelemetryOverlay />
       <MetricsCard />
+      <AbTestCard />
       <div className="phone">
         <ToastStack />
         <DemoRecorder />

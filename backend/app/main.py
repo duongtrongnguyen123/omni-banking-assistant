@@ -75,6 +75,20 @@ app.include_router(metrics.router)
 app.include_router(health.router)
 
 
+@app.on_event("startup")
+def _register_abtest_arms() -> None:
+    """Register the default suggester-weight arms and restore persisted
+    Beta posteriors. Idempotent. Skipped under ``OMNI_DISABLE_ABTEST=1``."""
+    from .ml import abtest
+
+    if not abtest.is_enabled():
+        return
+    try:
+        abtest.register_defaults()
+    except Exception as e:  # pragma: no cover — startup defensive
+        log.warning("A/B arm registration skipped: %s", e)
+
+
 def _git_sha() -> str:
     """Back-compat shim around the cached SHA in :mod:`routes.health`.
 

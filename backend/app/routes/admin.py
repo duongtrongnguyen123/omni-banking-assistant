@@ -83,4 +83,53 @@ def get_llm_audit(limit: int = 100) -> LLMAuditResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# A/B framework for the next-recipient suggester. See ``app/ml/abtest.py``
+# for the routing model and ``app/ml/bandit.py`` for the Thompson-sampling
+# upgrade path.
+# ---------------------------------------------------------------------------
+
+
+class AbTestReport(BaseModel):
+    enabled: bool
+    min_trials_per_arm: int
+    bandit_active: bool
+    arms: dict
+
+
+@router.get("/abtest/report", response_model=AbTestReport)
+def get_abtest_report() -> AbTestReport:
+    """Per-arm trials / hits / hit_rate / 95 % CI / weights.
+
+    ``bandit_active`` is True once every arm has ≥ ``MIN_TRIALS_PER_ARM``
+    trials and the router has switched from deterministic-hash routing to
+    Thompson sampling.
+    """
+    from ..ml import abtest, bandit
+
+    rep = abtest.report()
+    bandit_on = bool(rep) and all(
+        a["trials"] >= bandit.MIN_TRIALS_PER_ARM for a in rep.values()
+    )
+    return AbTestReport(
+        enabled=abtest.is_enabled(),
+        min_trials_per_arm=bandit.MIN_TRIALS_PER_ARM,
+        bandit_active=bandit_on,
+        arms=rep,
+    )
+
+
+@router.post("/abtest/reset")
+def reset_abtest() -> dict:
+    """Clear all trial / hit counters and the persisted Beta posteriors.
+
+    Intended for the demo dashboard reset button and for the eval
+    script. Returns the cleared arm list for confirmation.
+    """
+    from ..ml import abtest
+
+    abtest.reset()
+    return {"ok": True, "arms": abtest.arm_names()}
+
+
 __all__ = ["router"]

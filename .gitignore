@@ -36,4 +36,8 @@ backend/app/data/omni*.db-*
 data/demo/omni.db
 data/demo/omni.db-*
 
+# A/B test bandit posterior — best-effort persistence, regenerated at runtime
+backend/app/data/bandit_state.json
+backend/app/data/bandit_state.tmp
+
 .claude/
