@@ -285,7 +285,22 @@ chat (balance)                      2.5ms     3.3ms     4.1ms   200
 chat (history_simple)              47.3ms    60.7ms    66.0ms    50
 chat (history_rag)                588.5ms   729.2ms   745.8ms    20
 chat (schedule)                    13.7ms    15.3ms    16.5ms    50
-… (recurring / smalltalk / add_contact / unknown / suggestions /
-   insights / alias / suggester values land here once bench.py
-   finishes — fill in from its markdown footer)
+chat (recurring)                3 427.2ms 3 821.9ms 3 884.5ms    20
+chat (smalltalk)                    2.0ms     2.3ms     2.6ms   200
+chat (add_contact)                  2.1ms     2.5ms     2.8ms   200
+chat (unknown)                      2.0ms     2.3ms     2.5ms   200
+suggestions/recipients             25.1ms    25.8ms    26.4ms   200
+insights/summary               ~70 000ms ~76 000ms          —     3 †
+alias_resolution (×50q)           150.1ms   157.3ms   159.0ms    50 ‡
+suggester.suggest(k=5)             23.6ms    24.1ms    24.7ms    50 ‡
 ```
+
+† Median of 3 direct `ml.insights.summary()` calls after warmup; a
+200-iter HTTP bench at ~70 s / call wasn't a useful spend. The
+`/api/insights/summary` endpoint still wraps the same function with
+a single FastAPI hop (<2 ms overhead).
+
+‡ The `alias_resolution` and `suggester.suggest` rows come from the
+in-process tail of `scripts/bench.py` (calls into the resolver / the
+trained suggester directly, no HTTP). On a 50 µs / call hot path the
+HTTP overhead would dominate the signal.
