@@ -150,6 +150,54 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
   40% { transform: translateY(-3px); opacity: 1; }
 }
 
+/* -------- suggestion strip -------- */
+
+.suggest-strip {
+  padding: 8px 14px 6px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, #fff 0%, #fbfaff 100%);
+}
+.suggest-strip__title {
+  font-size: 11px; letter-spacing: 0.06em; color: var(--muted);
+  font-weight: 600; text-transform: uppercase;
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px;
+}
+.suggest-strip__dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--orange);
+  box-shadow: 0 0 0 3px rgba(244, 109, 38, 0.15);
+}
+.suggest-strip__list {
+  display: flex; gap: 6px; overflow-x: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.suggest-strip__list::-webkit-scrollbar { display: none; }
+
+.suggest-chip {
+  flex: 0 0 auto; appearance: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px;
+  background: white; border: 1px solid var(--line); border-radius: 12px;
+  font-family: inherit; text-align: left;
+  transition: border-color .15s, transform .05s, background .15s;
+  max-width: 180px;
+}
+.suggest-chip:hover:not(:disabled) {
+  border-color: var(--orange); background: var(--cream);
+  transform: translateY(-1px);
+}
+.suggest-chip:disabled { opacity: 0.55; cursor: not-allowed; }
+.suggest-chip__name {
+  font-size: 13px; font-weight: 700; color: var(--ink);
+}
+.suggest-chip__reason {
+  font-size: 10.5px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 160px;
+}
+
 /* -------- input -------- */
 
 .phone__input {
@@ -192,6 +240,27 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
 .tx-card--warn { border-color: #fcd34d; background: #fffbeb; }
 .tx-card--done { opacity: 0.72; }
 .tx-card--disambig { padding: 6px; }
+
+.tx-stepup {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px; margin: -2px 0 10px;
+  background: linear-gradient(135deg, #fff4e6 0%, #ffe4cc 100%);
+  border: 1px solid #fbcb96;
+  border-radius: 10px;
+}
+.tx-stepup__icon {
+  flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px;
+  background: var(--orange); color: white;
+  display: flex; align-items: center; justify-content: center;
+}
+.tx-stepup__body { flex: 1; min-width: 0; }
+.tx-stepup__title {
+  font-size: 12.5px; font-weight: 700; color: #9a3412;
+  letter-spacing: 0.02em;
+}
+.tx-stepup__reason {
+  font-size: 12px; color: #7c2d12; line-height: 1.4; margin-top: 2px;
+}
 
 .tx-card__amount { margin-bottom: 10px; }
 .tx-card__label { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; font-weight: 600; }

@@ -97,11 +97,14 @@ _LIMIT_ONE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# "ai nhận nhiều nhất", "ai gửi NHIỀU TIỀN nhất", "ai chuyển khoản nhiều nhất".
-# We just need "ai" + verb somewhere, then "nhiều" + (anything) + "nhất".
+# "ai nhận nhiều nhất", "ai gửi NHIỀU TIỀN nhất", "ai chuyển khoản nhiều nhất",
+# plus the inverted phrasings "tôi tiêu nhiều nhất cho ai" / "cho ai nhiều nhất"
+# where the verb is on the user side ("tiêu / chi") and "ai" is the object.
 _TOP_RECIPIENT_RE = re.compile(
     r"ai\s+(?:nhận|nhan|gửi|gui|chuyển|chuyen)[^,.\n?!]*nhiều[^,.\n?!]*nhất"
-    r"|ai\s+(?:nhận|nhan|gửi|gui|chuyển|chuyen)[^,.\n?!]*nhieu[^,.\n?!]*nhat",
+    r"|ai\s+(?:nhận|nhan|gửi|gui|chuyển|chuyen)[^,.\n?!]*nhieu[^,.\n?!]*nhat"
+    r"|(?:nhiều|nhieu)\s+nhất\s+cho\s+ai|(?:nhieu)\s+nhat\s+cho\s+ai"
+    r"|cho\s+ai\s+(?:nhiều|nhieu)\s+nhất|cho\s+ai\s+(?:nhieu)\s+nhat",
     re.IGNORECASE,
 )
 

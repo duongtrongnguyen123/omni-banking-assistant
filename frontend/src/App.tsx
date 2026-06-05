@@ -5,6 +5,7 @@ import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
+import { SuggestionStrip } from "./components/SuggestionStrip";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -22,8 +23,15 @@ export default function App() {
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Bumped after every executed transfer so the suggestion strip re-ranks.
+  const [suggestRefresh, setSuggestRefresh] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const pickRecipient = (text: string) => {
+    setInput(text);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -110,6 +118,11 @@ export default function App() {
       const resp = await action();
       if (closeDraftId && !resp.draft) {
         setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
+        // Transfer was executed (or cancelled) — re-rank the suggestion
+        // strip so the freshly-paid contact moves up or out.
+        if (resp.intent === "transfer") {
+          setSuggestRefresh((n) => n + 1);
+        }
       }
       resolveOmni(pendingId, resp);
     } catch (e) {
@@ -213,6 +226,12 @@ export default function App() {
           ))}
         </div>
 
+        <SuggestionStrip
+          refreshKey={suggestRefresh}
+          busy={busy}
+          onPick={pickRecipient}
+        />
+
         <div className="phone__input">
           <button
             type="button"
@@ -254,10 +273,7 @@ export default function App() {
         <ContactPicker
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
-          onPick={(t) => {
-            setInput(t);
-            setTimeout(() => inputRef.current?.focus(), 0);
-          }}
+          onPick={pickRecipient}
         />
       </div>
 

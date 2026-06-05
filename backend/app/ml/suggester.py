@@ -176,16 +176,24 @@ def _per_contact_stats(txs: list) -> dict:
     return stats
 
 
-def train_for(user_id: str) -> Optional[dict]:
+def train_for(user_id: str, txs: Optional[list] = None) -> Optional[dict]:
     """(Re)train the suggester for ``user_id``. Returns a stats dict, or
-    ``None`` if there isn't enough data."""
+    ``None`` if there isn't enough data.
+
+    ``txs`` lets callers (eval harness, batch backfill) supply an explicit
+    transaction list so no DB write is needed to evaluate a training
+    window — the harness can slice in memory and pass the slice directly.
+    Production callers omit the arg and we read the user's full history
+    from the store.
+    """
     try:
         from sklearn.ensemble import RandomForestClassifier  # type: ignore
     except ImportError:
         log.warning("scikit-learn missing — suggester disabled")
         return None
 
-    txs = get_store().transactions_of(user_id)
+    if txs is None:
+        txs = get_store().transactions_of(user_id)
     if len(txs) < 3:
         return None
 

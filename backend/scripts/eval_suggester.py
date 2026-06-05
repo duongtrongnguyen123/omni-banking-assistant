@@ -8,6 +8,10 @@ recipient was in the top-K.
 Reports Hit@1 / Hit@3 / Hit@5 plus per-component ablation (tree-only,
 freq-only, rules-only, full hybrid) so you can see what's actually pulling
 the rank.
+
+Implementation note: ``train_for(txs=...)`` lets us feed the model a
+training slice without touching the DB — crucial on 500k-row contest data
+where the old delete-reinsert dance took 10+ minutes.
 """
 
 from __future__ import annotations
@@ -23,52 +27,29 @@ sys.path.insert(0, str(ROOT))
 
 from app.db.connection import get_connection  # noqa: E402
 from app.ml import suggester  # noqa: E402
+from app.models.schemas import Transaction  # noqa: E402
 from app.store import get_store  # noqa: E402
 
 
 USER = "u_an"
 
 
-def _restore_full(snapshot: list[dict]) -> None:
-    """Repopulate the transactions table from a snapshot of dict rows."""
-    conn = get_connection()
-    conn.execute("BEGIN")
-    try:
-        conn.execute("DELETE FROM transactions")
-        for r in snapshot:
-            conn.execute(
-                """INSERT INTO transactions
-                    (id, owner_id, contact_id, amount, description,
-                     category, status, created_at, embedding)
-                    VALUES(?,?,?,?,?,?,?,?,?)""",
-                (
-                    r["id"], r["owner_id"], r["contact_id"], r["amount"],
-                    r["description"], r["category"], r["status"],
-                    r["created_at"], r["embedding"],
-                ),
-            )
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-
-
-def _set_active(rows: list[dict]) -> None:
-    """Replace the transactions table with `rows`. Used to swap train/test
-    sets so suggester sees only the training portion."""
-    _restore_full(rows)
-    suggester.reset_all()
+def _row_to_tx(row: dict) -> Transaction:
+    return Transaction(
+        id=row["id"],
+        owner_id=row["owner_id"],
+        contact_id=row["contact_id"] or "",
+        amount=row["amount"],
+        description=row["description"] or "",
+        category=row["category"] or "other",
+        status=row["status"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
 
 
 def evaluate(weights: tuple[float, float, float], label: str) -> dict:
-    """Run the eval against the current train set with the given weights."""
     tw, fw, rw = weights
-    store = get_store()
-    contacts = store.contacts_of(USER)
-
-    # Build a list of contacts the suggester can return; if test contact
-    # isn't in there, it's a definite miss.
-    contact_ids = {c.id for c in contacts}
+    contact_ids = {c.id for c in get_store().contacts_of(USER)}
 
     hit_at = {1: 0, 3: 0, 5: 0}
     n = 0
@@ -140,14 +121,10 @@ if __name__ == "__main__":
     print(f"Test : {len(TEST):,} tx (≥{MIN_TRAIN} train hits each, capped {TEST_LIMIT})")
     print()
 
-    # When the eval is pointed at a dedicated DB file (OMNI_DB_PATH set),
-    # skip the train/restore dance entirely — we're not touching shared
-    # state. Saves several minutes on a 500k-row dataset.
-    standalone = bool(os.environ.get("OMNI_DB_PATH"))
-
     try:
-        _set_active(TRAIN)
-        suggester.train_for(USER)
+        # Feed the training slice to the model directly — no DB writes.
+        train_txs = [_row_to_tx(r) for r in TRAIN]
+        suggester.train_for(USER, txs=train_txs)
 
         rows = [
             evaluate((1.0, 0.0, 0.0), "tree only"),
@@ -162,6 +139,4 @@ if __name__ == "__main__":
         for r in rows:
             _print(r)
     finally:
-        if not standalone:
-            _set_active(ALL)
         suggester.reset_all()

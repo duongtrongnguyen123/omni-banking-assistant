@@ -50,7 +50,7 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "tai khoan con", "con bao nhieu trong tai khoan",
     ]),
     ("history", [
-        "lich su", "thong ke",
+        "lich su", "thong ke", "sao ke", "bao cao chi tieu",
         "ai nhan nhieu", "ai gui nhieu", "ai chuyen nhieu",
         "nhieu nhat", "lan cuoi", "lan gan nhat", "gan nhat",
         "5 giao dich", "3 giao dich", "10 giao dich",
@@ -86,6 +86,9 @@ _MED: list[tuple[Intent, list[str]]] = [
     ("transfer", [
         "chuyen", "gui", "tra", "thanh toan", "nap",
         "transfer", "send",
+        # Repeat-last-transfer phrasings — pair with a temporal entity so
+        # the orchestrator pulls the previous tx as the implicit recipient.
+        "lap lai", "repeat", "lai giao dich", "y nhu",
     ]),
     ("smalltalk", ["hi", "hey"]),
 ]
