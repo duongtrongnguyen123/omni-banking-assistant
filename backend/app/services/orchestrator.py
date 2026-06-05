@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from ..banking.recurring import detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
@@ -137,6 +138,9 @@ def _dispatch_intent(
 
     if nlu.intent == "schedule":
         return _handle_schedule(user_id, nlu)
+
+    if nlu.intent == "recurring":
+        return _handle_recurring(user_id, nlu, history_msgs)
 
     if nlu.intent == "add_contact":
         return _handle_add_contact(user_id, nlu)
@@ -280,6 +284,86 @@ def _handle_balance(
         or fallback
     )
     return OmniResponse(intent="balance", text=text, balance=bal)
+
+
+def _handle_recurring(
+    user_id: str, nlu: NLUResult, history_msgs: Optional[list[dict]] = None
+) -> OmniResponse:
+    """Surface monthly recurring payments mined from history.
+
+    Pure read intent — does not write a schedule row. The reply suggests
+    the user can confirm one of the detected lines as a real schedule,
+    but the actual ``schedule`` intent stays in charge of creation so the
+    safety contract (rule-composed confirmation text) is preserved.
+    """
+    store = get_store()
+    txs = store.transactions_of(user_id)
+    contacts = store.contacts_of(user_id)
+    contacts_by_id = {c.id: c for c in contacts}
+
+    patterns = detect_recurring(txs)
+
+    e = nlu.entities
+    if e.recipient_text:
+        candidates = resolve_recipient(e.recipient_text, contacts)
+        wanted = {c.contact.id for c in candidates}
+        if wanted:
+            patterns = [p for p in patterns if p.contact_id in wanted]
+
+    # Cap the slate so the LLM has a tight context and the UI stays readable.
+    top = patterns[:5]
+
+    def _name(cid: str) -> str:
+        c = contacts_by_id.get(cid)
+        return c.display_name if c else "(không rõ)"
+
+    if not top:
+        msg = (
+            "Mình chưa thấy khoản nào đủ dữ liệu để khẳng định là định kỳ "
+            "(cần ít nhất 3 tháng giao dịch giống nhau)."
+        )
+        return OmniResponse(intent="recurring", text=msg)
+
+    facts = {
+        "intent": "recurring",
+        "instruction": (
+            "Tóm tắt các khoản định kỳ trong PATTERNS. Mỗi khoản gồm "
+            "tên người nhận, số tiền điển hình, ngày trong tháng. "
+            "Đoạn ngắn, văn bản trần. Có thể gợi ý người dùng đặt lịch tự "
+            "động nếu muốn — KHÔNG tự lập lịch."
+        ),
+        "patterns": [
+            {
+                "recipient": _name(p.contact_id),
+                "description": p.description,
+                "typical_amount": p.typical_amount,
+                "typical_day": p.typical_day,
+                "months_seen": p.month_count,
+                "last_seen": p.last_seen.date().isoformat(),
+                "next_expected": p.next_run.date().isoformat(),
+                "confidence": p.confidence,
+            }
+            for p in top
+        ],
+    }
+
+    # Deterministic fallback for when the LLM is unreachable.
+    lines = []
+    for p in top:
+        lines.append(
+            f"• {_name(p.contact_id)} — {format_vnd(p.typical_amount)} "
+            f"({p.description}) khoảng ngày {p.typical_day} hàng tháng, "
+            f"đã thấy {p.month_count} tháng."
+        )
+    fallback = "Mình thấy bạn có vài khoản trông như định kỳ:\n" + "\n".join(lines)
+    if len(patterns) > len(top):
+        fallback += f"\n…và {len(patterns) - len(top)} khoản khác."
+
+    body = (
+        llm_phrase(nlu.raw_text, facts, history=history_msgs)
+        or fallback
+    )
+    return OmniResponse(intent="recurring", text=body)
 
 
 def _handle_history(

@@ -67,7 +67,7 @@ Return STRICT JSON only, no prose.
 
 Schema:
 {
-  "intent": "transfer|balance|history|schedule|reminder|add_contact|smalltalk|unknown",
+  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|smalltalk|unknown",
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
@@ -85,7 +85,9 @@ Schema:
 Rules:
 - "k" = ×1,000;  "tr"/"triệu" = ×1,000,000;  "tỷ"/"ty" = ×1,000,000,000.
 - "rưỡi" after a unit = + 0.5 of that unit ("5 triệu rưỡi" → 5500000).
-- "đặt lịch / hàng tháng / mỗi tháng / mùng X" → schedule.
+- "đặt lịch / hàng tháng / mỗi tháng / mùng X" → schedule (CREATE).
+- "khoản nào định kỳ / khoản tự động / có khoản nào trả đều / liệt kê lịch
+   tự động" → recurring (READ — show patterns inferred from history).
 - "nhắc nợ / nhắc trả" → reminder.
 - FOLLOW-UPS: when the current message looks like a continuation
   ("còn tháng trước?", "đổi sang Minh", "mà thôi đổi sang X", "cái nào nhiều
@@ -147,6 +149,20 @@ INPUT: "Khoản chi nào liên quan đến sức khoẻ"
 
 INPUT: "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng"
 {"intent":"schedule","confidence":0.95,"entities":{"recipient_text":"mẹ","amount":2000000,"amount_text":"2tr","schedule_cron":"0 9 1 * *"}}
+
+RECURRING (read-only — detect patterns from history):
+
+INPUT: "Mình có khoản nào trả đều hàng tháng không?"
+{"intent":"recurring","confidence":0.95,"entities":{}}
+
+INPUT: "Liệt kê các khoản định kỳ của mình"
+{"intent":"recurring","confidence":0.95,"entities":{}}
+
+INPUT: "Có khoản nào tự động trả không?"
+{"intent":"recurring","confidence":0.9,"entities":{}}
+
+INPUT: "Khoản định kỳ với mẹ"
+{"intent":"recurring","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
 
 INPUT: "Lưu Nam STK 9990001234 MB Bank tên là anh Nam"
 {"intent":"add_contact","confidence":0.95,"entities":{"recipient_text":"Nam","account_hint":"9990001234","bank_name":"MB Bank","alias":"anh Nam"}}

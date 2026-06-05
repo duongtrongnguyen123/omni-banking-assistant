@@ -29,9 +29,20 @@ def _ascii_fold(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HIGH: list[tuple[Intent, list[str]]] = [
+    # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
+    # hang thang" are queries about existing patterns, not commands to make
+    # a new one. Schedule keeps its imperative cues.
+    ("recurring", [
+        "khoan dinh ky", "cac khoan dinh ky", "khoan tu dong",
+        "khoan nao tu dong", "khoan nao dinh ky", "khoan nao tra deu",
+        "tra deu hang thang", "chi deu hang thang",
+        "co khoan nao tra", "co khoan nao dinh ky",
+        "liet ke lich", "xem lich tu dong", "lich tu dong",
+        "khoan dinh ky cua toi", "khoan dinh ky cua minh",
+    ]),
     ("schedule", [
-        "dat lich", "len lich", "lap lich", "dinh ky",
-        "tu dong chuyen",
+        "dat lich", "len lich", "lap lich",
+        "tu dong chuyen", "thiet lap lich",
     ]),
     ("reminder", ["nhac no", "nhac tra", "nhac thanh toan", "tao nhac"]),
     ("balance", [

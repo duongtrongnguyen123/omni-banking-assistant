@@ -10,6 +10,7 @@ Intent = Literal[
     "balance",
     "history",
     "schedule",
+    "recurring",
     "reminder",
     "add_contact",
     "smalltalk",
