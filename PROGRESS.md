@@ -10,6 +10,21 @@ A Vietnamese natural-language banking assistant that collapses the classic
 differentiators (alias / temporal / ambiguity) and a hard **safety contract**
 preventing the LLM from ever asserting money facts.
 
+**27 features shipped · all quality gates green:** 386 pytest pass / 10 xfail
+in 6.2s · 200/200 NLU corpus · 19/19 KB scenario assertions · 56 backend
+routes across 22 prefixes · clean tsc + vite build (218 kB / 68 kB gzipped) ·
+GitHub Actions CI green on every push.
+
+**Headline empirical numbers (public datasets, pre-registered seed = 42):**
+Suggester **Hit@1 = 0.81 / Hit@5 = 0.97** on BankSim 594k tx · Recurring
+detector **F1 = 0.74** on Czech PKDD'99 real bank data · Fraud Isolation
+Forest **recall 0.75 at FP-rate 0.11** on BankSim labelled fraud.
+
+Pitch package: [`docs/pitch-final.md`](docs/pitch-final.md) (5-min script) ·
+[`docs/pitch-deck-content.md`](docs/pitch-deck-content.md) (8-slide content) ·
+[`docs/judge-faq.md`](docs/judge-faq.md) (20 Q&A) ·
+[`docs/one-pager.md`](docs/one-pager.md).
+
 Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 
 ## What's actually shipped
