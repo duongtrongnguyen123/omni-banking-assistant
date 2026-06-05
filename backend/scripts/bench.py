@@ -48,12 +48,24 @@ WARMUP = 10
 DEFAULT_ITERS = 200
 
 # Per-flow overrides: heavy flows that touch the full 520k tx table cap
-# out at a smaller count so the baseline run is bounded. After the
-# optimisation pass these are typically <100ms and could run at the full
-# DEFAULT_ITERS, but the same caps are kept for fair before / after
-# comparison.
+# out at a smaller count so the baseline run is bounded. The baseline
+# pre-optimisation cost is so high (15-30s per chat-history call against
+# unindexed 520k rows + Pydantic round-trip) that 50 iters would push the
+# whole bench past an hour. After optimisation the same flows finish in
+# tens of milliseconds and the caps no longer bind.
 HEAVY_ITERS_FAST = 50
 HEAVY_ITERS_VERY_FAST = 20
+# Caps used when the script is invoked with --baseline (pre-optimisation):
+# bring everything heavy down to ~30 samples so the run completes inside
+# the bash budget without sacrificing P50/P95 stability.
+BASELINE_HEAVY_FAST = 30
+BASELINE_HEAVY_VERY_FAST = 12
+
+# Insights is the most expensive single endpoint at contest scale because
+# it scans every completed tx, computes per-contact z-scores, and runs the
+# subscription miner. The cap here is generous because each call is
+# isolated — no compounding effect across iterations.
+INSIGHTS_CAP = 12
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +111,7 @@ def _spawn_uvicorn(port: int, db_path: Path) -> subprocess.Popen:
         "app.main:app",
         "--host", "127.0.0.1",
         "--port", str(port),
-        "--log-level", "warning",
+        "--log-level", "info",
     ]
     log_path = Path("/tmp/omni_bench_uvicorn.log")
     print(f"[bench] spawning uvicorn on :{port} (OMNI_DB_PATH={db_path}) "
@@ -213,7 +225,7 @@ def bench_insights(client: httpx.Client, iters: int) -> Optional[dict]:
     def _hit() -> None:
         r = client.get("/api/insights/summary", timeout=300.0)
         r.raise_for_status()
-    insights_iters = min(iters, HEAVY_ITERS_VERY_FAST)
+    insights_iters = min(iters, INSIGHTS_CAP)
     print(f"[bench]   insights/summary ({insights_iters} iters) …", flush=True)
     return _measure("insights/summary", _hit, insights_iters)
 
@@ -301,7 +313,26 @@ def main() -> None:
                         help="Skip HTTP-backed benches (chat/insights/suggestions)")
     parser.add_argument("--skip-inproc", action="store_true",
                         help="Skip in-process benches (alias/suggester)")
+    parser.add_argument(
+        "--baseline", action="store_true",
+        help=("Lower per-flow caps for the unoptimised baseline so the run "
+              "fits in a single bash budget — use this once, then re-run "
+              "without the flag for the post-optimisation comparison."),
+    )
     args = parser.parse_args()
+
+    # Apply the baseline overrides in-place. Only the heavy chat flows
+    # (transfer / history / recurring) are dialled down; light flows
+    # (balance, smalltalk, unknown) still run at the full DEFAULT_ITERS.
+    if args.baseline:
+        global CHAT_MESSAGES
+        CHAT_MESSAGES = [
+            (label, msg,
+             BASELINE_HEAVY_FAST if override == HEAVY_ITERS_FAST
+             else BASELINE_HEAVY_VERY_FAST if override == HEAVY_ITERS_VERY_FAST
+             else override)
+            for label, msg, override in CHAT_MESSAGES
+        ]
 
     db_path = Path(args.db).resolve()
     if not db_path.exists():
@@ -316,8 +347,14 @@ def main() -> None:
         if not args.skip_http:
             port = _free_port()
             proc = _spawn_uvicorn(port, db_path)
+            # Disable HTTP keep-alive so a stale long-idle connection (e.g. after a
+            # 25s baseline transfer call) doesn't get reused and surface as
+            # "Connection refused" half-open. Each iteration opens a fresh
+            # TCP socket — the overhead is negligible vs the server work.
+            limits = httpx.Limits(max_keepalive_connections=0, max_connections=10)
             with httpx.Client(base_url=f"http://127.0.0.1:{port}",
-                              headers={"x-user-id": USER}) as client:
+                              headers={"x-user-id": USER, "Connection": "close"},
+                              limits=limits) as client:
                 # One warm hit so per-route imports finish on the server side.
                 client.post("/api/session/reset", timeout=60.0)
                 _ = client.post("/api/chat", json={"message": "Chào"}, timeout=120.0)

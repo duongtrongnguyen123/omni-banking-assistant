@@ -338,14 +338,18 @@ def suggest(
     scored.sort(key=_sort_key)
 
     # Reason-string generation needs the actual tx list; only build it
-    # for the rows we return.
+    # for the rows we return.  OPT-3 (bench): a single targeted query per
+    # returned contact instead of scanning the user's full 520k-row
+    # history just to filter to the top-K.  On the contest dataset the
+    # previous code spent ~1.8s per ``suggest()`` call materialising
+    # Pydantic transactions only to throw 99.9% of them away.
     out: list[dict] = []
     needed_ids = {cid for cid, _ in scored[: k if not include_all else len(scored)]}
     txs_for_reasons: dict[str, list] = {}
-    if needed_ids:
-        for t in store.transactions_of(user_id):
-            if t.contact_id in needed_ids:
-                txs_for_reasons.setdefault(t.contact_id, []).append(t)
+    for cid in needed_ids:
+        txs_for_reasons[cid] = store.transactions_of(
+            user_id, contact_id=cid, limit=30,
+        )
 
     for cid, score in scored[: k if not include_all else len(scored)]:
         c = contacts.get(cid)

@@ -247,7 +247,14 @@ def _modify_transfer_draft(
 ) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
-    txs = store.transactions_of(user_id)
+    # OPT-3 (bench): scope to the recipient for the safety re-evaluation.
+    # On modify the recipient may still change (see the swap branch
+    # below); we reload txs there if needed.
+    txs = (
+        store.transactions_of(user_id, contact_id=draft.recipient.id)
+        if draft.recipient is not None
+        else []
+    )
     account = (
         store.account_by_id(user_id, draft.source_account_id)
         if draft.source_account_id
@@ -270,6 +277,10 @@ def _modify_transfer_draft(
         elif len(candidates) > 1:
             draft.recipient = None
             draft.candidates = [c.contact for c in candidates]
+        # OPT-3 (bench): recipient just changed — reload txs for the new
+        # recipient so the per-contact baseline reflects the right peer set.
+        if draft.recipient is not None:
+            txs = store.transactions_of(user_id, contact_id=draft.recipient.id)
 
     # Re-evaluate safety on the modified draft.
     draft.flags = evaluate(
@@ -334,7 +345,14 @@ def _handle_recurring(
     safety contract (rule-composed confirmation text) is preserved.
     """
     store = get_store()
-    txs = store.transactions_of(user_id)
+    # OPT-3 (bench): recurring detection only meaningfully observes the
+    # last ~12 months. Scanning further back wastes time on dormant
+    # patterns that ``detect_recurring`` would drop as stale anyway
+    # (its ``next_run`` filter rejects anything > 60 days behind ref_now).
+    from datetime import timedelta as _td
+    txs = store.transactions_of(
+        user_id, since=now() - _td(days=400), status="completed",
+    )
     contacts = store.contacts_of(user_id)
     contacts_by_id = {c.id: c for c in contacts}
 
@@ -842,7 +860,6 @@ def cancel_contact_draft(user_id: str, draft_id: str) -> OmniResponse:
 def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
-    txs = store.transactions_of(user_id)
     account = store.primary_account(user_id)
     if account is None:
         return OmniResponse(
@@ -860,6 +877,20 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     chosen: Optional[Contact] = None
     if len(candidates) == 1:
         chosen = candidates[0].contact
+
+    # OPT-3 (bench): scope the tx fetch to the chosen recipient (when known)
+    # or a small recent window otherwise. The previous code unconditionally
+    # materialised every transaction the user has ever made (~520k Pydantic
+    # objects on the contest dataset, ~16s on its own); only the per-contact
+    # baseline + temporal-reference path actually need history.
+    if chosen is not None:
+        txs = store.transactions_of(user_id, contact_id=chosen.id)
+    else:
+        # Cold-contact path: need the global mean for the anomaly check
+        # AND a recent window for "lần trước" temporal resolution. The
+        # last 90 days covers the temporal vocab we recognise.
+        from datetime import timedelta as _td
+        txs = store.transactions_of(user_id, since=now() - _td(days=90))
 
     # Resolve temporal reference using the chosen recipient (if any) for higher precision
     amount = e.amount
@@ -881,6 +912,11 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             # If recipient was implied but not matched, take it from the past tx.
             if chosen is None and not candidates:
                 chosen = store.get_contact(referenced_tx.contact_id)
+                # The newly resolved recipient may not be in our scoped
+                # txs window; reload so the per-contact safety baseline
+                # has the right peer set.
+                if chosen is not None:
+                    txs = store.transactions_of(user_id, contact_id=chosen.id)
 
     # Smart amount prediction: when the user named a recipient but no
     # amount, look at their history with this contact and pre-fill the
@@ -1041,9 +1077,16 @@ def confirm_draft(
         return OmniResponse(intent="unknown", text="Không tìm thấy giao dịch chờ xác nhận.")
 
     # B7: re-run safety with fresh balance/history, not the stale snapshot
-    # captured at draft creation time.
+    # captured at draft creation time. OPT-3 (bench): scope to the
+    # recipient — same reasoning as ``_handle_transfer``; on contest data
+    # the unscoped fetch was a 16s tax we paid for nothing here, because
+    # ``evaluate`` only consults the per-contact baseline at confirm time.
     store = get_store()
-    txs = store.transactions_of(user_id)
+    txs = (
+        store.transactions_of(user_id, contact_id=draft.recipient.id)
+        if draft.recipient is not None
+        else []
+    )
     if source_account_id:
         try:
             store.account_by_id(user_id, source_account_id)
@@ -1162,7 +1205,8 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
         return OmniResponse(intent="transfer", text="Người nhận chưa khớp danh bạ.", draft=draft)
 
     store = get_store()
-    txs = store.transactions_of(user_id)
+    # OPT-3 (bench): per-contact slice instead of the full history.
+    txs = store.transactions_of(user_id, contact_id=chosen.id)
     account = (
         store.account_by_id(user_id, draft.source_account_id)
         if draft.source_account_id

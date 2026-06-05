@@ -100,21 +100,63 @@ class Store:
     # ---- contacts ------------------------------------------------------
 
     def get_contact(self, contact_id: str) -> Optional[Contact]:
+        # OPT-2 (bench): single-shot fetch with aliases via a correlated
+        # subquery + GROUP_CONCAT. Saves the second query (or rather, two
+        # queries on a per-tx hot path inside ``_contact_summary``).
         row = get_connection().execute(
-            """SELECT * FROM contacts WHERE id = ?""",
+            """
+            SELECT c.id, c.owner_id, c.display_name, c.bank, c.account_number,
+                   c.account_masked, c.label, c.verified, c.frequent,
+                   (SELECT GROUP_CONCAT(alias, char(31))
+                    FROM contact_aliases a WHERE a.contact_id = c.id) AS aliases
+            FROM contacts c WHERE c.id = ?
+            """,
             (contact_id,),
         ).fetchone()
         if row is None:
             return None
-        return self._row_to_contact(row)
+        return self._row_to_contact_with_aliases(row)
 
     def contacts_of(self, user_id: str) -> list[Contact]:
+        # OPT-1 (bench): N+1 → single query.  Previous version emitted one
+        # ``SELECT alias FROM contact_aliases WHERE contact_id = ?`` per
+        # contact — on the 1000-row contest dataset that's 1000 extra
+        # round-trips (~120ms total).  We now fold all aliases into the
+        # row with a LEFT JOIN + GROUP_CONCAT, then split client-side.
+        # The character-31 (US, "unit separator") delimiter is chosen so
+        # it can't collide with anything in a Vietnamese name.
         rows = get_connection().execute(
-            "SELECT * FROM contacts WHERE owner_id = ? ORDER BY frequent DESC, display_name",
+            """
+            SELECT c.id, c.owner_id, c.display_name, c.bank, c.account_number,
+                   c.account_masked, c.label, c.verified, c.frequent,
+                   GROUP_CONCAT(a.alias, char(31)) AS aliases
+            FROM contacts c
+            LEFT JOIN contact_aliases a ON a.contact_id = c.id
+            WHERE c.owner_id = ?
+            GROUP BY c.id
+            ORDER BY c.frequent DESC, c.display_name
+            """,
             (user_id,),
         ).fetchall()
-        return [self._row_to_contact(r) for r in rows]
+        return [self._row_to_contact_with_aliases(r) for r in rows]
 
+    @staticmethod
+    def _row_to_contact_with_aliases(row) -> Contact:
+        raw = row["aliases"]
+        aliases = raw.split("\x1f") if raw else []
+        return Contact(
+            id=row["id"], owner_id=row["owner_id"],
+            display_name=row["display_name"], bank=row["bank"],
+            account_number=row["account_number"],
+            account_masked=row["account_masked"],
+            aliases=aliases, label=row["label"],
+            verified=bool(row["verified"]),
+            frequent=bool(row["frequent"]),
+        )
+
+    # Kept for backwards-compat: ``add_contact`` and ``find_contact_by_account``
+    # below still call this. Wraps the new helper by issuing the alias query
+    # separately for callers that already hold a "thin" contacts row.
     def _row_to_contact(self, row) -> Contact:
         aliases = [
             r["alias"] for r in get_connection().execute(
@@ -174,16 +216,84 @@ class Store:
         ).fetchone()
         return self._row_to_contact(row) if row else None
 
+    def contacts_by_ids(self, contact_ids: list[str]) -> dict[str, Contact]:
+        """OPT-2 (bench): batch fetch contacts + aliases in a single query.
+
+        Used by ``banking.service.get_history`` to resolve recipient names
+        for every transaction in the result window without issuing one
+        ``SELECT`` per row (the old ``_contact_summary`` shape took N
+        queries; on a 30-row history page with the per-row alias subquery
+        that was 60 round-trips).
+        """
+        if not contact_ids:
+            return {}
+        placeholders = ",".join("?" * len(contact_ids))
+        rows = get_connection().execute(
+            f"""
+            SELECT c.id, c.owner_id, c.display_name, c.bank, c.account_number,
+                   c.account_masked, c.label, c.verified, c.frequent,
+                   (SELECT GROUP_CONCAT(alias, char(31))
+                    FROM contact_aliases a WHERE a.contact_id = c.id) AS aliases
+            FROM contacts c WHERE c.id IN ({placeholders})
+            """,
+            contact_ids,
+        ).fetchall()
+        return {r["id"]: self._row_to_contact_with_aliases(r) for r in rows}
+
     # ---- transactions --------------------------------------------------
 
-    def transactions_of(self, user_id: str) -> list[Transaction]:
-        rows = get_connection().execute(
-            """SELECT id, owner_id, contact_id, amount, description, category,
-                      status, created_at
-               FROM transactions WHERE owner_id = ?
-               ORDER BY created_at DESC""",
-            (user_id,),
-        ).fetchall()
+    def transactions_of(
+        self,
+        user_id: str,
+        *,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        contact_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[Transaction]:
+        """OPT-3 (bench): optional filters pushed into SQL.
+
+        The old signature unconditionally returned every transaction the
+        user has ever made and materialised each row into a Pydantic model
+        — for the contest dataset (520k rows) that's ~2GB allocation per
+        call. Every chat handler, the suggester, the recurring detector,
+        and the insights endpoint hit this path on every request, so the
+        15-30s baseline transfer latency was almost entirely Pydantic
+        construction.
+
+        Callers that genuinely need the full history (recurring miner,
+        insights subscriptions) still get it by passing no filters.
+        Callers that only need a slice (history endpoint, suggester
+        reason-strings, balance / smalltalk path) now opt in to a tight
+        SQL range and skip the materialisation cost entirely.
+        """
+        clauses = ["owner_id = ?"]
+        params: list = [user_id]
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since.isoformat())
+        if until is not None:
+            clauses.append("created_at < ?")
+            params.append(until.isoformat())
+        if contact_id is not None:
+            clauses.append("contact_id = ?")
+            params.append(contact_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+
+        sql = (
+            "SELECT id, owner_id, contact_id, amount, description, category, "
+            "status, created_at FROM transactions "
+            f"WHERE {where} ORDER BY created_at DESC"
+        )
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+
+        rows = get_connection().execute(sql, params).fetchall()
         return [
             Transaction(
                 id=r["id"], owner_id=r["owner_id"],
@@ -194,6 +304,16 @@ class Store:
             )
             for r in rows
         ]
+
+    def transaction_count(self, user_id: str) -> int:
+        """OPT-3 (bench): cheap counterpart to ``transactions_of`` for the
+        suggester's training trigger. Avoids paying the full materialisation
+        cost just to read ``len(txs)``."""
+        row = get_connection().execute(
+            "SELECT COUNT(*) AS n FROM transactions WHERE owner_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     def add_transaction(self, tx: Transaction) -> Transaction:
         conn = get_connection()

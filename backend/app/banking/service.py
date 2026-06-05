@@ -80,12 +80,16 @@ def get_history(
         token overlap against ``description`` and ``category``.
       * ``limit`` truncates the items list (kept sorted by created_at desc)
         and rolls aggregates from the truncated set.
+
+    Performance (OPT-3 + OPT-2, bench): the date / contact filters are
+    pushed into SQL (``ix_tx_owner_created`` covers it), and contact
+    metadata for the rendered items is fetched in a single
+    ``contacts_by_ids`` batch. The previous implementation materialised
+    all 520k contest transactions into Pydantic models on every call
+    and then ran one ``store.get_contact`` per item — ~16s per call
+    even when the result was a 30-row month page.
     """
     store = get_store()
-    txs = store.transactions_of(user_id)
-    if not txs:
-        return {"period": period, "count": 0, "total": 0, "items": []}
-
     ref_now = now()
     if all_time:
         # Effectively no time bound — pick a window wide enough to cover all
@@ -111,9 +115,15 @@ def get_history(
         start = ref_now - timedelta(days=30)
         end = ref_now + timedelta(days=1)
 
-    items = [t for t in txs if start <= t.created_at < end]
-    if contact_id:
-        items = [t for t in items if t.contact_id == contact_id]
+    # OPT-3: range + (optional) contact filter served by the SQL index
+    # ``ix_tx_owner_created (owner_id, created_at DESC)``. Without
+    # ``all_time`` the working set is at most one month of activity even
+    # on the contest user with ~85k tx / month.
+    items = store.transactions_of(
+        user_id, since=start, until=end, contact_id=contact_id,
+    )
+    if not items:
+        return {"period": period, "count": 0, "total": 0, "items": []}
 
     if semantic_filter:
         items = _lexical_filter_transactions(items, semantic_filter)
@@ -122,13 +132,32 @@ def get_history(
     if limit is not None and limit > 0:
         items = items[:limit]
 
+    # OPT-2: single batch fetch keyed by the contact-ids actually present
+    # in this page. Replaces the per-row ``_contact_summary`` query (which
+    # itself made two queries — one for the contact, one for its aliases).
+    needed_ids = sorted({t.contact_id for t in items if t.contact_id})
+    contacts_by_id = store.contacts_by_ids(needed_ids) if needed_ids else {}
+
+    def _summary(contact_id: str) -> dict:
+        c = contacts_by_id.get(contact_id)
+        if not c:
+            return {}
+        return {
+            "id": c.id,
+            "display_name": c.display_name,
+            "bank": c.bank,
+            "account_masked": c.account_masked,
+            "label": c.label,
+        }
+
     categories: dict[str, int] = defaultdict(int)
     by_recipient: dict[str, int] = defaultdict(int)
     for t in items:
         categories[t.category] += t.amount
-        c = _contact_summary(t.contact_id)
-        if c.get("display_name"):
-            by_recipient[c["display_name"]] += t.amount
+        name = (contacts_by_id.get(t.contact_id).display_name
+                if t.contact_id in contacts_by_id else None)
+        if name:
+            by_recipient[name] += t.amount
 
     return {
         "period": period,
@@ -139,7 +168,7 @@ def get_history(
         "items": [
             {
                 **t.model_dump(mode="json"),
-                "contact": _contact_summary(t.contact_id),
+                "contact": _summary(t.contact_id),
             }
             for t in items
         ],
