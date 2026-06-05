@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
-from ..context.alias import filter_by_account_hint
+from ..context.alias import filter_by_account_hint, resolve_by_account_hint
 from ..models.schemas import (
     AuditEvent,
     Contact,
@@ -31,7 +31,6 @@ from ..store import get_store, new_id, now
 
 _CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
 _CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
-_OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
 
 
 def _is_confirm(text: str) -> bool:
@@ -75,6 +74,11 @@ def _record_audit(
 
 # A4: temporal-reference → history period. Strip diacritics so both
 # "tháng trước" and "thang truoc" map correctly.
+def _default_transfer_description(user_id: str) -> str:
+    user = get_store().get_user(user_id)
+    return f"{user.display_name} chuyển tiền"
+
+
 def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     if not temporal_ref:
         return "this_month"
@@ -93,21 +97,6 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
     # receives previous turns as context, with the current one as the new
     # user message.
     history_msgs = session.conversation_messages()
-
-    # OTP step-up: if there's a draft awaiting OTP and the user typed digits,
-    # treat the input as the OTP code and route to confirm_draft with the
-    # typed code. confirm_draft validates it against the mock "123456" and
-    # either executes or returns a "OTP chưa đúng" prompt.
-    otp_match = _OTP_RE.match(text)
-    if (
-        session.current_draft is not None
-        and session.current_draft.awaiting_otp
-        and otp_match
-    ):
-        resp = confirm_draft(user_id, session.current_draft.id, otp=otp_match.group(1))
-        # confirm_draft already appended; just record this user turn.
-        session.append("user", text)
-        return resp
 
     # Direct continuation paths — for any in-flight draft, "xác nhận"/"huỷ"
     # acts on the matching draft rather than spawning a new NLU round.
@@ -638,8 +627,14 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     candidates = (
         resolve_recipient(e.recipient_text, contacts) if e.recipient_text else []
     )
+    account_hint_mismatch = False
     if e.account_hint:
-        candidates = filter_by_account_hint(candidates, e.account_hint)
+        if candidates:
+            filtered_candidates = filter_by_account_hint(candidates, e.account_hint)
+            account_hint_mismatch = not filtered_candidates
+            candidates = filtered_candidates
+        else:
+            candidates = resolve_by_account_hint(e.account_hint, contacts)
 
     chosen: Optional[Contact] = None
     if len(candidates) == 1:
@@ -666,6 +661,9 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             if chosen is None and not candidates:
                 chosen = store.contacts.get(referenced_tx.contact_id)
 
+    if not description:
+        description = _default_transfer_description(user_id)
+
     flags = evaluate(
         amount=amount,
         recipient_candidates=candidates,
@@ -673,6 +671,22 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         transactions=txs,
         account=account,
     )
+    if account_hint_mismatch:
+        flags = [
+            f
+            for f in flags
+            if f.code not in ("missing_recipient", "ambiguous_recipient")
+        ]
+        flags.append(
+            SafetyFlag(
+                code="account_hint_mismatch",
+                severity="block",
+                message=(
+                    "Số tài khoản bạn nhập không khớp với người nhận trong danh bạ. "
+                    "Mình sẽ không thực hiện giao dịch này."
+                ),
+            )
+        )
     required_auth = auth_policy(flags)
 
     draft = TransactionDraft(
@@ -760,35 +774,10 @@ def _try_continue_schedule_draft(
     return None
 
 
-# Ordinal patterns operate on the *folded* (diacritic-stripped) form of
-# the user message — so "thứ 2" / "người đầu tiên" become "thu 2" /
-# "nguoi dau tien" before matching.
-_ORDINAL_PATTERNS: list[tuple[str, int]] = [
-    (r"\b1\b|dau tien|dau hang|thu nhat|nhat\b|first", 0),
-    (r"\b2\b|thu hai|second|kia\b|sau\b|con lai", 1),
-    (r"\b3\b|thu ba|third", 2),
-    (r"cuoi\b|cuoi cung|last|sau cung", -1),
-]
-
-
 def _match_candidate(text: str, candidates: list[Contact]) -> Optional[Contact]:
     from ..context.alias import _fold  # local import to avoid leaking helper
 
     folded = _fold(text)
-
-    # 1) Ordinal pick — "người 1", "thứ hai", "kia", "cuối"
-    for pattern, idx in _ORDINAL_PATTERNS:
-        if re.search(pattern, folded, re.IGNORECASE):
-            # Special-case "kia" / "còn lại": only meaningful with exactly 2
-            # candidates ("the other one"). With 3+ it's ambiguous, so skip.
-            if idx == 1 and ("kia" in folded or "con lai" in folded) and len(candidates) != 2:
-                continue
-            try:
-                return candidates[idx]
-            except IndexError:
-                continue
-
-    # 2) Name / alias token match
     for c in candidates:
         if _fold(c.display_name) in folded or folded in _fold(c.display_name):
             return c
@@ -904,12 +893,11 @@ def confirm_draft(
 
     from ..banking.service import execute_transfer
 
-    session = session_for(user_id)
     try:
         tx = execute_transfer(
             user_id=user_id,
-            recipient=draft.recipient,  # type: ignore[arg-type]
-            amount=draft.amount,  # type: ignore[arg-type]
+            recipient=draft.recipient,
+            amount=draft.amount,
             description=draft.description,
             source_account_id=draft.source_account_id,
         )
@@ -922,11 +910,13 @@ def confirm_draft(
 
     _record_audit(user_id, message="Xac nhan giao dich", draft=draft, decision="executed")
     session.clear_draft()
-    otp_note = " (đã xác minh OTP)" if otp_used else ""
     text = (
-        f"Đã chuyển {format_vnd(tx.amount)} cho {draft.recipient.display_name} "  # type: ignore[union-attr]
-        f"({draft.recipient.bank}){otp_note}. Mã giao dịch: {tx.id}."  # type: ignore[union-attr]
+        f"Đã chuyển {format_vnd(tx.amount)} cho {draft.recipient.display_name} "
+        f"({draft.recipient.bank}). Mã giao dịch: {tx.id}."
     )
+    # B5: record this turn so follow-up questions ("Mình vừa chuyển bao
+    # nhiêu?") can be answered from context.
+    session.append("user", "Xác nhận giao dịch")
     session.append("omni", text)
     return OmniResponse(intent="transfer", text=text)
 
@@ -992,30 +982,21 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
 
 
 def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
-    has_amb = any(f.code == "ambiguous_recipient" for f in draft.flags)
-    has_miss_rec = any(f.code == "missing_recipient" for f in draft.flags)
-    has_miss_amt = any(f.code == "missing_amount" for f in draft.flags)
+    if any(f.code == "account_hint_mismatch" for f in draft.flags):
+        return next(
+            f.message for f in draft.flags if f.code == "account_hint_mismatch"
+        )
 
-    # If any slot is missing/ambiguous, build a single combined question
-    # that mentions every blank at once (amount AND recipient if both
-    # missing — "Bạn muốn chuyển bao nhiêu cho Minh nào?").
-    if has_amb or has_miss_rec or has_miss_amt:
-        amount_part = "bao nhiêu" if has_miss_amt else format_vnd(draft.amount)  # type: ignore[arg-type]
+    if any(f.code == "ambiguous_recipient" for f in draft.flags):
+        names = ", ".join(c.display_name for c in draft.candidates)
+        return f"Bạn muốn chuyển cho ai trong số: {names}?"
 
-        if has_amb:
-            names = ", ".join(c.display_name for c in draft.candidates)
-            common = _common_short_name(draft.candidates)
-            recipient_part = (
-                f"cho {common} nào (giữa {names})"
-                if common
-                else f"cho ai trong: {names}"
-            )
-        elif has_miss_rec:
-            recipient_part = "cho ai"
-        else:
-            recipient_part = f"cho {draft.recipient.display_name}"  # type: ignore[union-attr]
+    if any(f.code == "missing_recipient" for f in draft.flags):
+        return "Mình chưa rõ bạn muốn chuyển cho ai. Bạn cho mình biết người nhận nhé."
 
-        return f"Bạn muốn chuyển {amount_part} {recipient_part}?"
+    if any(f.code == "missing_amount" for f in draft.flags):
+        who = draft.recipient.display_name if draft.recipient else "người nhận"
+        return f"Bạn muốn chuyển bao nhiêu cho {who}?"
 
     warn = next(
         (f for f in draft.flags if f.severity == "warn"),
@@ -1037,19 +1018,6 @@ def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
         )
 
     return "Mình cần thêm thông tin để hoàn tất giao dịch."
-
-
-def _common_short_name(candidates: list[Contact]) -> Optional[str]:
-    """If all candidates share the same last token of their display name
-    (e.g. both "Nguyễn Văn Minh" and "Trần Hoàng Minh" → "Minh"), return it
-    so the clarifier reads more naturally: "cho Minh nào" instead of
-    "cho ai trong: ...". Returns None if no shared short name exists."""
-    if not candidates:
-        return None
-    last_tokens = {c.display_name.split()[-1] for c in candidates}
-    if len(last_tokens) == 1:
-        return next(iter(last_tokens))
-    return None
 
 
 __all__ = [
