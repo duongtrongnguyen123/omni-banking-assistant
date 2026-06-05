@@ -126,8 +126,10 @@ def reset_session(user_id: str = Depends(current_user)) -> dict:
     Intended for testing and as the 'fresh chat' button — not exposed in
     the UI but harmless if hit accidentally."""
     s = session_for(user_id)
-    s.current_draft = None
-    s.current_contact_draft = None
-    s.current_schedule_draft = None
+    # current_* are read-only properties after the Redis-sessions refactor;
+    # use the clear_* methods instead so this works for memory/redis/fake-redis.
+    s.clear_draft()
+    s.clear_contact_draft()
+    s.clear_schedule_draft()
     s.history.clear()
     return {"ok": True, "user_id": user_id}
