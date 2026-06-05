@@ -29,6 +29,9 @@ tác" một số tiền hay quyết định một giao dịch có an toàn hay k
 | **Fraud anomaly score** (Isolation Forest per-user) | Rule + sklearn, **không phải LLM** (`safety/fraud_model.py`) | An toàn precision/recall đo được. LLM không cho confidence score reproducible. |
 | **Vector RAG cho fuzzy contact lookup** ("anh đồng nghiệp marketing") | Rule (fastembed local + cosine) | Phải chạy được offline. LLM embedding API tốn tiền + bị rate-limit. Multi-lingual MiniLM 384-d đủ giàu cho Vietnamese. |
 | **Lexical history search** ("ăn uống tháng trước") | Rule (token-overlap + BM25-lite) | Backup khi vector không có hits. Cùng lý do offline-first. |
+| **PII redaction trước khi gọi LLM** (account no, amount, phone, email, VN name) | Rule (`nlp/redactor.py`, stdlib regex) | Phải audit được — judges có thể kiểm tra ring buffer `/api/admin/llm-audit` để verify nothing leaks. Không cho LLM "vô tình" thấy STK. |
+| **Categorize tx từ description** (tiền ăn → food, xăng → transport) | Rule + TF-IDF (`ml/categorizer.py`), không phải LLM | Determinstic, P=0.95 trên held-out, P50<2ms. LLM tốn $$$ cho 1M tx/ngày. |
+| **Tx audit ring buffer** (last 100 LLM calls với redaction breakdown) | Rule (`nlp/privacy.py`) | Phải defendable forensics. LLM call site write-through metadata. |
 
 ## Pipeline visualisation
 
