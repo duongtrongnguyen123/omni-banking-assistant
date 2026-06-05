@@ -47,7 +47,7 @@ def _prev_month_bounds(ref: datetime) -> tuple[datetime, datetime]:
 
 
 def _contact_name(contact_id: str) -> str:
-    c = get_store().contacts.get(contact_id)
+    c = get_store().get_contact(contact_id)
     return c.display_name if c else contact_id
 
 

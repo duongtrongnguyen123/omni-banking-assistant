@@ -11,11 +11,14 @@ Intent = Literal[
     "history",
     "schedule",
     "recurring",
+    "insights",
     "reminder",
     "add_contact",
     "smalltalk",
     "unknown",
 ]
+
+InsightFacet = Literal["spending", "anomalies", "subscriptions"]
 
 
 class Account(BaseModel):
@@ -89,6 +92,9 @@ class ExtractedEntities(BaseModel):
     semantic_filter: Optional[str] = None  # fuzzy text match on description, e.g. "ăn uống", "Tết"
     top_recipient: bool = False            # "ai nhận nhiều nhất"
     top_category: bool = False             # "chủ đề nào nhiều nhất"
+    # Used by insights intent — which facet of the insights summary the user
+    # asked about. None → return a high-level rollup of all three.
+    insight_facet: Optional[InsightFacet] = None
 
 
 class NLUResult(BaseModel):

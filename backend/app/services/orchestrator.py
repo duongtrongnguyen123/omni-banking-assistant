@@ -14,6 +14,7 @@ from ..banking.service import create_schedule, get_balance, get_history, next_ru
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
 from ..ml.amount_predictor import predict_amount
+from ..ml.insights import anomalies, month_over_month, subscriptions
 from ..models.schemas import (
     Contact,
     ContactDraft,
@@ -142,6 +143,9 @@ def _dispatch_intent(
 
     if nlu.intent == "recurring":
         return _handle_recurring(user_id, nlu, history_msgs)
+
+    if nlu.intent == "insights":
+        return _handle_insights(user_id, nlu, history_msgs)
 
     if nlu.intent == "add_contact":
         return _handle_add_contact(user_id, nlu)
@@ -383,6 +387,119 @@ def _handle_recurring(
         )
 
     return OmniResponse(intent="recurring", text=body, recurring_patterns=enriched)
+
+
+def _handle_insights(
+    user_id: str, nlu: NLUResult, history_msgs: Optional[list[dict]] = None
+) -> OmniResponse:
+    """Surface proactive analytics — MoM trend, anomalies, subscriptions.
+
+    The three insight modules in ``app.ml.insights`` already exist for the
+    REST ``/api/insights/summary`` endpoint; this handler shares those
+    helpers so the chat reply and the dashboard tile agree.
+
+    Facet selection:
+      - ``insight_facet == "spending"``       → MoM only (focused reply).
+      - ``insight_facet == "anomalies"``      → anomalies only.
+      - ``insight_facet == "subscriptions"``  → subscriptions only.
+      - ``insight_facet is None``             → high-level rollup of all 3.
+    """
+    # Rule-based facet inference: when the LLM is rate-limited the entity
+    # extractor never fills `insight_facet`. Scan the raw text so the chat
+    # still gives a focused reply instead of an omnibus dump.
+    facet = nlu.entities.insight_facet
+    if facet is None:
+        folded = normalize_alias(nlu.raw_text)
+        if "bat thuong" in folded or "co diem la" in folded:
+            facet = "anomalies"
+        elif (
+            "dang ky" in folded or "subscription" in folded
+            or "thue bao" in folded
+        ):
+            facet = "subscriptions"
+        elif (
+            "thang truoc" in folded or "so voi" in folded
+            or "nhieu hon" in folded or "it hon" in folded
+        ):
+            facet = "spending"
+    when = now()
+
+    mom = month_over_month(user_id, when) if facet in (None, "spending") else None
+    anom = anomalies(user_id, when) if facet in (None, "anomalies") else None
+    subs = subscriptions(user_id) if facet in (None, "subscriptions") else None
+
+    # Empty-state guard. If every requested facet came back empty, return
+    # a deterministic message instead of letting the LLM stretch for words.
+    if not any(x for x in (mom, anom, subs) if x):
+        empty_msg = {
+            "spending": "Mình chưa có đủ dữ liệu để so sánh chi tiêu tháng này với tháng trước.",
+            "anomalies": "Mình không thấy giao dịch nào bất thường gần đây.",
+            "subscriptions": "Mình chưa thấy khoản đăng ký định kỳ nào.",
+            None: (
+                "Mình chưa thấy dấu hiệu nào nổi bật trong chi tiêu của bạn — "
+                "tài khoản đang đi đúng nhịp."
+            ),
+        }[facet]
+        return OmniResponse(intent="insights", text=empty_msg)
+
+    facts = {
+        "intent": "insights",
+        "facet": facet,
+        "instruction": (
+            "Tóm tắt các con số trong FACTS bằng tiếng Việt tự nhiên, "
+            "ngắn gọn. Nếu FACTS có nhiều mục, chọn 2-3 điểm nổi bật nhất. "
+            "KHÔNG suy diễn nguyên nhân (lý do tiêu nhiều) — chỉ trích con "
+            "số. KHÔNG đưa lời khuyên tài chính."
+        ),
+        "month_over_month": mom,
+        "anomalies": anom,
+        "subscriptions": subs,
+    }
+
+    # Deterministic fallback — independently meaningful when the LLM is down.
+    lines: list[str] = []
+    if mom:
+        top_up = max(
+            (kv for kv in mom.items() if kv[1]["delta_pct"] > 0),
+            key=lambda kv: kv[1]["delta_pct"],
+            default=None,
+        )
+        top_down = min(
+            (kv for kv in mom.items() if kv[1]["delta_pct"] < 0),
+            key=lambda kv: kv[1]["delta_pct"],
+            default=None,
+        )
+        if top_up:
+            cat, info = top_up
+            lines.append(
+                f"Chủ đề tăng nhiều nhất: {cat} ({format_vnd(info['this'])} "
+                f"vs {format_vnd(info['last'])} tháng trước, "
+                f"+{info['delta_pct']:.0f}%)."
+            )
+        if top_down:
+            cat, info = top_down
+            lines.append(
+                f"Chủ đề giảm nhiều nhất: {cat} ({format_vnd(info['this'])} "
+                f"vs {format_vnd(info['last'])} tháng trước, "
+                f"{info['delta_pct']:.0f}%)."
+            )
+    if anom:
+        top = anom[0]
+        lines.append(
+            f"Giao dịch nổi bật: {format_vnd(top['amount'])} cho "
+            f"{top['contact_name']} — {top['reason']}."
+        )
+    if subs:
+        lines.append(
+            f"Bạn có {len(subs)} khoản trông như đăng ký định kỳ "
+            f"(ví dụ: {subs[0]['contact']} {format_vnd(subs[0]['typical_amount'])}/tháng)."
+        )
+    fallback = " ".join(lines) if lines else (
+        "Mình đã quét chi tiêu của bạn nhưng chưa có điểm nào đặc biệt để báo."
+    )
+
+    body = llm_phrase(nlu.raw_text, facts, history=history_msgs) or fallback
+    return OmniResponse(intent="insights", text=body)
 
 
 def _handle_history(

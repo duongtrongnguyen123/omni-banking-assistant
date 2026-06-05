@@ -29,6 +29,17 @@ def _ascii_fold(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HIGH: list[tuple[Intent, list[str]]] = [
+    # insights (proactive analytics) — before history so "tieu nhieu hon
+    # thang truoc" routes here, not to plain history.
+    ("insights", [
+        "nhieu hon thang truoc", "it hon thang truoc",
+        "so voi thang truoc", "so sanh thang truoc",
+        "bat thuong",  # "giao dịch nào bất thường", "có gì bất thường"
+        "co diem la",
+        "dang ky dich vu", "subscription", "thue bao hang thang",
+        "co the cat giam", "khoan nao thua",
+        "phan tich chi tieu", "phan tich tieu",
+    ]),
     # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
     # hang thang" are queries about existing patterns, not commands to make
     # a new one. Schedule keeps its imperative cues.

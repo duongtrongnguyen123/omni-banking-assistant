@@ -67,7 +67,7 @@ Return STRICT JSON only, no prose.
 
 Schema:
 {
-  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|smalltalk|unknown",
+  "intent": "transfer|balance|history|schedule|recurring|insights|reminder|add_contact|smalltalk|unknown",
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
@@ -78,7 +78,12 @@ Schema:
     "account_hint": string|null,       // digits — partial OR full account number
     "schedule_cron": string|null,      // cron expression if recurring
     "bank_name": string|null,          // e.g., "MB Bank", "Vietcombank", "VCB"
-    "alias": string|null               // pet name to save under, e.g. "anh Nam"
+    "alias": string|null,              // pet name to save under, e.g. "anh Nam"
+    "insight_facet": "spending"|"anomalies"|"subscriptions"|null
+    // Used ONLY with intent=insights:
+    //   spending      = month-over-month spending trend
+    //   anomalies     = unusual / surprising transactions
+    //   subscriptions = recurring fixed-price services (Netflix, điện-nước…)
   }
 }
 
@@ -88,6 +93,11 @@ Rules:
 - "đặt lịch / hàng tháng / mỗi tháng / mùng X" → schedule (CREATE).
 - "khoản nào định kỳ / khoản tự động / có khoản nào trả đều / liệt kê lịch
    tự động" → recurring (READ — show patterns inferred from history).
+- "tháng này tiêu nhiều hơn tháng trước không / so sánh tháng trước /
+   có gì bất thường / mình đang đăng ký dịch vụ gì" → insights, with
+   insight_facet set per the sub-question (spending / anomalies /
+   subscriptions). When the user asks a generic "phân tích chi tiêu",
+   leave insight_facet null and the orchestrator returns a rollup.
 - "nhắc nợ / nhắc trả" → reminder.
 - FOLLOW-UPS: when the current message looks like a continuation
   ("còn tháng trước?", "đổi sang Minh", "mà thôi đổi sang X", "cái nào nhiều
@@ -163,6 +173,23 @@ INPUT: "Có khoản nào tự động trả không?"
 
 INPUT: "Khoản định kỳ với mẹ"
 {"intent":"recurring","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
+
+INSIGHTS (proactive analytics — month-over-month / anomalies / subs):
+
+INPUT: "Tháng này mình tiêu nhiều hơn tháng trước không?"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"spending"}}
+
+INPUT: "So với tháng trước mình chi vào gì nhiều hơn?"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"spending"}}
+
+INPUT: "Có giao dịch nào bất thường không?"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"anomalies"}}
+
+INPUT: "Mình đang đăng ký dịch vụ gì hàng tháng?"
+{"intent":"insights","confidence":0.9,"entities":{"insight_facet":"subscriptions"}}
+
+INPUT: "Phân tích chi tiêu của mình"
+{"intent":"insights","confidence":0.85,"entities":{}}
 
 INPUT: "Lưu Nam STK 9990001234 MB Bank tên là anh Nam"
 {"intent":"add_contact","confidence":0.95,"entities":{"recipient_text":"Nam","account_hint":"9990001234","bank_name":"MB Bank","alias":"anh Nam"}}
