@@ -36,7 +36,14 @@ from app.services.metrics import (
 @pytest.fixture(scope="module", autouse=True)
 def _seed_demo_user():
     """Copy the canonical JSON seed into the conftest's isolated tmp
-    data dir so /api/chat works against the bootstrap demo user."""
+    data dir so /api/chat works against the bootstrap demo user.
+
+    Resets the cached SQLite connection after wiping ``omni.db`` —
+    otherwise an earlier test in the session may have opened a handle
+    against the pre-seed (empty) DB and ``get_store()`` would still
+    return it on the next call, leaving u_an permanently absent and
+    the chat route 500-ing on ``store.get_user("u_an")``.
+    """
     data_dir = Path(os.environ["BANKING_DATA_DIR"])
     src = Path(__file__).resolve().parent.parent / "app" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -47,6 +54,26 @@ def _seed_demo_user():
     db_file = data_dir / "omni.db"
     if db_file.exists():
         db_file.unlink()
+
+    # Drop the cached connection so the next get_connection() opens a
+    # fresh handle pointing at the recreated DB and bootstrap_if_empty
+    # actually finds an empty table set to populate from the JSON
+    # seeds we just copied.
+    try:
+        from app.db.connection import reset_connection
+        reset_connection()
+    except Exception:  # pragma: no cover — defensive
+        pass
+
+    # Drop the cached Store singleton too. Store.__init__ runs
+    # bootstrap_if_empty(); without resetting, the module-level
+    # _store global keeps the old (empty) snapshot even after we
+    # repointed the connection.
+    try:
+        import app.store as _store_mod
+        _store_mod._store = None
+    except Exception:  # pragma: no cover — defensive
+        pass
 
 
 # ---------------------------------------------------------------------------
