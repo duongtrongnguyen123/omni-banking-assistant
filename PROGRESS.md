@@ -66,7 +66,8 @@ Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 | `make reset` | Pitch-day panic button (wipes runtime DB, re-seeds, ~10s warm) |
 | GitHub Actions CI | Import sanity + smoke + NLU + frontend build on every push |
 | Frontend build | Clean tsc + vite, 218 kB JS / 68 kB gzipped |
-| Backend routes | 33+ (chat, transactions, schedules, contacts, history, suggestions, insights, recurring, exports, demo, budgets, goals, admin, metrics, ws/chat, ws/events) |
+| Backend routes | **56** across 22 prefixes (chat, transactions, schedules, contacts, history, suggestions, insights, recurring, exports, demo, budgets, goals, admin, metrics, health, atm, ws/chat, ws/events, …) |
+| Backend pytest | **354 pass / 10 xfailed** in 7.3s |
 
 ### Honest empirical results
 
