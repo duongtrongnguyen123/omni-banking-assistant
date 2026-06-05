@@ -9,8 +9,21 @@ export type Intent =
   | "set_budget"
   | "set_goal"
   | "budget_status"
+  | "atm_finder"
   | "smalltalk"
   | "unknown";
+
+export interface AtmHit {
+  id: string;
+  bank: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  hours: string;
+  // Only present on /api/atm/nearby responses.
+  distance_km?: number;
+}
 
 export interface ContactDraft {
   id: string;
@@ -193,6 +206,7 @@ export interface OmniResponse {
   schedule: Schedule | null;
   recurring_patterns: RecurringPattern[] | null;
   budget_statuses?: BudgetStatus[] | null;
+  atms?: AtmHit[] | null;
   needs_disambiguation: boolean;
   telemetry?: TelemetryPayload | null;
 }

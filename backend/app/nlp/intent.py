@@ -29,6 +29,22 @@ def _ascii_fold(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 _HIGH: list[tuple[Intent, list[str]]] = [
+    # atm_finder — location-aware ATM / branch lookup. Placed at the top
+    # of Tier-1 so "atm gần nhất" never gets misrouted to history's
+    # "gan nhat" rule below.
+    ("atm_finder", [
+        "atm gan", "atm gần", "atm o gan", "atm ở gần",
+        "cay atm", "cây atm", "may atm", "máy atm",
+        "atm nao gan", "atm nào gần", "atm gan day", "atm gần đây",
+        "tim atm", "tìm atm", "tim cay atm", "tìm cây atm",
+        "chi nhanh gan", "chi nhánh gần",
+        "phong giao dich gan", "phòng giao dịch gần",
+        "atm gan nhat", "atm gần nhất",
+        # Bank-only ATM queries — "atm vcb", "atm mb bank quanh day"
+        "atm vcb", "atm vietcom", "atm tcb", "atm techcom",
+        "atm bidv", "atm mb", "atm vpb", "atm acb", "atm agribank",
+        "atm sacom", "atm stb",
+    ]),
     # insights (proactive analytics) — before history so "tieu nhieu hon
     # thang truoc" routes here, not to plain history.
     ("insights", [

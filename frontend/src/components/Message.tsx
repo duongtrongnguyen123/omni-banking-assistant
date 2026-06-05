@@ -10,6 +10,7 @@ import { ContactDraftCard } from "./ContactDraftCard";
 import { ScheduleDraftCard } from "./ScheduleDraftCard";
 import { BudgetDraftCard, GoalDraftCard } from "./BudgetDraftCard";
 import { RecurringList } from "./RecurringList";
+import { AtmCard } from "./AtmCard";
 import { speak } from "../lib/tts";
 
 interface Props {
@@ -102,6 +103,7 @@ export const Message = ({
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
           />
         )}
+        {r?.atms && r.atms.length > 0 && <AtmCard atms={r.atms} />}
         {r?.history && <HistoryCard history={r.history} />}
         {r?.balance && <BalanceCard balance={r.balance} />}
         {r?.schedule && <ScheduleCard schedule={r.schedule} />}

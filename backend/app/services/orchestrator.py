@@ -398,6 +398,9 @@ def _dispatch_intent(
     if nlu.intent == "transfer":
         return _handle_transfer(user_id, nlu)
 
+    if nlu.intent == "atm_finder":
+        return _handle_atm_finder(user_id, nlu)
+
     if nlu.intent == "smalltalk":
         fallback = "Chào bạn! Mình là Omni — sẵn sàng giúp bạn chuyển tiền, xem số dư hay tra lịch sử."
         text = llm_phrase(
@@ -512,6 +515,41 @@ def _modify_transfer_draft(
 # ---------------------------------------------------------------------------
 # Per-intent handlers
 # ---------------------------------------------------------------------------
+
+
+def _handle_atm_finder(user_id: str, nlu: NLUResult) -> OmniResponse:
+    """ATM / branch finder.
+
+    The chat path doesn't have access to the user's coordinates — the
+    browser does. So this handler returns the full seed list (optionally
+    filtered by bank) and a static prompt; the frontend then triggers
+    ``navigator.geolocation`` and hits ``/api/atm/nearby`` to re-rank by
+    real distance.
+    """
+    from ..banking.atm import find_by_bank, load_atms  # local import to avoid cycles
+
+    bank = nlu.entities.atm_bank
+    rows = find_by_bank(bank) if bank else load_atms()
+    # Cap the chat-side preview at 5 — the frontend full list comes from
+    # the dedicated endpoint once it has coords.
+    preview = list(rows[:5])
+    if bank:
+        if rows:
+            text = (
+                f"Mình tìm thấy {len(rows)} điểm ATM/chi nhánh {bank}. "
+                "Bạn cho phép Omni xem vị trí để xếp theo khoảng cách nhé."
+            )
+        else:
+            text = (
+                f"Mình chưa có dữ liệu ATM cho ngân hàng \"{bank}\" trong demo. "
+                "Bạn thử ngân hàng khác xem sao?"
+            )
+    else:
+        text = (
+            "Omni đang gợi ý các điểm ATM trong dữ liệu mẫu. "
+            "Bạn cho phép truy cập vị trí để xem cây nào gần bạn nhất nhé."
+        )
+    return OmniResponse(intent="atm_finder", text=text, atms=preview)
 
 
 def _handle_balance(

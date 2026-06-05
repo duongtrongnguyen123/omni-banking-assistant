@@ -1,4 +1,5 @@
 import type {
+  AtmHit,
   BudgetRow,
   InsightsSummary,
   OmniResponse,
@@ -173,4 +174,22 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/goals/${draftId}/cancel`, {
       method: "POST",
     }),
+  atmsNearby: (
+    lat: number,
+    lng: number,
+    radiusKm = 2,
+    bank?: string,
+  ) => {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lng: String(lng),
+      radius_km: String(radiusKm),
+    });
+    if (bank) params.set("bank", bank);
+    return jsonFetch<AtmHit[]>(`/api/atm/nearby?${params.toString()}`);
+  },
+  atmsByBank: (bank: string) =>
+    jsonFetch<AtmHit[]>(
+      `/api/atm/by-bank/${encodeURIComponent(bank)}`,
+    ),
 };

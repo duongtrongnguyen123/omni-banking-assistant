@@ -83,7 +83,7 @@ Return STRICT JSON only, no prose.
 
 Schema:
 {
-  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|smalltalk|unknown",
+  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|atm_finder|smalltalk|unknown",
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
@@ -105,6 +105,8 @@ Rules:
 - "khoản nào định kỳ / khoản tự động / có khoản nào trả đều / liệt kê lịch
    tự động" → recurring (READ — show patterns inferred from history).
 - "nhắc nợ / nhắc trả" → reminder.
+- "ATM gần nhất / cây ATM / tìm ATM <bank>" → atm_finder; put the bank
+  name (if mentioned) in entities.atm_bank.
 - FOLLOW-UPS: when the current message looks like a continuation
   ("còn tháng trước?", "đổi sang Minh", "mà thôi đổi sang X", "cái nào nhiều
    nhất?", "vậy còn ...?"), INHERIT unmentioned fields from the previous turn
