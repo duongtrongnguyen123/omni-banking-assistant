@@ -46,6 +46,10 @@ class Store:
             raise KeyError(user_id)
         return user
 
+    def all_user_ids(self) -> list[str]:
+        rows = get_connection().execute("SELECT id FROM users ORDER BY id").fetchall()
+        return [r["id"] for r in rows]
+
     def get_user_or_none(self, user_id: str) -> Optional[User]:
         conn = get_connection()
         row = conn.execute(

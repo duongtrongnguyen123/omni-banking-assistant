@@ -31,7 +31,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional, cast
 
 import numpy as np
 
@@ -353,10 +353,13 @@ def _fit_one(rows: list[Transaction]) -> Optional[_UserModel]:
 
     # contamination=auto leans conservative; we calibrate the score
     # ourselves so the actual contamination assumption isn't load-bearing.
-    model = IsolationForest(
+    assert IsolationForest is not None  # _SKLEARN_OK gated above
+    max_samples: int = min(256, int(X.shape[0]))
+    _IF = cast(Any, IsolationForest)
+    model = _IF(
         n_estimators=80,
         contamination="auto",
-        max_samples=min(256, X.shape[0]),
+        max_samples=max_samples,
         random_state=42,
         n_jobs=1,
     )
@@ -416,7 +419,7 @@ def train_fraud_models() -> dict[str, int]:
     store = get_store()
     summary: dict[str, int] = {}
     t0 = time.perf_counter()
-    for user_id in store.users:
+    for user_id in store.all_user_ids():
         txs = store.transactions_of(user_id)
         fitted = train_user(user_id, txs)
         if fitted is not None:
@@ -481,7 +484,7 @@ def score_draft(
         category=category,
         stats=fitted.stats,
     )
-    raw = float(-fitted.model.decision_function(X)[0])
+    raw = float(-cast(Any, fitted.model).decision_function(X)[0])
     return _calibrate(raw, fitted.score_p50, fitted.score_p95)
 
 
