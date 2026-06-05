@@ -71,7 +71,7 @@ Try it: `make backend` + `make frontend` → <http://localhost:5173>.
 | GitHub Actions CI | Import sanity + smoke + NLU + frontend build on every push |
 | Frontend build | Clean tsc + vite, 218 kB JS / 68 kB gzipped |
 | Backend routes | **56** across 22 prefixes (chat, transactions, schedules, contacts, history, suggestions, insights, recurring, exports, demo, budgets, goals, admin, metrics, health, atm, ws/chat, ws/events, …) |
-| Backend pytest | **354 pass / 10 xfailed** in 7.3s |
+| Backend pytest | **386 pass / 10 xfailed** in 6.2s |
 
 ### Honest empirical results
 
