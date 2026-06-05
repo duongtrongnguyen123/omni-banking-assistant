@@ -13,6 +13,7 @@ import { SuggestionStrip } from "./components/SuggestionStrip";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
 import { ToastStack } from "./components/ToastStack";
 import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
+import { HealthStatus } from "./components/HealthStatus";
 import { DemoRecorder } from "./components/DemoRecorder";
 import { ExportMenu } from "./components/ExportMenu";
 import { PrivacyBadge } from "./components/PrivacyBadge";
@@ -763,6 +764,7 @@ export default function App() {
           <div>
             <strong>Mock user:</strong> An — số dư tài khoản chính 24.350.000đ.
           </div>
+          <HealthStatus />
         </div>
       </aside>
     </div>

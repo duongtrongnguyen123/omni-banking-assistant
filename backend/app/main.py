@@ -1,15 +1,28 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .nlp import privacy as _privacy
-from .routes import admin, banking, budgets, chat, demo, exports, insights, suggestions, ws
+from .routes import (
+    admin,
+    banking,
+    budgets,
+    chat,
+    demo,
+    exports,
+    health,
+    insights,
+    suggestions,
+    ws,
+)
+from .services import lifecycle
 
 log = logging.getLogger("omni.main")
 
 settings = get_settings()
+
 
 app = FastAPI(
     title="Omni AI Assistant — Banking NLU",
@@ -18,6 +31,7 @@ app = FastAPI(
         "Architecture layers: Chat UI · NLU · Context & Personalization · Safety · Banking."
     ),
     version="0.1.0",
+    lifespan=lifecycle.lifespan,
 )
 
 app.add_middleware(
@@ -28,6 +42,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _request_counter(request: Request, call_next):
+    """Count completed vs dropped requests for the shutdown stats line.
+
+    "Dropped" means we raised an exception that escaped the route
+    handler (the request reached the server but didn't produce a
+    response). We don't count 4xx / 5xx responses as dropped — those
+    are still completed exchanges from the operator's perspective.
+    """
+    try:
+        response = await call_next(request)
+    except Exception:
+        lifecycle.mark_request_dropped()
+        raise
+    lifecycle.mark_request_completed()
+    return response
+
+
 app.include_router(chat.router)
 app.include_router(banking.router)
 app.include_router(budgets.router)
@@ -37,128 +70,32 @@ app.include_router(demo.router)
 app.include_router(exports.router)
 app.include_router(ws.router)
 app.include_router(admin.router)
-
-
-@app.on_event("startup")
-def _backfill_embeddings() -> None:
-    """Warm the local embedder and embed any contact/transaction rows that
-    don't yet have a vector. Runs once per process start. Skipped when
-    OMNI_SKIP_EMBED_BACKFILL=1 (CI / fast restarts).
-    """
-    import os
-
-    if os.environ.get("OMNI_SKIP_EMBED_BACKFILL"):
-        return
-    if settings.offline_demo:
-        log.info("offline_demo=1 — embedding backfill skipped")
-        return
-    try:
-        from .nlp.embeddings import warmup
-        from .nlp.embedder import fill_missing_embeddings
-
-        warmup()
-        filled = fill_missing_embeddings()
-        if filled["contacts"] or filled["transactions"]:
-            log.info(
-                "Embedded %s contacts, %s transactions",
-                filled["contacts"], filled["transactions"],
-            )
-        # Train the per-user suggester for the demo user. Cheap (<100ms on
-        # 35 rows) — keeps the first /api/suggestions/recipients warm.
-        from .ml.suggester import train_for
-        from .config import get_settings
-
-        train_for(get_settings().demo_user_id)
-    except Exception as e:
-        log.warning("Embedding backfill skipped: %s", e)
-
-
-@app.on_event("startup")
-async def _start_schedule_ticker() -> None:
-    """Background coroutine: every 60s, scan schedules whose ``next_run``
-    is due and publish a ``schedule_fired`` toast for the owner.
-
-    Mock-only — we don't actually execute the transfer here (that's
-    the user's job via the confirm card). The toast is a "hey, the
-    schedule you set up is firing now" nudge. Skipped under
-    ``OMNI_DISABLE_SCHEDULE_TICK=1`` so tests don't see surprise
-    events.
-    """
-    import asyncio
-    import os
-
-    if os.environ.get("OMNI_DISABLE_SCHEDULE_TICK") == "1":
-        return
-    if settings.offline_demo:
-        log.info("offline_demo=1 — schedule ticker disabled")
-        return
-
-    interval = int(os.environ.get("OMNI_SCHEDULE_TICK_SECONDS", "60"))
-
-    async def _tick() -> None:
-        from datetime import datetime, timezone
-
-        from .services import events as _events
-        from .store import get_store
-
-        seen: set[tuple[str, str]] = set()  # (schedule_id, isoformat)
-        # The demo is single-user. When we add real auth, swap this for
-        # a ``store.all_user_ids()`` scan and the rest of the loop is
-        # unchanged.
-        demo_user = get_settings().demo_user_id
-        while True:
-            try:
-                store = get_store()
-                ref = datetime.now(timezone.utc)
-                for user_id in [demo_user]:
-                    for sched in store.schedules_of(user_id):
-                        if not sched.active:
-                            continue
-                        if sched.next_run > ref:
-                            continue
-                        key = (sched.id, sched.next_run.isoformat())
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        contact = store.get_contact(sched.contact_id)
-                        name = contact.display_name if contact else "người nhận"
-                        _events.publish_schedule_fired(
-                            user_id,
-                            recipient_name=name,
-                            amount_vnd=sched.amount,
-                        )
-            except Exception as e:  # pragma: no cover — keep ticker alive
-                log.warning("schedule tick error: %s", e)
-            await asyncio.sleep(interval)
-
-    asyncio.create_task(_tick())
+app.include_router(health.router)
 
 
 def _git_sha() -> str:
-    """Return the short HEAD SHA, or 'unknown' if git isn't available.
+    """Back-compat shim around the cached SHA in :mod:`routes.health`.
 
-    Cached at module load so calling /health stays cheap. Best-effort —
-    in a packaged build (no .git dir) we just return 'unknown' and the
-    telemetry overlay shows a dash.
+    Kept exported because external scripts (telemetry overlay, smoke
+    tests) used to import it from ``app.main`` directly.
     """
-    import subprocess
+    from .routes.health import _git_sha as _cached_sha
 
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        return out.decode("ascii").strip()
-    except Exception:
-        return "unknown"
+    return _cached_sha()
 
 
 _GIT_SHA = _git_sha()
 
 
 @app.get("/health")
-def health() -> dict:
+def health_root() -> dict:
+    """Back-compat alias for ``/health/live``.
+
+    Older monitors point at the bare ``/health`` path. We keep the
+    historical payload shape (with ``service``, ``offline_demo``, …)
+    rather than just redirecting so nothing relying on those fields
+    breaks.
+    """
     return {
         "status": "ok",
         "service": "omni-api",
@@ -166,6 +103,8 @@ def health() -> dict:
         "git_sha": _GIT_SHA,
         "offline_demo": settings.offline_demo,
         "privacy_mode": _privacy.get_mode(),
+        "uptime_seconds": round(lifecycle.uptime_seconds(), 3),
+        "pid": __import__("os").getpid(),
     }
 
 
