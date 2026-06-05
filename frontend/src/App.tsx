@@ -6,6 +6,7 @@ import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { RecentRecipients } from "./components/RecentRecipients";
 import { MicButton } from "./components/MicButton";
+import { ExportMenu } from "./components/ExportMenu";
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -204,7 +205,7 @@ export default function App() {
               <span className="online-dot" /> Trợ lý đang trực tuyến
             </div>
           </div>
-          <div className="user-pill">AN</div>
+          <ExportMenu /><div className="user-pill">AN</div>
         </header>
 
         <div className="phone__chat" ref={scrollRef}>
