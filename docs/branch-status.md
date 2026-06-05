@@ -4,7 +4,7 @@ Snapshot of which features are merged into `feat/omni-integrated` (the
 team's "what's safe to demo" branch) vs sitting on standalone branches
 waiting for hand-merge.
 
-## Merged into main / feat/omni-integrated (16 features)
+## Merged into main / feat/omni-integrated (26 features)
 
 | Feature | Branch | Status |
 |---------|--------|--------|
@@ -25,6 +25,15 @@ waiting for hand-merge.
 | Demo resilience (offline mode + telemetry + recorder + canonical JSONL) | `feat/demo-resilience` | ✅ merged |
 | Exports (CSV/HTML sao kê/tax-year JSON) | `feat/exports` | ✅ cherry-picked |
 | a11y (WCAG 2.1 AA, reduced-motion, jest-axe) | `feat/a11y` | ✅ merged |
+| Privacy mode + LLM audit (`OMNI_PRIVACY_MODE`) | `feat/privacy-mode` | ✅ merged |
+| Budgets + savings goals (4 new intents) | `feat/budgets-goals` | ✅ merged |
+| Metrics + Prometheus exposition + live dashboard | `feat/metrics` | ✅ merged |
+| Health probes + lifespan + k8s hints | `feat/deploy-readiness` | ✅ merged |
+| A/B + Thompson bandit (tree_freq wins 67.55%) | `feat/abtest-bandit` | ✅ merged |
+| ATM finder with geolocation + 15-seed | `feat/atm-finder` | ✅ merged |
+| VietQR generator + camera scan import | `feat/qr` | ✅ merged |
+| Onboarding tutorial + skills discovery | `feat/onboarding` | ✅ merged |
+| Perf bench harness + SQL composite index (500× transfer) | `feat/perf-bench` | ✅ merged (partial — kept HEAD for orchestrator) |
 
 ## Pending — needs careful hand-merge
 
@@ -42,19 +51,18 @@ and conflict with each other if auto-merged. Merge order matters:
 
 | Agent | Branch (when done) | What |
 |-------|--------------------|------|
-| Performance bench + optimization | `feat/perf-bench` | P50/P95 across endpoints on 520k tx, tune top-3 hot paths |
-| Smart receipt categorization | `feat/categorizer` | Auto-categorize tx from free-text description (TF-IDF + rules) |
-| Budget envelope + savings goals | `feat/budgets-goals` | Monthly budgets per category + goal tracker |
+| Final polish | `feat/final-polish` | ruff cleanup + Vietnamese error UX + rate limiting + admin auth |
 
 ## Quality gates
 
 `make verify` is the green-light. Currently on main:
 - 19/19 `make check` pass
-- 200/200 NLU corpus + 10/11 multi-turn integration + 14/14 Redis sessions + 8/8 exports tests
-- Backend imports clean (28 routes — `/api/audit/*` and `/api/budgets/*` pending)
-- Frontend builds clean (204 kB JS / 64 kB gzipped)
+- 354+ pytest pass / 10 xfailed in 7.3s
+- Backend imports clean (**56 routes** across 22 prefixes)
+- Frontend builds clean (**241 kB JS / 75 kB gzipped**, jsQR as separate 47 kB chunk)
 - 8 KB scenarios pass end-to-end with LLMs deliberately disabled
 - Demo canonical JSONL replays in ~5-7s at 800ms cadence
+- Verifier audit 2026-06-07: 23/26 pass, 1 Critical (session/reset 500) fixed inline
 
 ## Why we're not force-merging everything
 
