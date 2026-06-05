@@ -45,6 +45,37 @@ def _is_cancel(text: str) -> bool:
 
 # A4: temporal-reference → history period. Strip diacritics so both
 # "tháng trước" and "thang truoc" map correctly.
+def _is_worth_learning_alias(surface: str, contact: Contact) -> bool:
+    """True iff ``surface`` is a non-redundant alias worth persisting.
+
+    Skips three kinds of redundancy:
+      - already in the contact's aliases (case/diacritic-insensitive)
+      - equal to the full display name (the resolver matches that for free)
+      - every surface token already appears in the display name (the
+        existing token-prefix path handles e.g. "Minh" → "Nguyễn Văn Minh"
+        without needing a learned alias)
+
+    Vietnamese relational prefixes ("anh Tuấn" for a contact whose name
+    is just "Tuấn Văn Nam") survive these filters — exactly the case
+    where auto-learning helps most.
+    """
+    from ..context.alias import _fold
+
+    folded = _fold(surface).strip()
+    if len(folded) < 2:
+        return False
+    if any(_fold(a) == folded for a in contact.aliases):
+        return False
+    name_folded = _fold(contact.display_name)
+    if folded == name_folded:
+        return False
+    name_tokens = set(name_folded.split())
+    surface_tokens = [t for t in folded.split() if t]
+    if surface_tokens and all(t in name_tokens for t in surface_tokens):
+        return False
+    return True
+
+
 def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     if not temporal_ref:
         return "this_month"
@@ -877,6 +908,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         amount=amount,
         description=description,
         source_text=nlu.raw_text,
+        recipient_surface=nlu.entities.recipient_text,
         reference_transaction_id=reference_tx_id,
         flags=flags,
         requires_step_up=requires_step_up(flags),
@@ -1088,6 +1120,22 @@ def _execute_and_record(
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
     session.clear_draft()
+
+    # Alias auto-learn: the user just confirmed a transfer using a surface
+    # form that the resolver matched to this contact. If the surface isn't
+    # redundant (not already an alias, not a substring of the display name),
+    # persist it so next time the same phrase resolves in O(1) without any
+    # LLM or embedding lookup. This is how the 995 long-tail contacts get
+    # smarter over real usage.
+    if draft.recipient and draft.recipient_surface:
+        if _is_worth_learning_alias(draft.recipient_surface, draft.recipient):
+            try:
+                get_store().add_alias(draft.recipient.id, draft.recipient_surface)
+            except Exception:
+                # Learning is opportunistic — never fail a confirmed transfer
+                # because the alias write hit a constraint we didn't expect.
+                pass
+
     otp_note = " (đã xác minh OTP)" if otp_used else ""
     text = (
         f"Đã chuyển {format_vnd(tx.amount)} cho {draft.recipient.display_name} "  # type: ignore[union-attr]
