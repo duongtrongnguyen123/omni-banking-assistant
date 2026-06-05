@@ -1768,3 +1768,171 @@ textarea:focus-visible,
   font-size: 12.5px; color: var(--muted);
   min-height: 18px;
 }
+
+/* -------- Onboarding tutorial overlay -------- */
+.tutorial-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.tutorial-overlay__dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 17, 50, 0.42);
+  backdrop-filter: blur(1.5px);
+  pointer-events: auto;
+}
+.tutorial-overlay__spotlight {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 4px rgba(245, 130, 32, 0.85),
+    0 0 0 9999px rgba(15, 17, 50, 0.0);
+  pointer-events: none;
+  transition: top .25s, left .25s, width .25s, height .25s;
+  animation: tutorialGlow 1.4s ease-in-out infinite;
+}
+@keyframes tutorialGlow {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(245, 130, 32, 0.85); }
+  50%      { box-shadow: 0 0 0 8px rgba(245, 130, 32, 0.45); }
+}
+.tutorial-overlay__sheet {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  background: white;
+  border-radius: 18px;
+  padding: 18px 18px 16px;
+  box-shadow: 0 24px 60px rgba(15, 17, 50, 0.25);
+  pointer-events: auto;
+  animation: tutorialSlide .28s cubic-bezier(.2,.8,.25,1.02);
+}
+@keyframes tutorialSlide {
+  from { transform: translateY(28px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.tutorial-overlay__progress {
+  display: flex; gap: 6px; margin-bottom: 10px;
+}
+.tutorial-overlay__dot {
+  flex: 1; height: 4px; border-radius: 999px;
+  background: var(--line);
+  transition: background .2s;
+}
+.tutorial-overlay__dot.is-active { background: var(--orange); }
+.tutorial-overlay__dot.is-done   { background: var(--orange-soft); }
+.tutorial-overlay__title {
+  margin: 0 0 6px; font-size: 16px; font-weight: 700; color: var(--navy);
+}
+.tutorial-overlay__body {
+  margin: 0 0 14px; font-size: 13.5px; color: var(--ink); line-height: 1.5;
+}
+.tutorial-overlay__actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+}
+.tutorial-overlay__skip {
+  appearance: none; border: 0; background: transparent;
+  color: var(--muted); font-family: inherit; font-size: 13px;
+  cursor: pointer; padding: 6px 4px;
+}
+.tutorial-overlay__skip:hover { color: var(--ink); text-decoration: underline; }
+.tutorial-overlay__primary {
+  appearance: none; border: 0; background: var(--orange); color: white;
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  padding: 9px 18px; border-radius: 999px; cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.tutorial-overlay__primary:hover { background: #d96d12; }
+.tutorial-overlay__primary:active { transform: translateY(1px); }
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-overlay__sheet { animation: none; }
+  .tutorial-overlay__spotlight { animation: none; }
+}
+
+/* -------- Skill discovery card (sidebar) -------- */
+.skills-card {
+  background: white; border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px;
+}
+.skills-card__title {
+  font-weight: 700; color: var(--navy); margin-bottom: 10px;
+}
+.skills-card__tabs {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+}
+.skills-card__tab {
+  appearance: none; border: 1px solid var(--line); background: white;
+  cursor: pointer; padding: 6px 11px; border-radius: 999px;
+  font-size: 12.5px; font-family: inherit; font-weight: 600;
+  color: var(--muted);
+  transition: background .15s, color .15s, border-color .15s;
+}
+.skills-card__tab:hover { color: var(--ink); border-color: var(--orange-soft); }
+.skills-card__tab.is-active {
+  background: var(--orange); color: white; border-color: var(--orange);
+}
+.skills-card__chips {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.skills-card__chip {
+  appearance: none; border: 1px solid var(--line); background: white;
+  cursor: pointer; padding: 8px 12px; border-radius: 12px;
+  font-family: inherit; text-align: left;
+  display: flex; flex-direction: column; gap: 2px;
+  transition: background .15s, border-color .15s;
+}
+.skills-card__chip:hover { background: var(--cream); border-color: var(--orange); }
+.skills-card__chip-label {
+  font-size: 12.5px; font-weight: 600; color: var(--navy);
+}
+.skills-card__chip-example {
+  font-size: 12px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* -------- /help structured card (inside chat bubble) -------- */
+.help-card {
+  background: white; border: 1px solid var(--line);
+  border-radius: 14px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 12px;
+  max-width: 320px;
+}
+.help-card__title {
+  font-weight: 700; color: var(--navy); font-size: 14px;
+}
+.help-card__section { display: flex; flex-direction: column; gap: 6px; }
+.help-card__section-title {
+  font-size: 12.5px; font-weight: 700; color: var(--orange);
+  letter-spacing: 0.02em; text-transform: uppercase;
+}
+.help-card__items {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.help-card__chip {
+  appearance: none; border: 1px solid var(--line); background: white;
+  cursor: pointer; padding: 6px 10px; border-radius: 10px;
+  font-family: inherit; text-align: left;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.help-card__chip:hover { background: var(--cream); border-color: var(--orange); }
+.help-card__chip-label {
+  font-size: 12.5px; font-weight: 600; color: var(--navy);
+}
+.help-card__chip-example {
+  font-size: 11.5px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.help-card__shortcuts {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.help-card__shortcut {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--ink);
+}
+.help-card__shortcut kbd {
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 1px 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; color: var(--navy);
+}

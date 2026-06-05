@@ -160,11 +160,86 @@ _HELP_TEXT = (
 )
 
 
+# Structured help — same content as ``_HELP_TEXT`` but addressable by
+# the frontend ``<HelpCard />`` renderer. Each section is intent-aligned
+# so the SkillsCard sidebar widget and the /help card share one source
+# of truth (see ``frontend/src/components/SkillsCard.tsx`` /
+# ``HelpCard.tsx``). Keep ``label`` short — used as the chip text — and
+# ``example`` the actual phrasing the user types.
+_HELP_SECTIONS: list[dict] = [
+    {
+        "id": "transfer",
+        "title": "Chuyển tiền",
+        "items": [
+            {"label": "Chuyển nhanh", "example": "chuyển mẹ 2tr"},
+            {"label": "Có nội dung", "example": "gửi tiền ăn cho An 500k"},
+            {"label": "Slash command", "example": "/transfer Nam 1tr"},
+        ],
+    },
+    {
+        "id": "query",
+        "title": "Truy vấn",
+        "items": [
+            {"label": "Chi tiêu tháng", "example": "tháng trước tiêu bao nhiêu"},
+            {"label": "Top người nhận", "example": "ai nhận nhiều nhất"},
+            {"label": "Số dư", "example": "/balance"},
+        ],
+    },
+    {
+        "id": "recurring",
+        "title": "Định kỳ",
+        "items": [
+            {"label": "Đặt lịch", "example": "đặt lịch chuyển mẹ 2tr mùng 1"},
+            {"label": "Tìm khoản đều", "example": "có khoản nào trả đều"},
+        ],
+    },
+    {
+        "id": "budget",
+        "title": "Ngân sách",
+        "items": [
+            {"label": "Đặt ngân sách", "example": "đặt ngân sách ăn uống 3tr"},
+            {"label": "Còn lại", "example": "tháng này còn bao nhiêu cho ăn uống"},
+        ],
+    },
+    {
+        "id": "tools",
+        "title": "Công cụ",
+        "items": [
+            {"label": "Trợ giúp", "example": "/help"},
+            {"label": "ATM gần nhất", "example": "ATM gần nhất"},
+            {"label": "Lưu danh bạ", "example": "Lưu Nam STK 0123 MB Bank"},
+        ],
+    },
+]
+
+_HELP_SHORTCUTS: list[dict] = [
+    {"keys": "Cmd/Ctrl+K", "label": "Focus ô nhập"},
+    {"keys": "Cmd/Ctrl+/", "label": "Mở slash menu"},
+    {"keys": "Cmd/Ctrl+Enter", "label": "Gửi lại tin nhắn vừa rồi"},
+    {"keys": "Esc", "label": "Đóng popup"},
+    {"keys": "↑", "label": "Lịch sử tin nhắn"},
+    {"keys": "@", "label": "Gợi ý danh bạ"},
+]
+
+
+def help_sections_payload() -> list[dict]:
+    """Public copy of the structured help payload — used by tests and by
+    the orchestrator when composing the OmniResponse. We return a new
+    list each call so callers cannot accidentally mutate module state."""
+    sections = [dict(s, items=list(s["items"])) for s in _HELP_SECTIONS]
+    sections.append({"id": "shortcuts", "title": "Phím tắt", "shortcuts": list(_HELP_SHORTCUTS)})
+    return sections
+
+
 def _help_response() -> OmniResponse:
     """Structured help message — surfaced by the /help slash command and by
     typed help requests. Returns a smalltalk intent so the UI renders it
     without trying to attach a draft/balance/history payload."""
-    return OmniResponse(intent="smalltalk", text=_HELP_TEXT)
+    return OmniResponse(
+        intent="smalltalk",
+        text=_HELP_TEXT,
+        help_sections=help_sections_payload(),
+    )
 
 
 def _is_confirm(text: str) -> bool:
