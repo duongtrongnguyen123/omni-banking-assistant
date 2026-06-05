@@ -24,6 +24,10 @@ check:
 test-nlu:
 	cd backend && .venv/bin/python -m pytest tests/test_nlu_corpus.py -v -s
 
+# Full backend test suite — NLU corpus + multi-turn integration + sessions.
+test:
+	cd backend && .venv/bin/python -m pytest tests/ -v
+
 dev:
 	@echo "Run 'make backend' and 'make frontend' in two terminals."
 
