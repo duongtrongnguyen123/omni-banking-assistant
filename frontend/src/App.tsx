@@ -9,6 +9,8 @@ import { GoalsCard } from "./components/GoalsCard";
 import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { VoiceButton } from "./components/VoiceButton";
+import { ReceiveCard } from "./components/ReceiveCard";
+import { QrScanButton } from "./components/QrScanButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
 import { ToastStack } from "./components/ToastStack";
@@ -80,6 +82,7 @@ export default function App() {
   const [historyIdx, setHistoryIdx] = useState<number | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -560,6 +563,15 @@ export default function App() {
             </div>
           </div>
           <PrivacyBadge />
+          <button
+            type="button"
+            className="phone__receive-btn"
+            onClick={() => setReceiveOpen(true)}
+            aria-label="Mở mã QR nhận tiền"
+            title="Nhận tiền"
+          >
+            Nhận tiền
+          </button>
           {ttsSupported && (
             <button
               type="button"
@@ -664,6 +676,13 @@ export default function App() {
               onTranscript={(t) => setInput(t)}
               disabled={busy}
             />
+            <QrScanButton
+              disabled={busy}
+              onPrefill={(text) => {
+                setInput(text);
+                setTimeout(() => inputRef.current?.focus(), 0);
+              }}
+            />
             <button
               type="button"
               className="phone__contacts-btn"
@@ -740,6 +759,10 @@ export default function App() {
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onPick={pickRecipient}
+        />
+        <ReceiveCard
+          open={receiveOpen}
+          onClose={() => setReceiveOpen(false)}
         />
         {showClearConfirm && (
           <div

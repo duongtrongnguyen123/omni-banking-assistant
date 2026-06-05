@@ -16,6 +16,7 @@ from .routes import (
     health,
     insights,
     metrics,
+    qr,
     suggestions,
     ws,
 )
@@ -75,6 +76,7 @@ app.include_router(admin.router)
 app.include_router(metrics.router)
 app.include_router(health.router)
 app.include_router(atm.router)
+app.include_router(qr.router)
 
 
 @app.on_event("startup")

@@ -16,3 +16,7 @@ google-generativeai==0.8.3
 # without running a docker container.
 redis>=5.0
 fakeredis>=2.20
+# QR generation for the "Nhận tiền" modal + camera-scan transfer
+# pre-fill. ``qrcode[pil]`` pulls Pillow (already present) and a tiny
+# pure-Python QR encoder — <100KB combined.
+qrcode[pil]>=7.4
