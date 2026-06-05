@@ -7,6 +7,7 @@ import { BalanceCard } from "./BalanceCard";
 import { ScheduleCard } from "./ScheduleCard";
 import { ContactDraftCard } from "./ContactDraftCard";
 import { ScheduleDraftCard } from "./ScheduleDraftCard";
+import { RecurringList } from "./RecurringList";
 
 interface Props {
   message: ChatMessage;
@@ -17,6 +18,7 @@ interface Props {
   onCancelContact: (draftId: string) => void;
   onConfirmSchedule: (draftId: string, otp: string, sourceAccountId?: string) => void;
   onCancelSchedule: (draftId: string) => void;
+  onPrefill?: (text: string) => void;
   busy?: boolean;
   actionableDraftIds?: Set<string>;
   actionableScheduleDraftIds?: Set<string>;
@@ -31,6 +33,7 @@ export const Message = ({
   onCancelContact,
   onConfirmSchedule,
   onCancelSchedule,
+  onPrefill,
   busy,
   actionableDraftIds,
   actionableScheduleDraftIds,
@@ -48,6 +51,12 @@ export const Message = ({
     <div className="msg msg--omni">
       <OmniAvatar />
       <div className="msg__stack">
+        {r?.recurring_patterns && r.recurring_patterns.length > 0 && (
+          <RecurringList
+            patterns={r.recurring_patterns}
+            onSchedule={(text) => onPrefill?.(text)}
+          />
+        )}
         <div className="bubble bubble--omni">
           {message.pending ? <span className="typing"><i /><i /><i /></span> : message.text}
         </div>

@@ -67,6 +67,11 @@ class RecurringPattern(BaseModel):
     last_seen: datetime
     next_run: datetime          # inferred next occurrence
     confidence: float           # 0..1
+    # Resolved by the orchestrator when surfacing to the UI — kept Optional so
+    # the detector stays a pure function of (tx, ref_now) and tests don't have
+    # to plumb contact lookups through.
+    recipient_name: Optional[str] = None
+    recipient_bank: Optional[str] = None
 
 
 def _normalize(desc: str) -> str:

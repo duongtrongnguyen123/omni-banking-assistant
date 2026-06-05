@@ -3,6 +3,7 @@ export type Intent =
   | "balance"
   | "history"
   | "schedule"
+  | "recurring"
   | "reminder"
   | "add_contact"
   | "smalltalk"
@@ -106,6 +107,21 @@ export interface ScheduleDraft {
   flags: SafetyFlag[];
 }
 
+export interface RecurringPattern {
+  contact_id: string;
+  description: string;
+  typical_amount: number;
+  typical_day: number;
+  occurrence_count: number;
+  month_count: number;
+  first_seen: string;
+  last_seen: string;
+  next_run: string;
+  confidence: number;
+  recipient_name: string | null;
+  recipient_bank: string | null;
+}
+
 export interface OmniResponse {
   intent: Intent;
   text: string;
@@ -115,6 +131,7 @@ export interface OmniResponse {
   history: HistoryResult | null;
   balance: BalanceResult | null;
   schedule: Schedule | null;
+  recurring_patterns: RecurringPattern[] | null;
   needs_disambiguation: boolean;
 }
 
