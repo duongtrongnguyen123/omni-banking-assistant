@@ -49,6 +49,11 @@ def schedules(user_id: str = Depends(current_user)):
     return [s.model_dump(mode="json") for s in get_store().schedules_of(user_id)]
 
 
+@router.get("/audit")
+def audit(user_id: str = Depends(current_user), limit: int = 100):
+    return [e.model_dump(mode="json") for e in get_store().audit_of(user_id, limit)]
+
+
 def _summary(contact_id: str) -> dict:
     c = get_store().contacts.get(contact_id)
     if not c:
