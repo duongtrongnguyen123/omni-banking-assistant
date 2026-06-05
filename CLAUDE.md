@@ -90,9 +90,33 @@ top-level `Makefile`.
 | `backend/app/data/*.json` | Hand-curated 30-contact / 35-tx demo seed | Default bootstrap into `omni.db` |
 | `data/demo/*.json` | Contest-derived 1000-contact / 1888-tx subset | `BANKING_DATA_DIR=../data/demo` |
 | `generated/transactions_enriched_6m.csv` | Full 591k-row contest CSV | `scripts/load_contest_full.py` → `omni_contest.db` |
+| `data/public/czech_pkdd99/*.tsv` | Czech PKDD'99 real bank data (1.05M tx + `permanent_orders` ground truth) | `scripts/load_czech.py` → `omni_czech.db` |
+| `data/public/banksim/bs140513_032310.csv` | BankSim (594k tx with labelled fraud) | `scripts/load_banksim.py` → `omni_banksim.db` |
 | `backend/app/data/omni.db` | Runtime SQLite (gitignored) | Bootstraps from JSON on first run |
 
 Reset: `rm backend/app/data/omni.db` and restart uvicorn.
+Public dataset download: `data/public/README.md`.
+
+## Honest caveats (numbers from `docs/eval-real-data.md`)
+
+Replaces the earlier "synthetic proof" wording in pitch decks. Every
+number below is from a public real-world dataset, evaluated by scripts
+checked into `backend/scripts/`.
+
+* **Recurring detector** — F1 **0.74** (precision 0.69, recall 0.80) on
+  Czech PKDD'99 `permanent_orders` ground truth (25 real orders across
+  5 demo accounts / 2 488 tx). The 9 "false positives" are de-facto
+  monthly patterns the customer never formally registered — operationally
+  useful, not failure modes.
+* **Suggester** — Hit@1 **0.81** / Hit@3 **0.92** / Hit@5 **0.97** on
+  BankSim (50 merchants, 50 users, 1 740-row held-out test). Best
+  ablation is `tree+freq` (0.60/0.40, no rule); the VN-specific rule
+  scorer *hurts* on non-VN data — keep it locale-gated.
+* **Fraud Isolation Forest** — separates fraud (median score 0.58) from
+  legit (0.22) on BankSim labelled fraud. At threshold 0.5: recall
+  **0.75**, precision 0.14, FP-rate-on-legit 0.11 — usable as an
+  OTP step-up signal. The current `FRAUD_RISK_THRESHOLD=0.7` default is
+  mis-calibrated (recall drops to 0.13) and should be lowered.
 
 ## Key conventions (rules we've committed to)
 
@@ -124,10 +148,16 @@ Reset: `rm backend/app/data/omni.db` and restart uvicorn.
 | `backend/app/banking/recurring.py` | Month-bucket recurring-payment miner |
 | `backend/app/db/{schema.sql,bootstrap.py}` | SQLite schema + seed loader |
 | `docs/llm-vs-rule.md` | When to use what — pitch material |
-| `backend/scripts/eval_suggester.py` | Hit@K eval, time-ordered holdout |
+| `backend/scripts/eval_suggester.py` | Hit@K eval, time-ordered holdout (contest data) |
+| `backend/scripts/eval_suggester_banksim.py` | Hit@K eval on BankSim public merchants — honest non-circular number |
+| `backend/scripts/eval_recurring_czech.py` | Recurring detector P/R/F1 vs Czech PKDD'99 `permanent_orders` ground truth |
+| `backend/scripts/eval_fraud_banksim.py` | Fraud Isolation Forest P/R/F1 vs BankSim labelled fraud |
 | `backend/scripts/load_contest_full.py` | Ingest 521k contest tx into SQLite |
+| `backend/scripts/load_czech.py` | Ingest Czech PKDD'99 dataset + permanent-orders ground truth |
+| `backend/scripts/load_banksim.py` | Ingest BankSim (594k rows) preserving `fraud` labels |
 | `backend/scripts/generate_synthetic_data.py` | Pattern-rich synthetic seed |
 | `backend/scripts/smoke.py` / `demo.py` | End-to-end demo scenarios |
+| `docs/eval-real-data.md` | Public-dataset evaluation report (Czech recurring + BankSim fraud + BankSim Hit@K) |
 
 ## Intent reference
 

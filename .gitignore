@@ -24,6 +24,12 @@ frontend/dist/
 /generated/
 /generated.zip
 
+# Public reference datasets — downloaded on demand by load_czech.py /
+# load_banksim.py. Both are large (Czech ~55 MB, BankSim ~50 MB) and
+# fetchable from public URLs documented in data/public/README.md.
+/data/public/*
+!/data/public/README.md
+
 # Per-DB-file SQLite artefacts (default, contest, synthetic snapshots, demo db)
 backend/app/data/omni*.db
 backend/app/data/omni*.db-*
