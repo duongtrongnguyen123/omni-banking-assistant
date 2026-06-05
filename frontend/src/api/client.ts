@@ -1,4 +1,4 @@
-import type { OmniResponse } from "../types";
+import type { OmniResponse, RecentRecipient } from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -25,10 +25,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
-  confirm: (draftId: string, otp: string, sourceAccountId?: string) =>
+  confirm: (
+    draftId: string,
+    body: {
+      otp?: string;
+      biometric_verified?: boolean;
+      source_account_id?: string;
+    },
+  ) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
+      body: JSON.stringify({
+        otp: body.otp,
+        biometric_verified: body.biometric_verified,
+        source_account_id: body.source_account_id,
+      }),
     }),
   cancel: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {
@@ -56,4 +67,18 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
+  recentRecipients: async (max = 5): Promise<RecentRecipient[]> => {
+    const txs = await jsonFetch<
+      { id: string; created_at: string; contact: RecentRecipient["contact"] }[]
+    >("/api/transactions?limit=50");
+    const seen = new Set<string>();
+    const out: RecentRecipient[] = [];
+    for (const t of txs) {
+      if (!t.contact?.id || seen.has(t.contact.id)) continue;
+      seen.add(t.contact.id);
+      out.push({ contact: t.contact, last_at: t.created_at });
+      if (out.length >= max) break;
+    }
+    return out;
+  },
 };

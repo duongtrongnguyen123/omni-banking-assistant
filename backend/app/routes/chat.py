@@ -31,6 +31,7 @@ class SelectCandidateRequest(BaseModel):
 class ConfirmTransactionRequest(BaseModel):
     otp: str | None = None
     source_account_id: str | None = None
+    biometric_verified: bool = False
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -49,6 +50,7 @@ def confirm(
         draft_id,
         otp=req.otp if req else None,
         source_account_id=req.source_account_id if req else None,
+        biometric_verified=req.biometric_verified if req else False,
     )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
@@ -68,7 +70,12 @@ def select(
 ) -> OmniResponse:
     resp = select_candidate(user_id, draft_id, req.contact_id)
     if resp.intent == "unknown":
-        raise HTTPException(status_code=404, detail=resp.text)
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                "Phiên giao dịch vừa được làm mới. Bạn nhập lại câu chuyển tiền giúp mình nhé."
+            ),
+        )
     return resp
 
 

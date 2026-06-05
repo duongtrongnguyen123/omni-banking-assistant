@@ -37,6 +37,8 @@ export interface SafetyFlag {
   message: string;
 }
 
+export type AuthMethod = "otp" | "biometric";
+
 export interface TransactionDraft {
   id: string;
   recipient: Contact | null;
@@ -49,6 +51,8 @@ export interface TransactionDraft {
   reference_transaction_id: string | null;
   flags: SafetyFlag[];
   requires_step_up: boolean;
+  auth_required: AuthMethod[];
+  auth_completed: AuthMethod[];
 }
 
 export interface HistoryItem {
@@ -116,6 +120,17 @@ export interface OmniResponse {
   balance: BalanceResult | null;
   schedule: Schedule | null;
   needs_disambiguation: boolean;
+}
+
+export interface RecentRecipient {
+  contact: {
+    id: string;
+    display_name: string;
+    bank: string;
+    account_masked: string;
+    label: string | null;
+  };
+  last_at: string;
 }
 
 export interface ChatMessage {

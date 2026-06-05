@@ -13,6 +13,7 @@ from ..banking.service import create_schedule, get_balance, get_history, next_ru
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
 from ..models.schemas import (
+    AuditEvent,
     Contact,
     ContactDraft,
     NLUResult,
@@ -25,7 +26,7 @@ from ..nlp.amount import format_vnd
 from ..nlp.entities import normalize_alias
 from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
-from ..safety.rules import evaluate, is_blocked, requires_step_up
+from ..safety.rules import auth_policy, evaluate, is_blocked, requires_step_up
 from ..store import get_store, new_id, now
 
 _CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
@@ -39,6 +40,37 @@ def _is_confirm(text: str) -> bool:
 
 def _is_cancel(text: str) -> bool:
     return bool(_CANCEL_RE.search(text.strip().lower()))
+
+
+def _record_audit(
+    user_id: str,
+    *,
+    message: str = "",
+    nlu: NLUResult | None = None,
+    draft: TransactionDraft | None = None,
+    decision: str,
+    nlu_source: str = "rule",
+) -> None:
+    store = get_store()
+    store.add_audit_event(
+        AuditEvent(
+            id=new_id("ae"),
+            created_at=now(),
+            user_id=user_id,
+            message=message or (nlu.raw_text if nlu else ""),
+            nlu_source=nlu_source if nlu_source in {"rule", "llm"} else "unknown",
+            intent=nlu.intent if nlu else (draft.source_text and "transfer") or "unknown",
+            entities=nlu.entities.model_dump() if nlu else {},
+            resolved_recipient=(
+                draft.recipient.display_name if draft and draft.recipient else None
+            ),
+            selected_account=draft.source_account_id if draft else None,
+            safety_flags=[f.code for f in draft.flags] if draft else [],
+            auth_required=list(draft.auth_required) if draft else [],
+            auth_completed=list(draft.auth_completed) if draft else [],
+            decision=decision,
+        )
+    )
 
 
 # A4: temporal-reference → history period. Strip diacritics so both
@@ -239,6 +271,10 @@ def _modify_transfer_draft(
         account=account,
     )
     draft.requires_step_up = requires_step_up(draft.flags)
+    draft.auth_required = auth_policy(draft.flags)
+    draft.auth_completed = [
+        a for a in draft.auth_completed if a in draft.auth_required
+    ]
 
     session_for(user_id).set_draft(draft)
     return OmniResponse(
@@ -637,6 +673,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         transactions=txs,
         account=account,
     )
+    required_auth = auth_policy(flags)
 
     draft = TransactionDraft(
         id=new_id("d"),
@@ -650,10 +687,17 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         reference_transaction_id=reference_tx_id,
         flags=flags,
         requires_step_up=requires_step_up(flags),
+        auth_required=required_auth,
     )
 
     session = session_for(user_id)
     session.set_draft(draft)
+    _record_audit(
+        user_id,
+        nlu=nlu,
+        draft=draft,
+        decision="blocked" if is_blocked(flags) else "draft_created",
+    )
 
     text = _compose_transfer_text(draft, referenced_tx)
     return OmniResponse(
@@ -680,6 +724,10 @@ def _try_continue_draft(
 
     if re.fullmatch(r"\d{6}", text.strip()):
         return confirm_draft(user_id, draft.id, otp=text.strip())
+
+    folded = normalize_alias(text)
+    if "sinh trac" in folded or "biometric" in folded or "khuon mat" in folded:
+        return confirm_draft(user_id, draft.id, biometric_verified=True)
 
     # "Chọn Trần Hoàng Minh" / "Trần Hoàng Minh"
     if draft.recipient is None and draft.candidates:
@@ -760,6 +808,7 @@ def confirm_draft(
     draft_id: str,
     otp: str | None = None,
     source_account_id: str | None = None,
+    biometric_verified: bool = False,
 ) -> OmniResponse:
     session = session_for(user_id)
     draft = session.current_draft
@@ -791,46 +840,68 @@ def confirm_draft(
     )
     draft.flags = fresh_flags
     draft.requires_step_up = requires_step_up(fresh_flags)
+    draft.auth_required = auth_policy(fresh_flags)
+    draft.auth_completed = [
+        a for a in draft.auth_completed if a in draft.auth_required
+    ]
 
     if is_blocked(draft.flags):
         msg = " ".join(f.message for f in draft.flags if f.severity == "block")
+        _record_audit(user_id, message="Xac nhan giao dich", draft=draft, decision="blocked")
         session.append("user", "Xác nhận giao dịch")
         session.append("omni", msg)
         return OmniResponse(intent="transfer", text=msg, draft=draft)
 
     if draft.recipient is None or draft.amount is None:
         text = "Giao dịch còn thiếu thông tin."
+        _record_audit(user_id, message="Xac nhan giao dich", draft=draft, decision="blocked")
         session.append("user", "Xác nhận giao dịch")
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    # MVP step-up auth: every transfer must pass an OTP check before execution.
-    # Two ways to provide the OTP:
-    #   1) UI card sends it via the confirm endpoint body (`otp` param here).
-    #   2) User types the digits in chat — handle_message catches that and
-    #      re-routes to this function with `otp` filled in.
-    if otp is None:
-        # Mark the draft as awaiting OTP so handle_message can route the
-        # next digit-only chat message back here.
-        draft.awaiting_otp = True
+    if biometric_verified and "biometric" in draft.auth_required:
+        if "biometric" not in draft.auth_completed:
+            draft.auth_completed.append("biometric")
         session.set_draft(draft)
+        if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is None:
+            text = "Sinh trắc học đã xác minh. Vui lòng nhập OTP để hoàn tất. Mã demo: 123456."
+            _record_audit(user_id, message="Xac minh sinh trac hoc", draft=draft, decision="auth_partial")
+            session.append("user", "Xác minh sinh trắc học")
+            session.append("omni", text)
+            return OmniResponse(intent="transfer", text=text, draft=draft)
+
+    if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is None:
         text = "Vui lòng nhập OTP để xác minh giao dịch. Mã demo: 123456."
+        if "biometric" in draft.auth_required:
+            text = "Giao dịch rủi ro cần OTP và sinh trắc học. Vui lòng nhập OTP trước. Mã demo: 123456."
+        _record_audit(user_id, message="Xac nhan giao dich", draft=draft, decision="auth_required")
         session.append("user", "Xác nhận giao dịch")
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    if otp.strip() != "123456":
+    if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp and otp.strip() != "123456":
         text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
+        _record_audit(user_id, message="Xac minh OTP", draft=draft, decision="auth_failed")
         session.append("user", "Xác minh OTP")
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    return _execute_and_record(user_id, draft, otp_used=True)
+    if "otp" in draft.auth_required and otp and "otp" not in draft.auth_completed:
+        draft.auth_completed.append("otp")
 
+    missing_auth = [
+        method for method in draft.auth_required if method not in draft.auth_completed
+    ]
+    if missing_auth:
+        text = "Còn thiếu xác thực: " + ", ".join(missing_auth) + "."
+        if "biometric" in missing_auth:
+            text = "Còn thiếu xác minh sinh trắc học. Bạn bấm mock biometric rồi gửi lại xác nhận nhé."
+        session.set_draft(draft)
+        _record_audit(user_id, message="Xac minh giao dich", draft=draft, decision="auth_partial")
+        session.append("user", "Xác minh giao dịch")
+        session.append("omni", text)
+        return OmniResponse(intent="transfer", text=text, draft=draft)
 
-def _execute_and_record(
-    user_id: str, draft: TransactionDraft, *, otp_used: bool
-) -> OmniResponse:
     from ..banking.service import execute_transfer
 
     session = session_for(user_id)
@@ -844,9 +915,12 @@ def _execute_and_record(
         )
     except ValueError as e:
         text = f"Giao dịch thất bại: {e}"
+        _record_audit(user_id, message="Xac nhan giao dich", draft=draft, decision="execute_failed")
+        session.append("user", "Xác nhận giao dịch")
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
+    _record_audit(user_id, message="Xac nhan giao dich", draft=draft, decision="executed")
     session.clear_draft()
     otp_note = " (đã xác minh OTP)" if otp_used else ""
     text = (
@@ -875,6 +949,10 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
 
     chosen = next((c for c in draft.candidates if c.id == contact_id), None)
     if chosen is None:
+        candidate = get_store().contacts.get(contact_id)
+        if candidate and candidate.owner_id == user_id:
+            chosen = candidate
+    if chosen is None:
         return OmniResponse(intent="transfer", text="Người nhận chưa khớp danh bạ.", draft=draft)
 
     store = get_store()
@@ -896,6 +974,10 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
     draft.candidates = []
     draft.flags = flags
     draft.requires_step_up = requires_step_up(flags)
+    draft.auth_required = auth_policy(flags)
+    draft.auth_completed = [
+        a for a in draft.auth_completed if a in draft.auth_required
+    ]
     session.set_draft(draft)
 
     text = _compose_transfer_text(draft, None)
