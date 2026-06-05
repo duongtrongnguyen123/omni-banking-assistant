@@ -47,6 +47,15 @@ We also explore three things beyond the slide brief:
 | + | ML suggester | sklearn RandomForest + rule scorer + freq prior | `backend/app/ml/suggester.py` |
 | + | Embeddings | fastembed (local ONNX, multilingual MiniLM 384-d) | `backend/app/nlp/embeddings.py` |
 | + | Recurring detector | month-bucket pattern miner over history | `backend/app/banking/recurring.py` |
+| + | Insights | MoM deltas, per-recipient z/MAD anomaly, subscription-shaped tx | `backend/app/ml/insights.py` |
+| + | Amount predictor | median-from-history fill when user omits amount | `backend/app/ml/amount_predictor.py` |
+| + | Voice input | Web Speech (vi-VN), local browser-side, no cloud STT | `frontend/src/components/VoiceButton.tsx` |
+| + | TTS replies | Browser speechSynthesis (vi-VN), opt-in toggle | `frontend/src/lib/tts.ts` |
+| + | Recurring UI | Structured pattern card + "Đặt lịch tự động" prefill | `frontend/src/components/RecurringList.tsx` |
+| + | Insights UI | Sidebar card: MoM / anomalies / subscriptions | `frontend/src/components/InsightsCard.tsx` |
+| + | Suggestion strip | Top-5 next-recipient chips above input | `frontend/src/components/SuggestionStrip.tsx` |
+| + | Success animation | Card flip + confetti burst on confirmed transfer | `frontend/src/components/TransactionCard.tsx` |
+| + | Repeat-last CTA | One-tap "Lặp lại lần trước" after first transfer | `frontend/src/components/RepeatLastCTA.tsx` |
 
 The orchestrator (`backend/app/services/orchestrator.py:handle_message`)
 threads everything together: continuation paths (xác nhận / huỷ / OTP) →

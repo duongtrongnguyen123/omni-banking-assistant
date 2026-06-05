@@ -21,6 +21,14 @@ tác" một số tiền hay quyết định một giao dịch có an toàn hay k
 | **Follow-up understanding** ("Đổi sang 3 triệu", "Còn tháng trước?") | LLM với conversation history | Rule không thể infer "field thừa kế từ turn trước". |
 | **Viết câu trả lời cho history/balance/smalltalk** | LLM (`nlp/llm.py:llm_phrase`) | Cần giọng tự nhiên, biến tấu theo cách user hỏi. Cấm bằng prompt: "chỉ dùng số trong FACTS, không bịa". |
 | **Viết câu trả lời cho intent=unknown** | Rule (static fallback) | Không có FACTS để LLM dựa vào — sẽ bịa. Đã có bằng chứng (audit C8). |
+| **Mine recurring patterns** (month-buckets, ≥2 months, ≤±10% amount jitter) | Rule (`banking/recurring.py:detect_recurring`) | Cần deterministic và explainable — user hỏi "tại sao đây là định kỳ?" thì code chỉ ra được tháng-nào-có, lệch bao nhiêu. |
+| **MoM spend delta + per-recipient anomaly (MAD/z)** | Rule (`ml/insights.py`) | Statistical, không cần model. MAD chống outlier — không cho 1 lần bất thường làm "lệch" baseline. |
+| **Subscription detection** (amount-bucketed, 20–40 day cadence, ±10% jitter) | Rule (`ml/insights.py:subscriptions`) | Cùng lý do — pattern-mine, không cần model. |
+| **Amount predictor khi user bỏ trống số** (median của 3 lần gần nhất với cùng recipient) | Rule (`ml/amount_predictor.py:predict_amount`) | Phải hiển thị "vì sao đoán số này" — chip "(theo mức thường lệ)". LLM sẽ đoán không kiểm chứng được. |
+| **Next-recipient ranking cho Danh bạ picker** | sklearn RandomForest + rule scorer + freq prior, **không phải LLM** (`ml/suggester.py`) | Cần học pattern (decade-of-month, DOW, recency) một cách reproducible. Trên contest data uniform thì model = baseline; trên data có pattern thật model học được — kiểm chứng bằng `docs/eval.md`, không phụ thuộc LLM. |
+| **Fraud anomaly score** (Isolation Forest per-user) | Rule + sklearn, **không phải LLM** (`safety/fraud_model.py`) | An toàn precision/recall đo được. LLM không cho confidence score reproducible. |
+| **Vector RAG cho fuzzy contact lookup** ("anh đồng nghiệp marketing") | Rule (fastembed local + cosine) | Phải chạy được offline. LLM embedding API tốn tiền + bị rate-limit. Multi-lingual MiniLM 384-d đủ giàu cho Vietnamese. |
+| **Lexical history search** ("ăn uống tháng trước") | Rule (token-overlap + BM25-lite) | Backup khi vector không có hits. Cùng lý do offline-first. |
 
 ## Pipeline visualisation
 
