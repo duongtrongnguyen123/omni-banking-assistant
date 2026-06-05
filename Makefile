@@ -1,4 +1,4 @@
-.PHONY: install backend frontend smoke test-nlu dev clean
+.PHONY: install backend frontend smoke check test-nlu dev clean
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
@@ -12,6 +12,11 @@ frontend:
 
 smoke:
 	cd backend && .venv/bin/python scripts/smoke.py
+
+# Pre-demo green-light: exits non-zero if any KB scenario, endpoint, or
+# safety contract would break in front of judges. Runs in ~5s.
+check:
+	cd backend && .venv/bin/python scripts/check.py
 
 # Adversarial NLU corpus — exercises the rule-based fallback that runs
 # when Groq/Gemini are rate-limited. See backend/tests/test_nlu_corpus.py.
