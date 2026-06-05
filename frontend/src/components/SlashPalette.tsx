@@ -150,7 +150,12 @@ export const SlashPalette = ({
   if (!open) return null;
 
   return (
-    <div className="slash-palette" role="listbox" aria-label="Slash commands">
+    <div
+      className="slash-palette"
+      id="omni-slash-palette"
+      role="listbox"
+      aria-label="Danh sách lệnh nhanh"
+    >
       <div className="slash-palette__title">Lệnh nhanh</div>
       {filtered.length === 0 && (
         <div className="slash-palette__empty">Không có lệnh phù hợp.</div>

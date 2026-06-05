@@ -1,10 +1,18 @@
 export const OmniAvatar = ({ size = 36 }: { size?: number }) => (
-  <div
-    className="omni-avatar"
-    style={{ width: size, height: size }}
-    aria-label="Omni"
-  >
-    <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden>
+  <div className="omni-avatar" style={{ width: size, height: size }}>
+    {/*
+      The wrapper <div> has no implicit role, so an aria-label on it
+      is prohibited by axe (aria-prohibited-attr). Move the accessible
+      name onto the <svg> with role="img" instead — that is the element
+      assistive tech announces.
+    */}
+    <svg
+      viewBox="0 0 64 64"
+      width={size}
+      height={size}
+      role="img"
+      aria-label="Trợ lý Omni"
+    >
       <circle cx="32" cy="32" r="30" fill="#221F4B" />
       <circle cx="32" cy="36" r="22" fill="#221F4B" />
       <circle cx="22" cy="28" r="9" fill="#FFF6E9" stroke="#F58220" strokeWidth="2" />
