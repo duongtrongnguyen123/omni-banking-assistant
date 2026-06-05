@@ -126,7 +126,18 @@ def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
     with _drafts_lock:
         return _goal_drafts.get(user_id)
 
-_CONFIRM_RE = re.compile(r"^(xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet|lưu|luu)\b|^xác nhận", re.IGNORECASE)
+_CONFIRM_RE = re.compile(
+    # Plain confirmation tokens — must occur at message start.
+    r"^(?:xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet)\b"
+    r"|^xác nhận"
+    # "lưu" / "luu" alone OR followed by a confirming particle. CRITICAL:
+    # bare "lưu <Name>" is the add-contact verb, NOT a confirm. So we
+    # only treat it as confirm when it stands alone or pairs with a
+    # continuation cue like "lại / đi / giúp / nha / nhé / cho".
+    r"|^(?:lưu|luu)\s*[!.?]?\s*$"
+    r"|^(?:lưu|luu)\s+(?:lại|lai|đi|di|giúp|giup|cho|nha|nhe|nhé)\b",
+    re.IGNORECASE,
+)
 _CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
 _HELP_RE = re.compile(r"^\s*(/help|help|trợ giúp|tro giup|hướng dẫn|huong dan|menu)\s*$", re.IGNORECASE)
