@@ -1,0 +1,114 @@
+# Kubernetes deployment hints for the Omni backend.
+#
+# NOTE: this file is *documentation* — it is not applied automatically
+# anywhere in the repo. The point is to show an operator how to wire
+# the three probe endpoints we expose (/health/live, /health/ready,
+# /health/version) and how to give the FastAPI lifespan handler enough
+# time to drain in-flight requests on rollout.
+#
+# Apply with:
+#   kubectl apply -f docs/deploy/k8s-hints.yaml
+# after replacing <REGISTRY>/<TAG>.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omni-api
+  labels:
+    app: omni-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: omni-api
+  template:
+    metadata:
+      labels:
+        app: omni-api
+    spec:
+      # 30s matches the default that the FastAPI lifespan shutdown hook
+      # in app/services/lifecycle.py is comfortable draining within —
+      # event-bus flush + Redis close + final stats log all complete in
+      # well under 5s, but we leave headroom for slow WebSocket
+      # disconnects.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: <REGISTRY>/omni-api:<TAG>
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            # The probes inspect these to know what to require:
+            #   OMNI_SESSION_BACKEND=redis  → adds Redis ping to /ready
+            #   OMNI_SKIP_EMBED_BACKFILL=1  → treats embedder as ready
+            #   OMNI_HEALTH_ALLOW_UNTRAINED=1 → relaxes suggester gate
+            - name: OMNI_SESSION_BACKEND
+              value: "redis"
+            - name: OMNI_REDIS_URL
+              value: "redis://omni-redis:6379/0"
+          livenessProbe:
+            # Liveness — process is alive. Always 200 unless the
+            # asyncio loop is wedged. Failing this restarts the pod.
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            # Readiness — system can take traffic. Checks SQLite,
+            # suggester, embedder warm-up, Redis ping. Returns 503
+            # with a per-check breakdown when any gate fails; the
+            # pod is then pulled from the Service's endpoint list
+            # until the gate clears.
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+            successThreshold: 1
+          # Startup probe gives the embedder up to 120s to download
+          # the fastembed ONNX file on first boot. After it succeeds
+          # once, the readiness probe takes over.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24  # 24 * 5s = 120s
+          lifecycle:
+            preStop:
+              # Give the kube-proxy iptables update a couple of seconds
+              # to propagate before FastAPI starts refusing new
+              # connections. Without this, in-flight requests would race
+              # the SIGTERM and we'd undercount completed/dropped in
+              # the lifecycle shutdown log line.
+              exec:
+                command: ["sh", "-c", "sleep 3"]
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omni-api
+spec:
+  selector:
+    app: omni-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
