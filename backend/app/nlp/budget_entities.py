@@ -158,31 +158,60 @@ _GOAL_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Inverted Vietnamese ordering — "tiết kiệm 50 triệu cho Tết 2027",
+# "tiết kiệm 30 triệu mua xe". The name follows the amount + a purpose
+# preposition. Stops at end-of-clause punctuation.
+_GOAL_NAME_AFTER_AMOUNT_RE = re.compile(
+    r"(?:mục\s+tiêu|muc\s+tieu|tiết\s+kiệm|tiet\s+kiem|savings?|goal)"
+    r"[^.\n?!]{1,30}?"
+    r"\d[\d.,]*\s*(?:tr|trieu|triệu|ty|tỷ|k|nghin|nghìn|đ|d|vnd)?\s*"
+    r"(?:cho|de|để|mua|tới|toi|cho việc|cho viec)\s+"
+    r"(?P<name>[^,.\n?!]+?)\s*(?:$|[,.?!\n])",
+    re.IGNORECASE,
+)
+
 
 def extract_goal_name(text: str) -> Optional[str]:
     """Try to pull a savings-goal name out of the message.
 
-    Strategy: between the goal anchor word and the first digit, anything
-    short and noun-y is the name. Falls back to None when we can't tell.
+    Strategy:
+      1. Between the goal anchor word and the first digit ("mục tiêu Tết
+         50tr") — the most common Vietnamese ordering.
+      2. After the amount when it follows the anchor + a purpose
+         preposition ("tiết kiệm 50 triệu cho Tết 2027" / "30 triệu
+         mua xe"). This second pattern is what most users actually
+         type — quote / receipt style with the amount in the middle.
+
+    Both candidates are tried; if the first yields only filler ("tiết
+    kiệm" / "mục tiêu" with nothing distinctive), we fall through to
+    the second so "tiết kiệm 50 triệu cho Tết 2027" doesn't get stuck
+    on the pre-amount sweep.
     """
-    m = _GOAL_NAME_RE.search(text)
-    if not m:
-        return None
-    name = m.group("name").strip(" \t,.:;-")
-    # Strip leading filler / anchor words so "mục tiêu tiết kiệm Tết
-    # 50tr" extracts "Tết", not "tiết kiệm Tết".
-    name = re.sub(
-        r"^(?:cho|để|de|là|la|cua|của|một|mot|"
-        r"tiết\s+kiệm|tiet\s+kiem|savings?|goal|mục\s+tiêu|muc\s+tieu)\s+",
-        "",
-        name,
-        flags=re.IGNORECASE,
-    )
-    if _fold(name) in {"tiet kiem", "savings", "goal", "muc tieu"}:
-        return None
-    if not name:
-        return None
-    return name
+
+    def _clean(raw: str) -> Optional[str]:
+        n = raw.strip(" \t,.:;-")
+        # Strip leading filler / anchor words so "mục tiêu tiết kiệm Tết
+        # 50tr" extracts "Tết", not "tiết kiệm Tết".
+        n = re.sub(
+            r"^(?:cho|để|de|là|la|cua|của|một|mot|việc|viec|"
+            r"tiết\s+kiệm|tiet\s+kiem|savings?|goal|mục\s+tiêu|muc\s+tieu)\s+",
+            "",
+            n,
+            flags=re.IGNORECASE,
+        )
+        n = n.strip(" \t,.:;-")
+        if not n or _fold(n) in {"tiet kiem", "savings", "goal", "muc tieu"}:
+            return None
+        return n
+
+    for regex in (_GOAL_NAME_RE, _GOAL_NAME_AFTER_AMOUNT_RE):
+        m = regex.search(text)
+        if not m:
+            continue
+        cleaned = _clean(m.group("name"))
+        if cleaned:
+            return cleaned
+    return None
 
 
 __all__ = [
