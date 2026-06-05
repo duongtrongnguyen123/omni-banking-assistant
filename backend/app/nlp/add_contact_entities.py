@@ -85,7 +85,7 @@ _ACCOUNT_MARKER_RE = re.compile(
 )
 
 
-def augment(entities: "ExtractedEntities", text: str) -> None:
+def augment(entities: ExtractedEntities, text: str) -> None:
     """Mutate ``entities`` in place with add_contact-specific fields.
 
     Only fills blanks — never overwrites a value the upstream extractor

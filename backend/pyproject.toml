@@ -1,0 +1,47 @@
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+extend-exclude = [
+    ".venv",
+    "app/data",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Strict-ish defaults: pycodestyle + pyflakes + import sorting + bugbear +
+# comprehensions + simplify + pyupgrade. We intentionally skip ANN/D (no
+# docstring/typing zealotry) and N (PEP8 naming) so legacy variable names
+# stay put.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "SIM", # simplify
+    "UP",  # pyupgrade
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "E501",   # line-too-long — handled by formatter / wrapped strings
+    "B008",   # FastAPI Depends() in defaults is idiomatic
+    "B904",   # raise ... from ... — pre-existing style
+    "SIM108", # ternary vs if/else — readability call
+    "SIM117", # nested with — readability call
+    "UP007",  # X | Y vs Optional[X] — keep stdlib-Optional in models
+    "UP035",  # typing.X is deprecated — keep py3.9 compat
+    "UP045",  # X | None vs Optional[X] — same reason as UP007
+    "UP006",  # builtin generics — keep py3.9 compat
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E402", "F401", "B007", "SIM", "UP", "C4", "B"]
+"tests/*" = ["B011", "F401", "F811", "E402", "SIM", "UP"]
+"app/__init__.py" = ["F401"]
+"app/data/*" = ["ALL"]
+# Orchestrator interleaves module-level imports with ContextVar declarations
+# by design (the helpers need to be importable before downstream imports
+# of services.orchestrator land). Restructuring is out of scope for the
+# polish pass — and would conflict with the 24-feature merge fan-in.
+"app/services/orchestrator.py" = ["E402"]

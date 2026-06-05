@@ -22,7 +22,7 @@ _telemetry: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
 # (which is gated on ``?dev=1``) so the Prometheus counters get the NLU
 # source label every request, not just dev-mode ones.
 _metric_labels: contextvars.ContextVar[dict] = contextvars.ContextVar(
-    "omni_metric_labels", default={}
+    "omni_metric_labels", default={}  # noqa: B039 — read-only sentinel; .set() replaces wholesale
 )
 
 
@@ -73,6 +73,7 @@ from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
 from ..safety.rules import evaluate, is_blocked, requires_step_up
 from ..store import get_store, new_id, now
+
 # Insights chat handler — lives in a sibling module so the dispatch site
 # here is the only thing that needs touching. Keeps the long handler body
 # out of the way of in-flight merges to this file.
@@ -327,7 +328,7 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
 
 
 def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
-    t0 = time.perf_counter()
+    t0 = time.perf_counter()  # noqa: F841 — kept for ad-hoc latency probes
     text = text.strip()
     session = session_for(user_id)
     # Snapshot history *before* we append the current turn so the LLM
@@ -417,7 +418,7 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         bucket["intent_confidence"] = nlu.confidence
     # Always-on metric labels — used by handle_message's Prometheus
     # exposition path even when the dev-only ``_telemetry`` bucket is None.
-    try:
+    try:  # noqa: SIM105 — explicit try/except keeps the failure site obvious
         _metric_labels.set({"nlu_source": nlu.source})
     except Exception:
         pass

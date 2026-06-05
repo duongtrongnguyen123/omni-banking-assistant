@@ -23,7 +23,6 @@ from ..models.schemas import (
 )
 from ..nlp.amount import format_vnd
 
-
 # Global fallback: only triggers when we don't have enough per-recipient
 # history to compute a meaningful baseline.
 ANOMALY_MULTIPLIER = 10

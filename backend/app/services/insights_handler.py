@@ -23,7 +23,6 @@ from typing import Optional
 from ..models.schemas import NLUResult, OmniResponse
 from ..nlp.amount import format_vnd
 
-
 _ASK_ANOMALY = (
     "bất thường", "bat thuong", "khả nghi", "kha nghi",
     "có gì lạ", "co gi la", "điểm lạ", "diem la",

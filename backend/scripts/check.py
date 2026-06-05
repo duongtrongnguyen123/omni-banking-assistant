@@ -190,6 +190,48 @@ def check_safety_contract() -> None:
         fail("SQL-injection input handled", str(e))
 
 
+def check_error_ux() -> None:
+    """Verify the pre-pitch error UX hardening still behaves as documented:
+
+    * POST /api/chat with an empty body returns 400 (not 500 / 422).
+    * POST /api/chat with a valid transfer scenario returns within 3s.
+    """
+    section("Error UX + latency")
+    import time as _time
+
+    from fastapi.testclient import TestClient
+
+    from app.context.session import session_for
+    from app.main import app
+    from app.routes._ratelimit import reset as _rate_reset
+
+    client = TestClient(app)
+
+    # 1. Empty body — the custom validation handler should turn pydantic's
+    # 422 into a 400 with a Vietnamese detail string.
+    _rate_reset()
+    r = client.post("/api/chat", json={})
+    if r.status_code == 400:
+        ok("/api/chat empty body → 400", r.json().get("detail", "")[:40])
+    else:
+        fail("/api/chat empty body → 400", f"got {r.status_code}: {r.text[:120]}")
+
+    # 2. Transfer scenario should return in well under 3s. We don't want a
+    # judge-blocking timeout if the LLM is slow — the rule fallback is
+    # forced on by check_scenarios() above (env vars are cleared there).
+    _rate_reset()
+    session_for("u_an").clear_draft()
+    t0 = _time.perf_counter()
+    r = client.post("/api/chat", json={"message": "Chuyển cho mẹ 2 triệu"})
+    elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+    if r.status_code != 200:
+        fail("/api/chat transfer scenario", f"status {r.status_code}")
+    elif elapsed_ms > 3000:
+        fail("/api/chat transfer < 3s", f"took {elapsed_ms:.0f}ms")
+    else:
+        ok("/api/chat transfer < 3s", f"{elapsed_ms:.0f}ms")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -207,6 +249,7 @@ def main() -> int:
     if not quick:
         check_scenarios()
         check_safety_contract()
+        check_error_ux()
 
     print()
     if _failures:

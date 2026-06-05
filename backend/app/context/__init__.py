@@ -1,6 +1,6 @@
 from .alias import resolve_recipient
+from .session import ConversationMemory, session_for
 from .temporal import resolve_temporal_reference
-from .session import session_for, ConversationMemory
 
 __all__ = [
     "resolve_recipient",

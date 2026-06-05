@@ -16,6 +16,7 @@ functional, toasts just stop appearing until the client reconnects.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -84,7 +85,5 @@ async def ws_events(ws: WebSocket) -> None:
         pass
     finally:
         drain_task.cancel()
-        try:
+        with contextlib.suppress(Exception):
             await drain_task
-        except Exception:
-            pass

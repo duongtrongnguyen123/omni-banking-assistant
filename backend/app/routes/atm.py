@@ -35,9 +35,8 @@ def nearby(
 @router.get("/by-bank/{bank}")
 def by_bank(bank: str) -> list[dict]:
     hits = find_by_bank(bank)
-    if not hits:
-        # Empty list is a perfectly valid answer; only 404 when the path
-        # parameter is obviously empty / whitespace.
-        if not bank.strip():
-            raise HTTPException(status_code=400, detail="Tên ngân hàng trống")
+    # Empty list is a perfectly valid answer; only 400 when the path
+    # parameter is obviously empty / whitespace.
+    if not hits and not bank.strip():
+        raise HTTPException(status_code=400, detail="Tên ngân hàng trống")
     return list(hits)

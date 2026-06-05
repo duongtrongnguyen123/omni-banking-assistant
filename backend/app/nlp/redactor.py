@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 # ---------------------------------------------------------------------------
 # Patterns
@@ -162,7 +162,7 @@ _NAME_STOPWORDS = frozenset(
         "Tháng", "Thang", "Tuần", "Tuan", "Ngày", "Ngay",
         "MB", "TP", "VND", "VCB", "BIDV", "ACB", "SHB", "TCB", "HD",
         "Vietcombank", "Vietinbank", "Techcombank", "Sacombank",
-        "Agribank", "BIDV", "Citibank",
+        "Agribank", "Citibank",
         "Hà", "Ha", "Sài", "Sai", "Đà", "Da", "Nha", "Quận", "Quan",
     }
 )
@@ -185,9 +185,7 @@ def _is_real_name(span: str) -> bool:
     tokens = span.split()
     if any(surn in folded.split() for surn in _VIETNAMESE_SURNAMES):
         return True
-    if len(tokens) >= 2 and tokens[0] not in _NAME_STOPWORDS:
-        return True
-    return False
+    return len(tokens) >= 2 and tokens[0] not in _NAME_STOPWORDS
 
 
 # ---------------------------------------------------------------------------

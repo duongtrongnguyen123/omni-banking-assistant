@@ -42,7 +42,6 @@ from pydantic import BaseModel
 
 from ..models.schemas import Transaction
 
-
 # Single-token chat clutter from the simulated dataset. Anything in this set
 # (after lowercase + strip) is dropped before pattern detection runs.
 _NOISE_DESCRIPTIONS: frozenset[str] = frozenset({

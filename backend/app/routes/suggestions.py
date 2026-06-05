@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from ..ml.suggester import suggest, train_for
+from ..ml.suggester import train_for
 from ..services.suggester import suggest_for
 from .deps import current_user
 

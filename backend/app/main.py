@@ -1,7 +1,9 @@
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .nlp import privacy as _privacy
@@ -44,6 +46,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def _friendly_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Return a 400 with a Vietnamese message for validation failures.
+
+    FastAPI's default is 422 with the raw pydantic error tree, which is
+    great for SDK consumers but terrible for the demo UX. We re-shape
+    every validation failure into ``{detail: "..."}`` at 400 — same
+    contract the rest of the API uses for client errors.
+
+    The chat route's empty-body case is the headline use-case
+    (``POST /api/chat`` with ``{}``): without this handler the user
+    saw ``{detail: [...]}`` from pydantic; now they see a single
+    actionable Vietnamese sentence.
+    """
+    detail = "Yêu cầu thiếu thông tin — bạn nhập lại nhé"
+    try:
+        first = exc.errors()[0]
+        loc = first.get("loc") or ()
+        if request.url.path == "/api/chat" and "message" in loc:
+            detail = "Bạn nhập tin nhắn rồi gửi lại nhé"
+    except Exception:  # noqa: BLE001 — defensive against pydantic shape drift
+        pass
+    return JSONResponse(status_code=400, content={"detail": detail})
 
 
 @app.middleware("http")
@@ -128,7 +155,7 @@ def health_root() -> dict:
     }
 
 
-@app.post("/api/admin/embed")
+@app.post("/api/admin/embed", dependencies=[Depends(admin.require_admin)])
 def trigger_embed() -> dict:
     """Manually trigger embedding backfill — useful after seeding new data."""
     from .nlp.embedder import fill_missing_embeddings

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api/client";
+import { api, friendlyApiError } from "./api/client";
+import { TOAST_EVENT_NAME, type ToastEvent } from "./hooks/useEventStream";
 import type { AtmHit, BalanceResult, ChatMessage, Contact, OmniResponse } from "./types";
 import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
@@ -24,6 +25,8 @@ import { DemoRecorder } from "./components/DemoRecorder";
 import { ExportMenu } from "./components/ExportMenu";
 import { PrivacyBadge } from "./components/PrivacyBadge";
 import { useEventStream } from "./hooks/useEventStream";
+// (TOAST_EVENT_NAME / ToastEvent re-exported above for failOmni's
+// top-frame toast.)
 import {
   SlashPalette,
   buildMessageFromSlash,
@@ -162,17 +165,34 @@ export default function App() {
   };
 
   const failOmni = (id: string, err: unknown) => {
+    const friendly = friendlyApiError(err);
     setMessages((prev) =>
       prev.map((m) =>
         m.id === id
           ? {
               ...m,
-              text: `Lỗi: ${String(err instanceof Error ? err.message : err)}`,
+              text: `Lỗi: ${friendly}`,
               pending: false,
             }
           : m,
       ),
     );
+    // Surface the same friendly message as a red top-frame toast so the
+    // failure is impossible to miss even if the user has scrolled away.
+    try {
+      const toast: ToastEvent = {
+        kind: "transfer_failed",
+        title: "Không gửi được yêu cầu",
+        body: friendly,
+        severity: "error",
+        ts: Date.now(),
+      };
+      window.dispatchEvent(
+        new CustomEvent<ToastEvent>(TOAST_EVENT_NAME, { detail: toast }),
+      );
+    } catch {
+      /* noop — CustomEvent fail is non-fatal */
+    }
   };
 
   const send = useCallback(

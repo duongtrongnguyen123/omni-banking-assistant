@@ -13,7 +13,6 @@ from fastapi.responses import PlainTextResponse
 
 from ..services import metrics as _metrics
 
-
 router = APIRouter(prefix="/api", tags=["metrics"])
 
 
