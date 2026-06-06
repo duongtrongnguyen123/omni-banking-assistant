@@ -582,6 +582,9 @@ def _modify_transfer_draft(
         user_id=user_id,
     )
     draft.requires_step_up = requires_step_up(draft.flags)
+    # Recipient may have changed in this edit; refresh the mini-ledger
+    # so the chat card matches the new recipient.
+    draft.recent_to_recipient = _recent_to_recipient(user_id, draft.recipient)
 
     session_for(user_id).set_draft(draft)
     return OmniResponse(
@@ -1399,6 +1402,37 @@ def _try_continue_goal_draft(
     return None
 
 
+def _recent_to_recipient(
+    user_id: str, recipient: Optional[Contact]
+) -> Optional[list[dict]]:
+    """Mini-history payload for the confirm card — last 3 completed
+    transfers to ``recipient``. Returned as plain dicts so the schema
+    keeps the same shape across every TransactionDraft producer
+    (_handle_transfer, _modify_transfer_draft, select_candidate).
+
+    Lifted out of ``_handle_transfer`` so the modify-draft and
+    disambiguation-select code paths don't keep returning ``None`` —
+    judges who say "đổi sang 3 triệu" or pick a candidate from KB3
+    should still see the per-recipient ledger that KB1/KB2 show.
+    """
+    if recipient is None:
+        return None
+    recent_txs = get_store().transactions_of(
+        user_id, contact_id=recipient.id, status="completed", limit=3,
+    )
+    if not recent_txs:
+        return None
+    return [
+        {
+            "amount": t.amount,
+            "created_at": t.created_at.isoformat(),
+            "description": t.description,
+            "category": t.category,
+        }
+        for t in recent_txs
+    ]
+
+
 def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
@@ -1474,24 +1508,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         if cat != "other" and conf >= 0.5:
             category = cat
 
-    # Mini-history for the confirm card — last 3 completed transfers to
-    # this recipient. Skipped for ambiguous drafts (no chosen recipient)
-    # so the disambiguation card stays uncluttered.
-    recent_to_recipient: Optional[list[dict]] = None
-    if chosen is not None:
-        recent_txs = store.transactions_of(
-            user_id, contact_id=chosen.id, status="completed", limit=3,
-        )
-        if recent_txs:
-            recent_to_recipient = [
-                {
-                    "amount": t.amount,
-                    "created_at": t.created_at.isoformat(),
-                    "description": t.description,
-                    "category": t.category,
-                }
-                for t in recent_txs
-            ]
+    recent_to_recipient = _recent_to_recipient(user_id, chosen)
 
     draft = TransactionDraft(
         id=new_id("d"),
@@ -1792,6 +1809,10 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
     draft.candidates = []
     draft.flags = flags
     draft.requires_step_up = requires_step_up(flags)
+    # KB3: the user just picked one of the candidate "Minh"s — fill in
+    # the mini-ledger so the confirm card matches what the no-ambiguity
+    # path (KB1) shows.
+    draft.recent_to_recipient = _recent_to_recipient(user_id, chosen)
     session.set_draft(draft)
 
     text = _compose_transfer_text(draft, None)
