@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, friendlyApiError } from "./api/client";
 import { TOAST_EVENT_NAME, type ToastEvent } from "./hooks/useEventStream";
-import type { AtmHit, BalanceResult, ChatMessage, Contact, OmniResponse } from "./types";
+import type { AtmHit, BalanceResult, ChatMessage, ChatSession, Contact, OmniResponse } from "./types";
+import { ChatHistory } from "./components/ChatHistory";
 import { ContactPicker } from "./components/ContactPicker";
 import { Message } from "./components/Message";
 import { InsightsCard } from "./components/InsightsCard";
@@ -62,6 +63,14 @@ const WELCOME: ChatMessage = {
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  // Persisted-conversation history (left drawer).
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  // Mirror of currentSessionId for use inside stable callbacks without
+  // re-creating them on every conversation switch.
+  const sessionIdRef = useRef<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
@@ -199,6 +208,97 @@ export default function App() {
     }
   };
 
+  // Keep the ref in lockstep with the state so stable callbacks read the
+  // live conversation id.
+  useEffect(() => {
+    sessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const list = await api.chatSessions();
+      setSessions(list);
+    } catch {
+      /* sidebar is best-effort — never block chat on a list failure */
+    }
+  }, []);
+
+  const adoptSession = useCallback((id: string | null) => {
+    if (id) {
+      sessionIdRef.current = id;
+      setCurrentSessionId(id);
+    }
+  }, []);
+
+  const startNewChat = useCallback(() => {
+    setMessages([WELCOME]);
+    setCurrentSessionId(null);
+    sessionIdRef.current = null;
+    setClosedDraftIds(new Set());
+    setClosedScheduleDraftIds(new Set());
+    setHistoryIdx(null);
+    setHistoryOpen(false);
+  }, []);
+
+  const loadSession = useCallback(async (id: string) => {
+    try {
+      const { messages: stored } = await api.chatSessionMessages(id);
+      const mapped: ChatMessage[] = stored.map((m) => ({
+        id: m.id,
+        role: m.role,
+        text: m.content,
+      }));
+      setMessages(mapped.length ? mapped : [WELCOME]);
+      setCurrentSessionId(id);
+      sessionIdRef.current = id;
+      setClosedDraftIds(new Set());
+      setClosedScheduleDraftIds(new Set());
+      setHistoryIdx(null);
+      setHistoryOpen(false);
+    } catch {
+      /* ignore — keep the current view on a load failure */
+    }
+  }, []);
+
+  const removeSession = useCallback(
+    async (id: string) => {
+      try {
+        await api.deleteChatSession(id);
+      } catch {
+        /* ignore */
+      }
+      if (sessionIdRef.current === id) {
+        startNewChat();
+      }
+      void refreshSessions();
+    },
+    [refreshSessions, startNewChat],
+  );
+
+  // On first paint, load the saved conversation list and re-open the most
+  // recent one so the user lands back where they left off.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSessionsLoading(true);
+      try {
+        const list = await api.chatSessions();
+        if (cancelled) return;
+        setSessions(list);
+        if (list.length > 0) {
+          await loadSession(list[0].id);
+        }
+      } catch {
+        /* offline / fresh DB — stay on the welcome screen */
+      } finally {
+        if (!cancelled) setSessionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSession]);
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -211,7 +311,11 @@ export default function App() {
       setHistoryIdx(null);
       setBusy(true);
       try {
-        const resp = await api.chat(trimmed);
+        const { response: resp, sessionId } = await api.chat(
+          trimmed,
+          sessionIdRef.current,
+        );
+        adoptSession(sessionId);
         if (resp.draft) {
           setClosedDraftIds((prev) => {
             const next = new Set(prev);
@@ -233,13 +337,15 @@ export default function App() {
           }
         }
         resolveOmni(pendingId, resp);
+        // Reflect the new title / preview / ordering in the sidebar.
+        void refreshSessions();
       } catch (e) {
         failOmni(pendingId, e);
       } finally {
         setBusy(false);
       }
     },
-    [busy],
+    [busy, adoptSession, refreshSessions],
   );
 
   const sendDraftAction = async (
@@ -528,7 +634,7 @@ export default function App() {
     }
     if (!balancePeek) {
       try {
-        const b = await api.chat("số dư");
+        const { response: b } = await api.chat("số dư", sessionIdRef.current);
         if (b.balance) setBalancePeek(b.balance);
       } catch {
         /* ignore */
@@ -590,6 +696,16 @@ export default function App() {
       <div className="phone">
         <TutorialOverlay userMessageCount={messages.filter((m) => m.role === "user").length} draftVisible={actionableDraftIds.size > 0} />
         <ToastStack />
+        <ChatHistory
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          loading={sessionsLoading}
+          onSelect={loadSession}
+          onNew={startNewChat}
+          onDelete={removeSession}
+        />
         <DemoRecorder />
         {/*
           Visually-hidden live region. Announces transient AT-only
@@ -601,6 +717,20 @@ export default function App() {
         </div>
         <div className="phone__statusbar" aria-hidden="true">9:41</div>
         <header className="phone__header">
+          <button
+            type="button"
+            className="phone__history-btn"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Mở lịch sử trò chuyện"
+            aria-haspopup="dialog"
+            title="Lịch sử trò chuyện"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <path d="M3 4v4h4" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+          </button>
           <OmniAvatar size={40} />
           <div className="phone__title">
             <div className="phone__brand">OMNI</div>

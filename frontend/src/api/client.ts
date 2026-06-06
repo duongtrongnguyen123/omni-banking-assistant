@@ -1,10 +1,12 @@
 import type {
   AtmHit,
   BudgetRow,
+  ChatSession,
   InsightsSummary,
   OmniResponse,
   RecipientSuggestion,
   SavingsGoal,
+  StoredChatMessage,
 } from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
@@ -105,11 +107,59 @@ export interface HealthResponse {
   privacy_mode?: "off" | "redact" | "local-only";
 }
 
+/** Result of a chat turn — the reply plus the conversation it landed in. */
+export interface ChatResult {
+  response: OmniResponse;
+  sessionId: string | null;
+}
+
 export const api = {
-  chat: (message: string) =>
-    jsonFetch<OmniResponse>(DEV_MODE ? "/api/chat?dev=1" : "/api/chat", {
-      method: "POST",
-      body: JSON.stringify({ message }),
+  // Unlike the other helpers, /chat needs the `X-Chat-Session-Id`
+  // response header (which conversation the backend filed this turn
+  // under), so it does its own fetch instead of going through jsonFetch.
+  chat: async (
+    message: string,
+    sessionId?: string | null,
+  ): Promise<ChatResult> => {
+    const path = DEV_MODE ? "/api/chat?dev=1" : "/api/chat";
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method: "POST",
+        headers: HEADERS,
+        body: JSON.stringify({ message, session_id: sessionId ?? null }),
+      });
+    } catch {
+      throw new ApiError(0, VI_NETWORK_DOWN);
+    }
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = (await res.json()).detail ?? "";
+      } catch {
+        /* non-JSON body */
+      }
+      if (!detail) detail = res.statusText || VI_GENERIC_ERROR;
+      throw new ApiError(res.status, detail);
+    }
+    const response = (await res.json()) as OmniResponse;
+    return { response, sessionId: res.headers.get("X-Chat-Session-Id") };
+  },
+  chatSessions: () => jsonFetch<ChatSession[]>("/api/chat/sessions"),
+  chatSessionMessages: (id: string) =>
+    jsonFetch<{ id: string; messages: StoredChatMessage[] }>(
+      `/api/chat/sessions/${id}`,
+    ),
+  createChatSession: () =>
+    jsonFetch<ChatSession>("/api/chat/sessions", { method: "POST" }),
+  renameChatSession: (id: string, title: string) =>
+    jsonFetch<{ ok: boolean }>(`/api/chat/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  deleteChatSession: (id: string) =>
+    jsonFetch<{ ok: boolean }>(`/api/chat/sessions/${id}`, {
+      method: "DELETE",
     }),
   health: () => jsonFetch<HealthResponse>("/health"),
   recordStart: () =>

@@ -284,6 +284,25 @@ export interface ChatMessage {
   pending?: boolean;
 }
 
+/** A saved conversation as listed in the left-hand history sidebar. */
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  preview: string;
+}
+
+/** One persisted turn, as returned when re-opening a conversation. */
+export interface StoredChatMessage {
+  id: string;
+  role: "user" | "omni";
+  content: string;
+  intent: string | null;
+  created_at: string;
+}
+
 export interface RecipientSuggestion {
   contact: Contact;
   score: number;
