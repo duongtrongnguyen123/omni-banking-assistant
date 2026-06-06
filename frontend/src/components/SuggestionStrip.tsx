@@ -42,12 +42,6 @@ export const SuggestionStrip = ({ refreshKey, busy, onPick, onAtms }: Props) => 
   // pill or 2+ recipients are available.
   if (items.length < 2 && !onAtms) return null;
 
-  // Bar widths are normalised to the strongest signal in the visible
-  // set — judges see the *relative* model confidence between chips, which
-  // is more readable than raw 0..1 score values and stays meaningful
-  // even when the absolute numbers drift.
-  const maxScore = items.reduce((m, s) => Math.max(m, s.score), 0) || 1;
-
   return (
     <div className="suggest-strip" aria-label="Gợi ý người nhận">
       <div className="suggest-strip__title">
@@ -57,26 +51,16 @@ export const SuggestionStrip = ({ refreshKey, busy, onPick, onAtms }: Props) => 
         {items.map((s) => {
           const c = s.contact;
           const first = c.display_name.split(" ").slice(-1)[0];
-          const pct = Math.max(8, Math.round((s.score / maxScore) * 100));
           return (
             <button
               key={c.id}
               className="suggest-chip"
               disabled={busy}
               onClick={() => onPick(`chuyển cho ${c.display_name} `)}
-              title={`${s.reason} · score ${s.score.toFixed(3)}`}
+              title={s.reason}
             >
               <span className="suggest-chip__name">{first}</span>
               <span className="suggest-chip__reason">{s.reason}</span>
-              <span
-                className="suggest-chip__bar"
-                aria-label={`Mức độ ưu tiên ${pct}%`}
-              >
-                <span
-                  className="suggest-chip__bar-fill"
-                  style={{ width: `${pct}%` }}
-                />
-              </span>
             </button>
           );
         })}
