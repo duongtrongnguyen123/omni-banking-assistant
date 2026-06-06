@@ -236,7 +236,15 @@ export const TransactionCard = ({
           <div className="tx-card__amount-value">
             {formatVND(draft.amount)}
             {draft.predicted_amount && (
-              <span className="tx-card__predicted-chip">đề xuất từ lịch sử</span>
+              <span
+                className="tx-card__predicted-chip"
+                title={
+                  draft.amount_prediction_reason ??
+                  "Số tiền được đề xuất từ giao dịch trước đây với người này"
+                }
+              >
+                đề xuất từ lịch sử
+              </span>
             )}
           </div>
           {draft.category && <CategoryChip category={draft.category} />}

@@ -1487,6 +1487,9 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         flags=flags,
         requires_step_up=requires_step_up(flags),
         predicted_amount=prediction is not None,
+        amount_prediction_reason=(
+            prediction.get("rationale") if prediction is not None else None
+        ),
         category=category,
     )
 

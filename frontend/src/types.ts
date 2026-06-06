@@ -83,6 +83,7 @@ export interface TransactionDraft {
   flags: SafetyFlag[];
   requires_step_up: boolean;
   predicted_amount?: boolean;
+  amount_prediction_reason?: string | null;
   category?: string | null;
 }
 

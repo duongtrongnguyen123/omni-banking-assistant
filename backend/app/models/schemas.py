@@ -173,6 +173,12 @@ class TransactionDraft(BaseModel):
     # extracted from the user's utterance. The UI surfaces this as a chip so
     # the user knows it's a suggestion they can override.
     predicted_amount: bool = False
+    # Short Vietnamese phrase explaining where the predicted amount came
+    # from ("Median của 4 lần chuyển trong cùng dải ngày" / "Median của 12
+    # lần chuyển cho người này"). Only set when ``predicted_amount`` is
+    # True; surfaced as the tooltip on the "đề xuất từ lịch sử" chip so
+    # judges can see the ML rationale on hover.
+    amount_prediction_reason: Optional[str] = None
     # Auto-inferred category for the draft, derived from the description
     # text by ``app.ml.categorizer``. ``None`` when no description was
     # provided or the classifier abstained. The UI renders this as a small
