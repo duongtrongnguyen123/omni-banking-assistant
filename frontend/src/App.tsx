@@ -15,6 +15,7 @@ import { VoiceButton } from "./components/VoiceButton";
 import { ReceiveCard } from "./components/ReceiveCard";
 import { QrScanButton } from "./components/QrScanButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
+import { QuickAmountChips } from "./components/QuickAmountChips";
 import { RepeatLastCTA } from "./components/RepeatLastCTA";
 import { ToastStack } from "./components/ToastStack";
 import { TelemetryOverlay, TELEMETRY_EVENT } from "./components/TelemetryOverlay";
@@ -675,6 +676,19 @@ export default function App() {
           visible={confirmedTransfers > 0}
           busy={busy}
           onClick={() => send("Lặp lại giao dịch vừa rồi")}
+        />
+
+        <QuickAmountChips
+          input={input}
+          busy={busy}
+          onPick={(amount) => {
+            // Append with a leading space when the input doesn't already
+            // end on whitespace so "chuyển mẹ" + chip "500k" reads as
+            // "chuyển mẹ 500k", not "chuyển mẹ500k".
+            const sep = input.length === 0 || input.endsWith(" ") ? "" : " ";
+            setInput(input + sep + amount + " ");
+            inputRef.current?.focus();
+          }}
         />
 
         <div className="phone__input-wrap">
