@@ -39,8 +39,12 @@ interface Props {
    * that fetch from REST. Without this the user creates a goal in
    * chat and the sidebar widget stays empty until the next page
    * load — visible "where's my goal" demo bug.
+   *
+   * The parent is also responsible for swapping the message's
+   * ``response`` via ``setMessages`` so the new card state renders;
+   * we pass the owning message id so it can target the right row.
    */
-  onDraftResolved?: (resp: OmniResponse) => void;
+  onDraftResolved?: (messageId: string, resp: OmniResponse) => void;
   busy?: boolean;
   actionableDraftIds?: Set<string>;
   /** Drafts the user cancelled via the Huỷ button. TransactionCard
@@ -188,13 +192,12 @@ export const Message = ({
           <BudgetDraftCard
             draft={r.budget_draft}
             onResolve={(resp) => {
-              // Mutate the message in place — the App-level state
-              // already references this object, so updating ``response``
-              // would also propagate. We keep the simpler approach of
-              // letting the user re-trigger via chat keyword if they
-              // want a second action.
-              message.response = resp;
-              onDraftResolved?.(resp);
+              // Route the update through the parent's setMessages so
+              // React actually re-renders. The previous in-place
+              // ``message.response = resp`` mutated a state object
+              // outside of setState and only appeared to work because
+              // ``onDraftResolved`` bumped a sibling refresh counter.
+              onDraftResolved?.(message.id, resp);
             }}
             busy={busy}
           />
@@ -203,8 +206,7 @@ export const Message = ({
           <GoalDraftCard
             draft={r.goal_draft}
             onResolve={(resp) => {
-              message.response = resp;
-              onDraftResolved?.(resp);
+              onDraftResolved?.(message.id, resp);
             }}
             busy={busy}
           />

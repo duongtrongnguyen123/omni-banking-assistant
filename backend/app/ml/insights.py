@@ -157,9 +157,15 @@ def anomalies(
             baseline = "per-user"
 
         if sigma <= 0:
-            # Constant history — flag only if this tx differs at all and is
-            # the FIRST oddity. Use a soft z proxy.
-            if t.amount > mu:
+            # Constant history — flag only if this tx differs meaningfully.
+            # Without a minimum delta a 1đ rounding swing on a 5×200.000đ
+            # rent series would trip with ratio≈1.0 and surface as a
+            # "bất thường" warning in the UI. Require either a 1.5×
+            # multiplier or a 100k absolute step before we treat constant
+            # history as broken.
+            delta = abs(t.amount - mu)
+            ratio_check = (t.amount / mu) if mu > 0 else float("inf")
+            if t.amount > mu and (ratio_check >= 1.5 or delta >= 100_000):
                 z = float("inf")
             else:
                 continue

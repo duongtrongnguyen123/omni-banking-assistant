@@ -1107,7 +1107,17 @@ export default function App() {
                   alert(friendlyApiError(e));
                 }
               }}
-              onDraftResolved={(resp) => {
+              onDraftResolved={(messageId, resp) => {
+                // Swap the response on the originating message so the
+                // card re-renders with its new state (e.g. budget
+                // confirmed → success card). Without this the
+                // BudgetDraftCard / GoalDraftCard previously relied on
+                // an in-place mutation that React never saw.
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === messageId ? { ...m, response: resp } : m,
+                  ),
+                );
                 // A budget or goal draft was confirmed/cancelled. Bump
                 // the sidebar refresh key so BudgetCard / GoalsCard
                 // re-fetch and the new envelope / goal shows up

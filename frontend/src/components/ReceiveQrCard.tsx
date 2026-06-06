@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ReceiveQrPayload } from "../types";
 
 interface Props {
@@ -8,6 +9,7 @@ const formatVND = (amount: number) =>
   new Intl.NumberFormat("vi-VN").format(amount) + "đ";
 
 export const ReceiveQrCard = ({ qr }: Props) => {
+  const [imgFailed, setImgFailed] = useState(false);
   const copy = (val: string) => {
     if (navigator.clipboard) navigator.clipboard.writeText(val);
   };
@@ -15,11 +17,22 @@ export const ReceiveQrCard = ({ qr }: Props) => {
     <div className="qr-card">
       <div className="qr-card__header">QR nhận tiền</div>
       <div className="qr-card__body">
-        <img
-          src={`data:image/png;base64,${qr.png_base64}`}
-          alt="QR nhận tiền"
-          className="qr-card__image"
-        />
+        {imgFailed ? (
+          <div
+            className="qr-card__image qr-card__image--fallback"
+            role="img"
+            aria-label="QR không hiển thị được"
+          >
+            Không hiển thị được mã QR. Vui lòng dùng STK bên dưới.
+          </div>
+        ) : (
+          <img
+            src={`data:image/png;base64,${qr.png_base64}`}
+            alt="QR nhận tiền"
+            className="qr-card__image"
+            onError={() => setImgFailed(true)}
+          />
+        )}
         <div className="qr-card__meta">
           <div className="qr-card__bank">{qr.bank}</div>
           <div className="qr-card__account">
