@@ -223,7 +223,7 @@ _STOP_LOOKAHEAD = (
     # "khoá 5") are KEPT inside the recipient surface because they're
     # part of the label, not an amount. Pre-fix the bare ``\d`` truncated
     # "Bạn cấp 3" → "Bạn cấp" and the resolver couldn't match the label.
-    r"\d+\s*(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|đ|vnd|tỷ|ty|tỉ|ti|chai|vé|củ|lít|đồng|dong)\b"
+    r"\d+(?:[.,]\d+)?\s*(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|đ|vnd|tỷ|ty|tỉ|ti|chai|vé|củ|lít|đồng|dong|m)\b"
     r"|số\s+tiền|so\s+tien"
     r"|số\s+tài|so\s+tai"
     r"|stk"
@@ -259,6 +259,18 @@ _STOP_LOOKAHEAD = (
     r"|đi\b|di\b"              # "cho mẹ đi" — imperative softener
     r"|đó\b|do\b"              # "cho mẹ đó"
     r"|ơi\b|oi\b"              # vocative
+    # Self-correction particles. User report: "chuyển cho abc chứ nhầm"
+    # captured "abc chứ nhầm" as recipient — the "chứ nhầm" ("not, my
+    # mistake") was glued in and the resolver couldn't match. Stopping
+    # at "chứ" / "nhầm" / "à" / "ý" gives the resolver just "abc" → ABC.
+    r"|chứ\b|chu\b"            # "abc chứ nhầm" → "abc"; "abc chứ không phải mẹ"
+    r"|nhầm\b|nham\b"          # "abc nhầm" → "abc"
+    r"|không\s+phải|khong\s+phai"  # "mẹ không phải bố" → "mẹ"
+    r"|hay\s+là|hay\s+la"      # "mẹ hay là bố" → "mẹ"
+    r"|ý\s+là|y\s+la"          # "mẹ ý là bố" → "mẹ"
+    r"|à\b"                     # "mẹ à không bố" — trailing "à"
+    # NOTE: no plain "a\s" — it would false-fire inside "của" (which
+    # ends with "a") and chop "mẹ của tôi" → "mẹ củ".
     r"|$"
     r"|[,.?!\n]"
 )
@@ -296,7 +308,7 @@ _RECIPIENT_VERB_RE = re.compile(
 # "ngân sách 1tr" via a denylist.
 _BARE_RECIPIENT_AMOUNT_RE = re.compile(
     r"^(?P<who>[^\d,.\n?!]+?)\s+\d+(?:[.,]\d+)?\s*"
-    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti)\b",
+    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti|củ|cu|chai|m)\b",
     re.IGNORECASE,
 )
 
@@ -342,7 +354,7 @@ _BARE_RECIPIENT_DENYLIST = {
 _VERB_AMOUNT_RECIPIENT_RE = re.compile(
     r"^(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
     r"\d+(?:[.,]\d+)?\s*"
-    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti|đ|dong|đồng)\b"
+    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti|đ|dong|đồng|củ|cu|chai|m)\b"
     r"\s+(?:cho|tới|toi|đến|den|sang|qua\s+)?"
     r"(?P<who>[^\d,.\n?!]+?)"
     rf"\s*(?:{_STOP_LOOKAHEAD}|$)",
