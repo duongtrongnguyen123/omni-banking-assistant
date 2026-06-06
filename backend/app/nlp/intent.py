@@ -111,7 +111,14 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "con thieu bao nhieu cho muc tieu",  # explicit
         "muc tieu sap dat", "muc tieu cua minh sap",
     ]),
-    ("smalltalk", ["xin chao", "chao omni", "hello", "cam on"]),
+    ("smalltalk", [
+        "xin chao", "chao omni", "hello", "cam on",
+        # Farewells + casual variants — judges who say goodbye to the
+        # assistant shouldn't get the safe "unknown" fallback that
+        # invites them to "thử chuyển cho mẹ 2 triệu".
+        "tam biet", "bye omni", "bye bye", "goodbye", "tạm biệt",
+        "good morning", "good evening", "chao buoi sang",
+    ]),
 ]
 
 # ---------------------------------------------------------------------------

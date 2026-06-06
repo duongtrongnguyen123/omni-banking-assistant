@@ -191,6 +191,27 @@ _RECIPIENT_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Bare leading-token + amount fallback: "mẹ 2tr" / "anh Hùng 500k". Vietnamese
+# shorthand judges actually use. Only fires when the message *starts* with a
+# token, optionally a relational prefix, then an amount unit — keeps the
+# pattern conservative enough to ignore "tiền nhà 3tr" / "lương 5tr" /
+# "ngân sách 1tr" via a denylist.
+_BARE_RECIPIENT_AMOUNT_RE = re.compile(
+    r"^(?P<who>[^\d,.\n?!]+?)\s+\d+(?:[.,]\d+)?\s*"
+    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti)\b",
+    re.IGNORECASE,
+)
+
+# Tokens that are amount-context nouns, not recipient names. If the
+# captured "who" reduces to any of these (after diacritic-fold), bail —
+# "lương 5tr" / "tiền nhà 3tr" / "số dư 2tr" must NOT route to transfer
+# with those words as the recipient.
+_BARE_RECIPIENT_DENYLIST = {
+    "luong", "tien", "so du", "tien nha", "tien dien", "tien nuoc",
+    "tien an", "ngan sach", "han muc", "muc tieu", "tiet kiem",
+    "thue", "phi", "no", "cuoc",
+}
+
 # ATM finder — surface-form → canonical bank name. Both the short
 # (VCB, TCB, …) and full ("Vietcombank") forms are common in chat;
 # we normalise to the canonical bank label used in ``data/atms.json`` so
@@ -278,6 +299,17 @@ def extract(text: str) -> ExtractedEntities:
         m = _RECIPIENT_VERB_RE.search(text)
         if m:
             out.recipient_text = _clean_recipient(m.group("who"))
+
+    # Bare leading-token + amount fallback ("mẹ 2tr" / "anh Hùng 500k").
+    # Only fires when no other recipient was found. Denylist filters out
+    # amount-context nouns like "lương 5tr" / "tiền nhà 3tr".
+    if not out.recipient_text:
+        m = _BARE_RECIPIENT_AMOUNT_RE.search(text)
+        if m:
+            candidate = _clean_recipient(m.group("who"))
+            folded = _strip_diacritics(candidate).strip()
+            if folded and folded not in _BARE_RECIPIENT_DENYLIST:
+                out.recipient_text = candidate
 
     m = _ACCOUNT_HINT_RE.search(text)
     if m:

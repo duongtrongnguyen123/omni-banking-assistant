@@ -754,6 +754,78 @@ def test_velocity_high_triggers_step_up() -> None:
     assert requires_step_up(flags) is True
 
 
+# ---------------------------------------------------------------------------
+# Smalltalk + bare-recipient coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bye omni",
+        "tạm biệt",
+        "Bye Bye",
+        "Goodbye",
+        "Good morning omni",
+        "Tạm biệt Omni",
+        "cảm ơn omni",
+    ],
+)
+def test_farewells_route_smalltalk(text: str) -> None:
+    """``bye``/``tạm biệt``/``goodbye`` used to fall through to
+    unknown — judges who said goodbye saw the awkward "thử chuyển cho
+    mẹ 2 triệu" fallback. Now they hit the smalltalk handler."""
+    intent, _ = classify(text)
+    assert intent == "smalltalk", text
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient_substr",
+    [
+        # Vietnamese chat shorthand without "cho" / verb. The bare leading
+        # token + amount form is what judges actually type in casual
+        # demos.
+        ("mẹ 2tr", "mẹ"),
+        ("mẹ 2tr tiền ăn", "mẹ"),
+        ("anh Hùng 500k", "Hùng"),
+        ("mẹ 5 triệu", "mẹ"),
+    ],
+)
+def test_bare_recipient_amount_pattern_extracts_recipient(
+    text: str, expected_recipient_substr: str
+) -> None:
+    """The leading-token + amount pattern fills the recipient when
+    no other extractor catches it."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.recipient_text is not None, text
+    assert expected_recipient_substr in e.recipient_text, (
+        f"{text!r} → {e.recipient_text!r}; expected substring "
+        f"{expected_recipient_substr!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Amount-context nouns must NOT route to a transfer with the
+        # noun as recipient. Wrong-recipient = wrong money.
+        "lương 5tr",
+        "số dư 2tr",
+        "tiền nhà 3tr",
+        "ngân sách 1tr",
+        "tiết kiệm 5tr",
+    ],
+)
+def test_bare_recipient_denylist_rejects_context_nouns(text: str) -> None:
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.recipient_text is None, (
+        f"{text!r} → recipient={e.recipient_text!r}; expected None — "
+        "context nouns must NOT be treated as recipients"
+    )
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /
