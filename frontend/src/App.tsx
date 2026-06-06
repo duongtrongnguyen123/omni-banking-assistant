@@ -226,6 +226,40 @@ export default function App() {
   };
 
   const resolveOmni = (id: string, resp: OmniResponse) => {
+    // CRITICAL UX: when a new draft arrives that REPLACES a previously
+    // active one (different draft.id), the old card transitions
+    // actionable→inactionable. Without this guard TransactionCard
+    // fires its "Đã chuyển X · Y" success animation on the stale card
+    // — user reports "tự thực hiện giao dịch luôn" even though backend
+    // hasn't run anything. Suppress the success animation on every
+    // stale draft id by adding it to cancelledDraftIds + closedDraftIds.
+    const newDraftId = resp.draft?.id ?? null;
+    if (newDraftId && resp.draft?.recipient) {
+      const staleIds: string[] = [];
+      for (const m of messages) {
+        const d = m.response?.draft;
+        if (
+          d &&
+          d.id !== newDraftId &&
+          !closedDraftIds.has(d.id) &&
+          d.recipient
+        ) {
+          staleIds.push(d.id);
+        }
+      }
+      if (staleIds.length > 0) {
+        setClosedDraftIds((prev) => {
+          const next = new Set(prev);
+          staleIds.forEach((sid) => next.add(sid));
+          return next;
+        });
+        setCancelledDraftIds((prev) => {
+          const next = new Set(prev);
+          staleIds.forEach((sid) => next.add(sid));
+          return next;
+        });
+      }
+    }
     setMessages((prev) =>
       prev.map((m) =>
         m.id === id
