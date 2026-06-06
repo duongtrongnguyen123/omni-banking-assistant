@@ -651,7 +651,6 @@ def _modify_transfer_draft(
             # then flag missing_recipient and the chat asks for clarity.
             draft.recipient = None
             draft.candidates = []
-            draft.recipient_surface = e.recipient_text
 
     # Re-evaluate safety on the modified draft.
     draft.flags = evaluate(
