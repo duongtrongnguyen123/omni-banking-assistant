@@ -3050,3 +3050,31 @@ def test_round_to_nice_still_smooths_large_amounts() -> None:
     assert _round_to_nice(2_017_345) == 2_000_000
     assert _round_to_nice(12_345_678) == 12_500_000
 
+
+def test_predicted_amount_single_confirm_phrase() -> None:
+    """Regression for the ~180-char wall of text bug: the predicted-amount
+    preamble (``Có vẻ bạn muốn gửi …``) used to be prepended in front of
+    the standard confirm prompt (``Đã hiểu! Xác nhận chuyển …``), yielding
+    two question/confirm phrases concatenated together. After the fix the
+    confirm card surfaces a single coherent VN line that includes the
+    rationale inline."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", "chuyển cho mẹ")
+    assert resp.draft is not None
+    # Predictor must have fired for this scenario; otherwise the test is
+    # vacuous (no preamble to dedup).
+    assert resp.draft.predicted_amount is True
+    text = resp.text
+
+    # The two telltale fragments from the doubled prompt must never both
+    # appear in the same line.
+    assert not ("Đúng không?" in text and "Đã hiểu! Xác nhận" in text), (
+        f"prediction preamble and standard confirm prompt both present: {text!r}"
+    )
+    # Exactly one confirmation phrase in the unified line.
+    assert "Đã hiểu! Xác nhận" not in text
+    # Stay below the ~180-char wall the stress agent flagged.
+    assert len(text) < 180, f"confirm text too long ({len(text)} chars): {text!r}"
+

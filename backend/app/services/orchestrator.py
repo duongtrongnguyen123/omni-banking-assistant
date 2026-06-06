@@ -2185,14 +2185,31 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
 
     text = _compose_transfer_text(draft, referenced_tx)
     if prediction is not None and draft.recipient is not None:
-        # Prepend the rationale so both the LLM-phrased and the
-        # deterministic fallback responses surface the suggestion clearly.
-        text = (
-            f"Có vẻ bạn muốn gửi {format_vnd(draft.amount)} cho "  # type: ignore[arg-type]
-            f"{draft.recipient.display_name} như thường lệ "
-            f"({prediction['rationale']}). Đúng không? "
-            + text
+        # Surface the rationale as a single coherent line. Previously we
+        # prepended the preamble in front of the standard confirm prompt,
+        # producing a ~180-char wall of text with two question marks
+        # ("Có vẻ bạn muốn gửi … Đúng không? Đã hiểu! Xác nhận chuyển …").
+        # The prediction phrase already implies a confirmation request,
+        # so replace the prompt outright when it's the plain "Đã hiểu!"
+        # variant; warn / referenced-tx / ambiguous-recipient variants
+        # stay intact because they carry information the preamble lacks.
+        plain_confirm = draft.amount is not None and text == (
+            f"Đã hiểu! Xác nhận chuyển {format_vnd(draft.amount)} cho "
+            f"{draft.recipient.display_name} ({draft.recipient.bank})."
         )
+        if plain_confirm:
+            text = (
+                f"Mình đoán bạn muốn gửi {format_vnd(draft.amount)} cho "  # type: ignore[arg-type]
+                f"{draft.recipient.display_name} ({draft.recipient.bank}) "
+                f"như thường lệ ({prediction['rationale']}). Xác nhận giúp mình nhé."
+            )
+        else:
+            text = (
+                f"Có vẻ bạn muốn gửi {format_vnd(draft.amount)} cho "  # type: ignore[arg-type]
+                f"{draft.recipient.display_name} như thường lệ "
+                f"({prediction['rationale']}). Đúng không? "
+                + text
+            )
     return OmniResponse(
         intent="transfer",
         text=text,
