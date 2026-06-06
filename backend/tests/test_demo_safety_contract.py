@@ -817,6 +817,64 @@ def test_amount_parser_wrong_money_regressions(
     )
 
 
+# ---------------------------------------------------------------------------
+# Amount parser — Vietnamese spelled-out numerals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected_amount",
+    [
+        # Bare spelled forms — the most common natural-speech variants.
+        ("hai triệu", 2_000_000),
+        ("ba triệu", 3_000_000),
+        ("một triệu", 1_000_000),
+        ("mười triệu", 10_000_000),
+        ("năm trăm", 500),
+        ("năm trăm nghìn", 500_000),
+        ("bốn trăm nghìn", 400_000),
+        ("chín trăm nghìn", 900_000),
+        ("một tỷ", 1_000_000_000),
+        # Compound with "chục" (×10).
+        ("hai chục nghìn", 20_000),
+        ("năm chục triệu", 50_000_000),
+        # Mixed: spelled + "rưỡi" — full chain through both special
+        # cases.
+        ("ba triệu rưỡi", 3_500_000),
+    ],
+)
+def test_amount_parser_spelled_out(
+    text: str, expected_amount: int
+) -> None:
+    from app.nlp.amount import parse_amount
+    got, _ = parse_amount(text)
+    assert got == expected_amount, (
+        f"{text!r} → {got}; expected {expected_amount}. "
+        "Spelled-out Vietnamese numerals are everyday speech — judges "
+        "who say 'hai triệu' must get 2.000.000đ, not None."
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hai con mèo",
+        "ba tuổi",
+        "một mình",  # NOT 1 million via "m" — covered by the original
+                    # "no bare m" guard but still worth pinning.
+        "năm sao",
+    ],
+)
+def test_amount_parser_spelled_negatives_reject(text: str) -> None:
+    """The spelled substitution only fires when the number word is
+    immediately followed by an amount unit. Anything else stays None
+    so contextual speech ("hai con mèo" = "two cats") doesn't get a
+    phantom amount injected."""
+    from app.nlp.amount import parse_amount
+    got, _ = parse_amount(text)
+    assert got is None, f"{text!r} should NOT parse as an amount; got {got}"
+
+
 def test_fraud_model_threshold_constant_exists() -> None:
     """rules.evaluate() reads ``fraud_model.FRAUD_RISK_THRESHOLD``. A
     rename / reorder would silently disable the integration; assert

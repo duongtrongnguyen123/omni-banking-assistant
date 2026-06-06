@@ -63,6 +63,71 @@ _HALF_RE = re.compile(
 # Plain digits with dot/comma thousand separators: 2.000.000 / 2,000,000
 _PLAIN_RE = re.compile(r"(\d{1,3}(?:[.,]\d{3}){1,4})(?!\d)")
 
+# Vietnamese spelled-out numerals 1–10. Spelled forms ("hai triệu",
+# "năm trăm nghìn", "ba chục triệu") never reach the digit-based regexes
+# above, so we substitute the digit before running parse_amount's main
+# branches. Conservative: only substitute when the word is immediately
+# followed by a Vietnamese amount unit so "ba tuổi" / "hai con mèo"
+# don't get a spurious "3" / "2" injected.
+_WORD_TO_DIGIT = {
+    "một": "1", "mot": "1",
+    "hai": "2",
+    "ba": "3",
+    "bốn": "4", "bon": "4", "tư": "4", "tu": "4",
+    "năm": "5", "nam": "5",
+    "sáu": "6", "sau": "6",
+    "bảy": "7", "bay": "7",
+    "tám": "8", "tam": "8",
+    "chín": "9", "chin": "9",
+    "mười": "10", "muoi": "10",
+}
+
+# Unit anchor: same vocab as the main parser plus "chục" / "chuc"
+# (= ×10). Used only to verify the spelled word is followed by an
+# amount unit, so the substitution stays scoped.
+_SPELLED_TAIL_UNITS = (
+    "triệu", "trieu", "tr",
+    "tỷ", "ty", "tỉ", "ti",
+    "nghìn", "nghin", "ngàn", "ngan",
+    "trăm nghìn", "tram nghin", "trăm ngàn", "tram ngan",
+    "trăm k", "tram k",
+    "trăm", "tram",
+    "chục", "chuc",
+    "k",
+)
+# Sort by length descending so "trăm nghìn" wins over "trăm" alone.
+_SPELLED_TAIL_ALT = "|".join(
+    re.escape(u) for u in sorted(_SPELLED_TAIL_UNITS, key=len, reverse=True)
+)
+_SPELLED_WORD_ALT = "|".join(
+    re.escape(w) for w in sorted(_WORD_TO_DIGIT.keys(), key=len, reverse=True)
+)
+_SPELLED_RE = re.compile(
+    rf"\b(?P<word>{_SPELLED_WORD_ALT})\s+(?P<unit>{_SPELLED_TAIL_ALT})\b",
+    re.IGNORECASE,
+)
+
+
+def _substitute_spelled(text: str) -> str:
+    """Replace "hai triệu" → "2 triệu" / "năm trăm nghìn" → "5 trăm nghìn"
+    so the digit-based regexes downstream pick the amount up. Multi-pass
+    so "ba chục triệu" becomes "3 chục triệu" → "30 triệu" via the
+    chuc-collapse step below."""
+    def _replace(m: "re.Match[str]") -> str:
+        digit = _WORD_TO_DIGIT[m.group("word").lower()]
+        return f"{digit} {m.group('unit')}"
+
+    out = _SPELLED_RE.sub(_replace, text)
+    # Collapse "<N> chục" into the multiplied digit so "3 chục triệu"
+    # → "30 triệu" and the existing parser handles it.
+    out = re.sub(
+        r"\b(\d+)\s*(?:chục|chuc)\b",
+        lambda m: str(int(m.group(1)) * 10),
+        out,
+        flags=re.IGNORECASE,
+    )
+    return out
+
 
 def _to_float(s: str) -> float:
     return float(s.replace(",", "."))
@@ -73,6 +138,10 @@ def parse_amount(text: str) -> tuple[Optional[int], Optional[str]]:
     if not text:
         return None, None
     t = text.lower()
+    # Substitute spelled-out numerals BEFORE the digit-based regexes run.
+    # Conservative: only when the spelled word is immediately followed by
+    # an amount unit, so "hai con mèo" / "ba tuổi" stay untouched.
+    t = _substitute_spelled(t)
 
     # 1. "X triệu rưỡi" — must run before primary to win the unit.
     m = _HALF_RE.search(t)
