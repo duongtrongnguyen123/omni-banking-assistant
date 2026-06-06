@@ -187,6 +187,65 @@ html, body, #root { margin: 0; min-height: 100%; background: var(--bg); }
   color: var(--navy);
 }
 
+/* -------- mic button (dictation) -------- */
+
+.mic-wrap { position: relative; flex-shrink: 0; }
+
+.mic-btn {
+  background: #f4f3fa; color: var(--navy);
+  position: relative;
+}
+.mic-btn:hover:not(:disabled) { background: #ebe9f4; }
+.mic-btn--on {
+  background: var(--bad); color: white;
+}
+.mic-btn--on:hover:not(:disabled) { background: #b91c1c; }
+.mic-btn--busy { background: var(--orange-soft); color: var(--orange); cursor: wait; }
+
+.mic-pulse {
+  position: absolute; inset: -4px; border-radius: 50%;
+  border: 2px solid var(--bad);
+  animation: mic-pulse 1.2s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes mic-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* Floating status (timer + cancel) above the mic button while recording */
+.mic-status {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  display: flex; align-items: center; gap: 8px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px 4px 8px;
+  box-shadow: 0 8px 22px -10px rgba(15,17,58,0.25);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.mic-status__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--bad);
+  animation: mic-pulse-dot 0.9s ease-in-out infinite;
+}
+@keyframes mic-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.mic-status__time {
+  font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600;
+}
+.mic-status__cancel {
+  appearance: none; border: 0; background: transparent;
+  color: var(--muted); cursor: pointer; padding: 0 2px;
+  font-family: inherit; font-size: 12.5px;
+}
+.mic-status__cancel:hover { color: var(--bad); }
+
 /* -------- recent recipients -------- */
 
 .recents { position: relative; flex-shrink: 0; }

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .routes import banking, chat, ws
+from .speech import router as speech_router
 
 settings = get_settings()
 
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(banking.router)
 app.include_router(ws.router)
+app.include_router(speech_router)
 
 
 @app.get("/health")

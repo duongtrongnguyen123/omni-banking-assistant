@@ -92,9 +92,9 @@ export default function App() {
   };
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<OmniResponse | null> => {
       const trimmed = text.trim();
-      if (!trimmed || busy) return;
+      if (!trimmed || busy) return null;
       appendUser(trimmed);
       const pendingId = appendOmniPending();
       setInput("");
@@ -109,8 +109,10 @@ export default function App() {
           });
         }
         resolveOmni(pendingId, resp);
+        return resp;
       } catch (e) {
         failOmni(pendingId, e);
+        return null;
       } finally {
         setBusy(false);
       }
@@ -313,6 +315,15 @@ export default function App() {
             placeholder="Nhập câu lệnh, ví dụ: chuyển cho mẹ 2 triệu..."
             disabled={busy}
           />
+          <MicButton
+            disabled={busy}
+            onText={(t) => {
+              setInput(t);
+              requestAnimationFrame(() => {
+                inputRef.current?.focus();
+              });
+            }}
+          />
           <button
             className="btn btn--primary btn--send"
             onClick={() => send(input)}
@@ -380,7 +391,7 @@ export default function App() {
         <p className="sidebar__lead">
           Ứng dụng xử lý ngôn ngữ tự nhiên trong hoạt động ngân hàng - Team One Last Token.
         </p>
-        <QuickScenarios onPick={send} />
+        <QuickScenarios onPick={(t) => send(t)} />
         <div className="sidebar__legend">
           <div>
             <strong>Pipeline:</strong> Câu lệnh - Hiểu ý định - Trích xuất -

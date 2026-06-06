@@ -65,6 +65,33 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
+  stt: async (audio: Blob): Promise<string> => {
+    const form = new FormData();
+    const ext = audio.type.includes("webm")
+      ? "webm"
+      : audio.type.includes("ogg")
+        ? "ogg"
+        : audio.type.includes("mp4")
+          ? "m4a"
+          : "wav";
+    form.append("audio", audio, `recording.${ext}`);
+    const res = await fetch("/api/speech/stt", {
+      method: "POST",
+      headers: { "x-user-id": "u_an" }, // no Content-Type for FormData
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = (await res.json()).detail ?? "";
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status} ${detail || res.statusText}`);
+    }
+    const data = (await res.json()) as { text: string };
+    return data.text;
+  },
   recentRecipients: async (max = 5): Promise<RecentRecipient[]> => {
     const txs = await jsonFetch<
       { id: string; created_at: string; contact: RecentRecipient["contact"] }[]
