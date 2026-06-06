@@ -46,6 +46,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Lets the browser read the conversation id the chat endpoint assigns.
+    expose_headers=["X-Chat-Session-Id"],
 )
 
 
