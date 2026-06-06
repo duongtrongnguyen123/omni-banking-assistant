@@ -191,10 +191,19 @@ def evaluate(
                 )
         else:
             # Cold contact: use global mean × multiplier as before.
-            all_amounts = [t.amount for t in transactions if t.status == "completed"]
+            # NB: filter ``amount > 0`` — zero-amount completed rows are a
+            # known data-corruption mode in the contest dataset. Without
+            # this guard a user whose entire history is zero-amount sees
+            # ``avg == 0`` and every cold-contact transfer trips the
+            # ``amount >= 0 * MULTIPLIER == 0`` branch as a false positive.
+            all_amounts = [
+                t.amount
+                for t in transactions
+                if t.status == "completed" and t.amount > 0
+            ]
             if all_amounts:
                 avg = mean(all_amounts)
-                if amount >= avg * ANOMALY_MULTIPLIER:
+                if avg > 0 and amount >= avg * ANOMALY_MULTIPLIER:
                     flags.append(
                         SafetyFlag(
                             code="amount_above_average",

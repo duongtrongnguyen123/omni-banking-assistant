@@ -123,6 +123,25 @@ class _UserModel:
 _models: dict[str, _UserModel] = {}
 """Process-local cache of per-user models."""
 
+# Lazy-retrain bookkeeping ---------------------------------------------------
+#
+# ``train_fraud_models`` runs once at startup. As the user adds new tx /
+# contacts during the demo, ``stats.recipient_counts`` becomes stale and
+# known recipients keep scoring as ``is_new_recipient=1`` — that spuriously
+# raises ``fraud_risk_high`` for a recipient the user already paid this
+# session. We retrain in-place when:
+#   1. ``score_draft`` is asked about a ``contact_id`` not in the snapshot
+#      stats (definitely-new evidence — retrain immediately, no cooldown);
+#   2. OR the user has *any* tx newer than ``trained_at`` AND we last
+#      retrained more than ``LAZY_RETRAIN_COOLDOWN_SEC`` ago.
+#
+# The cooldown stops hot-loops when many drafts arrive in quick succession.
+LAZY_RETRAIN_COOLDOWN_SEC = 600  # 10 minutes — generous, demo-safe
+_last_retrain_attempt: dict[str, float] = {}
+"""``user_id -> monotonic seconds`` of the last retrain attempt. Used to
+throttle the time-driven retrain branch. The new-contact branch is *not*
+throttled because it's a definite cache-miss signal."""
+
 
 # Utilities ------------------------------------------------------------------
 
@@ -455,6 +474,76 @@ def _calibrate(raw: float, p50: float, p95: float) -> float:
     return 1.0 / (1.0 + math.exp(-3.0 * z))
 
 
+def _maybe_lazy_retrain(
+    user_id: str,
+    fitted: Optional[_UserModel],
+    cid: Optional[str],
+) -> Optional[_UserModel]:
+    """Refresh ``fitted`` from the store when the snapshot is stale.
+
+    Returns the (possibly retrained) model, or ``None`` if no model could
+    be fit. ``score_draft`` calls this just before vectorising the draft
+    so a brand-new contact_id is reflected in ``stats.recipient_counts``
+    before the next score is computed.
+
+    Two trigger conditions:
+      * **definite new contact**: ``cid`` is non-empty and not present in
+        ``stats.recipient_counts`` — the cached stats are demonstrably
+        out of date for this scoring call. No cooldown.
+      * **time-based**: the user has at least one tx newer than
+        ``fitted.trained_at`` AND we haven't retrained for
+        ``LAZY_RETRAIN_COOLDOWN_SEC`` seconds. Throttled to avoid a
+        hot-loop on bursty traffic.
+    """
+    if not is_enabled():
+        return fitted
+
+    # If the user was never trained at startup (n_train < MIN, sklearn off,
+    # or simply never seeded) keep the original semantics — ``score_draft``
+    # returns ``None`` and the legacy z-score path runs. Only an *existing*
+    # cached model is eligible for lazy refresh.
+    if fitted is None:
+        return None
+
+    new_contact = bool(cid and cid not in fitted.stats.recipient_counts)
+
+    cooldown_ok = True
+    if not new_contact:
+        last_attempt = _last_retrain_attempt.get(user_id, 0.0)
+        cooldown_ok = (time.monotonic() - last_attempt) >= LAZY_RETRAIN_COOLDOWN_SEC
+
+    if not new_contact and not cooldown_ok:
+        return fitted
+
+    # Defer the store import — keeps the module importable from eval
+    # scripts that never touch the runtime DB.
+    try:
+        from ..store import get_store
+
+        store = get_store()
+        txs = store.transactions_of(user_id)
+    except Exception:  # pragma: no cover — defensive
+        return fitted
+
+    if not txs:
+        return fitted
+
+    if not new_contact and fitted is not None:
+        # Time-based path: only bother if there's genuinely fresher data.
+        latest = max(
+            (_ensure_aware(t.created_at) for t in txs if t.status == "completed"),
+            default=None,
+        )
+        trained_at = _ensure_aware(fitted.trained_at)
+        if latest is None or latest <= trained_at:
+            _last_retrain_attempt[user_id] = time.monotonic()
+            return fitted
+
+    _last_retrain_attempt[user_id] = time.monotonic()
+    refreshed = train_user(user_id, txs)
+    return refreshed if refreshed is not None else fitted
+
+
 def score_draft(
     *,
     user_id: str,
@@ -475,12 +564,17 @@ def score_draft(
     if amount is None or amount <= 0:
         return None
     fitted = _models.get(user_id)
+    cid = contact_id or (recipient.id if recipient else None)
+
+    # Lazy retrain if the snapshot is stale (new contact seen this session,
+    # or fresh tx since last fit). Keeps ``is_new_recipient`` honest after
+    # the first transfer to a contact added mid-demo.
+    fitted = _maybe_lazy_retrain(user_id, fitted, cid)
     if fitted is None:
         return None
 
     if when is None:
         when = datetime.now(timezone.utc)
-    cid = contact_id or (recipient.id if recipient else None)
 
     X = _build_inference_vector(
         amount=int(amount),
@@ -499,6 +593,7 @@ def score_draft(
 def clear_models() -> None:
     """Used by eval scripts that want to rebuild from scratch."""
     _models.clear()
+    _last_retrain_attempt.clear()
 
 
 def loaded_user_ids() -> list[str]:

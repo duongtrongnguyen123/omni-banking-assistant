@@ -6,6 +6,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import mean
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+# Default timezone used to anchor naive datetimes passed into
+# ``next_run_for``. ``_safe_day_in_month`` returns a tz-aware datetime
+# (via ``.astimezone()``), so comparing it against a naive ``ref`` raises
+# ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+_DEFAULT_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 from ..config import get_settings
 from ..models.schemas import Contact, Schedule, Transaction
@@ -449,6 +456,13 @@ def next_run_for(cron: str, ref: datetime) -> datetime:
       "0 9 * * *"   -> hour H every day
     Falls back to ref+30d if the expression doesn't match.
     """
+    # Coerce naive ``ref`` to tz-aware Asia/Ho_Chi_Minh — the helper
+    # ``_safe_day_in_month`` returns a tz-aware datetime via
+    # ``.astimezone()``, so a naive ``ref`` from a caller using
+    # ``datetime.now()`` would crash the ``candidate <= ref`` comparison.
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=_DEFAULT_TZ)
+
     parts = cron.split()
     if len(parts) != 5:
         return ref + timedelta(days=30)
