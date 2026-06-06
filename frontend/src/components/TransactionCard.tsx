@@ -162,11 +162,22 @@ export const TransactionCard = ({
 
   useEffect(() => {
     if (wasActionable.current && !actionable) {
-      // Suppress the "Đã chuyển" celebration animation on cancel. The
-      // actionable→inactionable transition fires for any reason a card
-      // stops being live (executed, cancelled, raced past) — only
-      // execute should look celebratory.
-      if (cancelled) {
+      // The actionable→inactionable transition fires for ANY reason a
+      // card stops being live: user confirmed, user cancelled, OR the
+      // draft was silently superseded by a newer one (e.g. user typed
+      // "chuyển mẹ 2tr" → "số dư" → "chuyển bố 1tr" — draft A goes
+      // inactionable when B arrives). Only the explicit confirm path
+      // should play the celebration; everything else must stay silent
+      // or the user sees a fake "Đã chuyển X · Y" success on a card
+      // they never confirmed (verifier audit: "tự thực hiện giao dịch
+      // luôn").
+      //
+      // ``completed`` is the App-level positive signal — it's only
+      // set when the OTP confirm response comes back without a draft
+      // (see App.tsx setConfirmedDraftIds at the confirm call site).
+      // Treat anything else (cancel, stale-by-new-draft) as a quiet
+      // teardown.
+      if (!completed) {
         wasActionable.current = actionable;
         return;
       }
@@ -176,7 +187,7 @@ export const TransactionCard = ({
       return () => window.clearTimeout(t);
     }
     wasActionable.current = actionable;
-  }, [actionable, cancelled]);
+  }, [actionable, completed]);
   const blocked = draft.flags.some((f) => f.severity === "block");
   const hardBlocked = draft.flags.some(
     (f) => f.severity === "block" && f.code !== "insufficient_balance",
