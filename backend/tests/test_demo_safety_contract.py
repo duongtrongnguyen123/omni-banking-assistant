@@ -471,6 +471,29 @@ def test_default_limit_for_listy_history_queries(text: str) -> None:
     assert e.limit == 5, f"{text!r} → limit={e.limit}"
 
 
+def test_transfer_to_known_recipient_populates_recent_ledger() -> None:
+    """End-to-end: ``Gửi mẹ 2 triệu`` against the seeded ``u_an`` user
+    must produce a draft whose ``recent_to_recipient`` mini-ledger lists
+    up to 3 prior completed transfers (the seed has ≥3 to mẹ / Nguyễn
+    Thị Lan). The schema-level test below catches a silent field drop;
+    this one catches an orchestrator regression that stops populating
+    the field even though the schema still accepts it."""
+    r = _r("Gửi mẹ 2 triệu")
+    assert r.intent == "transfer", r.intent
+    assert r.draft is not None, "transfer should produce a draft"
+    assert r.draft.recipient is not None, "alias mẹ must resolve"
+    items = r.draft.recent_to_recipient
+    assert items, (
+        "draft.recent_to_recipient must be populated for a recipient with "
+        f"history (got {items!r})"
+    )
+    assert len(items) <= 3
+    for row in items:
+        assert isinstance(row["amount"], int) and row["amount"] > 0
+        assert isinstance(row["created_at"], str) and row["created_at"]
+        assert "description" in row
+
+
 def test_transaction_draft_schema_carries_recent_to_recipient_field() -> None:
     """The TransactionCard renders an inline mini-ledger from
     ``draft.recent_to_recipient`` (last 3 completed transfers to the
