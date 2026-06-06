@@ -42,7 +42,7 @@ We also explore three things beyond the slide brief:
 | 1 | Chat UI | React + Vite (TS), phone-frame mock | `frontend/src/` |
 | 2 | NLU | Groq Llama 3.3 70B + Gemini fallback + rule extractors | `backend/app/nlp/` |
 | 3 | Context | alias resolver, temporal resolver, in-process session, RAG | `backend/app/context/`, `backend/app/db/` |
-| 4 | Safety | rule engine (ambiguous, anomaly, balance, OTP step-up) | `backend/app/safety/rules.py` |
+| 4 | Safety | rule engine (ambiguous, MAD anomaly w/ structured `details`, balance, fraud Isolation Forest, OTP step-up) | `backend/app/safety/rules.py`, `backend/app/safety/fraud_model.py` |
 | 5 | Banking | mock transfer/balance/history/schedule, all gated by user confirm | `backend/app/banking/`, `backend/app/store.py` |
 | + | ML suggester | sklearn RandomForest + rule scorer + freq prior | `backend/app/ml/suggester.py` |
 | + | Embeddings | fastembed (local ONNX, multilingual MiniLM 384-d) | `backend/app/nlp/embeddings.py` |
