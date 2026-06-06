@@ -494,6 +494,25 @@ def test_transfer_to_known_recipient_populates_recent_ledger() -> None:
         assert "description" in row
 
 
+def test_balance_response_carries_7day_outflow_series() -> None:
+    """get_balance() must include ``recent_outflow_7d`` — a 7-element
+    list of non-negative ints (oldest → newest). The BalanceCard
+    sparkline depends on this exact shape; if the key drops or the
+    list length changes the sparkline silently disappears and judges
+    lose a visible ML/UX touchpoint."""
+    from app.banking.service import get_balance
+
+    b = get_balance(USER)
+    assert "recent_outflow_7d" in b, "balance response missing recent_outflow_7d"
+    series = b["recent_outflow_7d"]
+    assert isinstance(series, list) and len(series) == 7, (
+        f"recent_outflow_7d must be a length-7 list, got {series!r}"
+    )
+    assert all(isinstance(x, int) and x >= 0 for x in series), (
+        f"every cell must be a non-negative int, got {series!r}"
+    )
+
+
 def test_transaction_draft_schema_carries_recent_to_recipient_field() -> None:
     """The TransactionCard renders an inline mini-ledger from
     ``draft.recent_to_recipient`` (last 3 completed transfers to the
