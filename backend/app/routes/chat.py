@@ -120,7 +120,25 @@ def chat(
     # Resolve (or open) the durable conversation this turn lands in, and
     # tell the client which one it was so a freshly-opened conversation
     # gets adopted by the UI.
-    session_id = chat_log.resolve_session(user_id, req.session_id)
+    #
+    # CRITICAL UX guard: when the client doesn't send a session_id
+    # (very first message, header dropped by proxy, raw curl), reuse
+    # the last-seen session for this user instead of minting a NEW one
+    # every turn. Without this reuse, ``resolve_session(None)`` returns
+    # a fresh session_id each turn → ``_enter_chat_session`` sees the
+    # change → wipes the draft → user reports "context không giữ giữa
+    # các turn" / "tự đặt 2tr ở turn mới rồi quên người". Sticky reuse
+    # keeps the user inside the same conversation until they explicitly
+    # send a different session_id (e.g. by clicking another chat in the
+    # sidebar).
+    if req.session_id is None:
+        reuse = _LAST_SESSION_BY_USER.get(user_id)
+        if reuse and chat_log.get_session(reuse, user_id) is not None:
+            session_id = reuse
+        else:
+            session_id = chat_log.resolve_session(user_id, None)
+    else:
+        session_id = chat_log.resolve_session(user_id, req.session_id)
     response.headers["X-Chat-Session-Id"] = session_id
     _enter_chat_session(user_id, session_id)
     if dev:
