@@ -84,6 +84,7 @@ export interface TransactionDraft {
   requires_step_up: boolean;
   predicted_amount?: boolean;
   amount_prediction_reason?: string | null;
+  amount_prediction_confidence?: number | null;
   recent_to_recipient?: Array<{
     amount: number;
     created_at: string;

@@ -1509,6 +1509,9 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         amount_prediction_reason=(
             prediction.get("rationale") if prediction is not None else None
         ),
+        amount_prediction_confidence=(
+            prediction.get("confidence") if prediction is not None else None
+        ),
         category=category,
         recent_to_recipient=recent_to_recipient,
     )

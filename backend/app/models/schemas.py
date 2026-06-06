@@ -179,6 +179,10 @@ class TransactionDraft(BaseModel):
     # True; surfaced as the tooltip on the "đề xuất từ lịch sử" chip so
     # judges can see the ML rationale on hover.
     amount_prediction_reason: Optional[str] = None
+    # Confidence in [0, 1] from the amount predictor — surfaced as a small
+    # percentage badge next to the đề xuất chip so the user sees not just
+    # *that* we guessed, but *how sure* we are. None when no prediction.
+    amount_prediction_confidence: Optional[float] = None
     # Auto-inferred category for the draft, derived from the description
     # text by ``app.ml.categorizer``. ``None`` when no description was
     # provided or the classifier abstained. The UI renders this as a small
