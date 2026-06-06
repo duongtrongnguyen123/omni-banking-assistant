@@ -38,6 +38,12 @@ _VALIDATION: list[tuple[str, str]] = [
     ("siêu thị Aeon Mall", "groceries"),
     ("tạp hoá đầu ngõ", "groceries"),
 
+    # shopping (4) — quần áo / mỹ phẩm / đồ tiêu dùng
+    ("mua áo Zara cuối tuần", "shopping"),
+    ("son môi Maybelline", "shopping"),
+    ("đặt giày Shopee", "shopping"),
+    ("đồ tiêu dùng cá nhân", "shopping"),
+
     # entertainment (4)
     ("xem phim CGV tối qua", "entertainment"),
     ("Netflix gói gia đình", "entertainment"),

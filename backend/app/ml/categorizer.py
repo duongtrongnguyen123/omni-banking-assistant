@@ -33,6 +33,7 @@ CATEGORIES: tuple[str, ...] = (
     "food",
     "transport",
     "groceries",
+    "shopping",      # quần áo / đồ tiêu dùng / mua sắm
     "entertainment",
     "health",
     "rent",
@@ -151,6 +152,41 @@ _KEYWORD_RULES: list[tuple[str, str, float]] = [
     ("sua", "groceries", 0.6),
     ("do an tuan", "groceries", 1.0),
     ("cho", "groceries", 0.55),   # "chợ" — market, but blocked when context = "anh chợ"
+
+    # ---- shopping ---------------------------------------------------------
+    # Pre-fix: budget_entities.py / insights_handler.py both knew about
+    # the "shopping" / "Mua sắm" label but the categorizer never tagged
+    # any tx with it, so a user-set "Mua sắm" budget never matched
+    # anything → budget was silently useless. Rules below let the
+    # categoriser actually emit ``shopping``.
+    ("mua sam", "shopping", 1.0),
+    ("mua sắm", "shopping", 1.0),
+    ("shopping", "shopping", 1.0),
+    ("tieu dung", "shopping", 0.9),     # đồ tiêu dùng
+    ("hang tieu dung", "shopping", 1.0),
+    ("do tieu dung", "shopping", 1.0),
+    ("quan ao", "shopping", 1.0),
+    ("mua ao", "shopping", 1.0),
+    ("mua quan ao", "shopping", 1.0),
+    ("ao", "shopping", 0.6),
+    ("quan", "shopping", 0.5),          # "quần" — low conf, "quan he" ≠ quần
+    ("vay", "shopping", 0.65),          # váy
+    ("giay", "shopping", 0.8),          # giày
+    ("dep", "shopping", 0.6),           # dép
+    ("tui xach", "shopping", 1.0),
+    ("balo", "shopping", 0.9),
+    ("kinh mat", "shopping", 0.95),
+    ("son moi", "shopping", 1.0),
+    ("my pham", "shopping", 1.0),
+    ("nuoc hoa", "shopping", 1.0),
+    ("mua do", "shopping", 0.85),
+    ("zara", "shopping", 1.0),
+    ("h&m", "shopping", 1.0),
+    ("uniqlo", "shopping", 1.0),
+    ("shopee", "shopping", 0.95),
+    ("lazada", "shopping", 0.95),
+    ("tiki", "shopping", 0.9),
+    ("sendo", "shopping", 0.95),
 
     # ---- entertainment ----------------------------------------------------
     ("phim", "entertainment", 0.9),
