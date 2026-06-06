@@ -219,6 +219,26 @@ class Store:
                 raise
         return contact
 
+    def add_alias(self, contact_id: str, alias: str) -> bool:
+        """Persist ``alias`` for ``contact_id`` if it isn't already stored.
+
+        Returns True when a new row was inserted, False when the alias
+        already existed (idempotent — safe to call on every confirm).
+        """
+        from .context.alias import _fold
+
+        normalized = _fold(alias)
+        if not normalized:
+            return False
+        conn = get_connection()
+        with self._lock:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO contact_aliases
+                   (contact_id, alias, alias_normalized) VALUES (?,?,?)""",
+                (contact_id, alias.strip(), normalized),
+            )
+            return cur.rowcount > 0
+
     def find_contact_by_account(
         self, user_id: str, account_number: str
     ) -> Optional[Contact]:
