@@ -28,12 +28,19 @@ def _fold(s: str) -> str:
 _RELATIONAL_PREFIXES = ("anh ", "chi ", "em ", "ban ", "co ", "chu ", "bac ", "ong ", "ba ")
 
 # Possessive / vocative tail tokens — "mẹ tôi" / "mẹ mình" /
-# "chị Lan ơi" / "anh Hùng nhé". None appear in any contact's display
-# name or alias list, so leaving them in defeats the exact-alias match
-# ("mẹ tôi" never hits the "mẹ" alias). Strip from the right.
+# "chị Lan ơi" / "anh Hùng nhé" / "bạn thân của tôi". None appear in
+# any contact's display name or alias list, so leaving them in
+# defeats the exact-alias match ("mẹ tôi" never hits the "mẹ" alias).
+# Strip from the right.
+#
+# "của" (possessive marker, "of") is a critical addition: pre-fix
+# "bạn thân của tôi" → strip only "toi" → "ban than cua" → no alias
+# match. Now "cua" is stripped too, and the chain pops down to
+# "ban than" which hits the alias. Same trap for "anh Tuấn của mình".
 _RELATIONAL_TAIL_TOKENS = {
     "toi", "minh", "em", "anh", "chi",
-    "oi", "nhe", "nha", "nhi",
+    "oi", "nhe", "nha", "nhi", "a",   # "mẹ ạ"
+    "cua",                             # possessive "của"
 }
 
 
@@ -48,6 +55,21 @@ def _strip_relational(folded: str) -> str:
     # it isn't; but "Em" / "Anh" / "Chi" might be a single name token,
     # so the >1 guard keeps them safe).
     tokens = s.split()
+    while len(tokens) > 1 and tokens[-1] in _RELATIONAL_TAIL_TOKENS:
+        tokens.pop()
+    return " ".join(tokens)
+
+
+def _strip_tail_only(folded: str) -> str:
+    """Like ``_strip_relational`` but skips the prefix-strip step.
+
+    Critical for matching multi-word labels whose first token is a
+    relational word — e.g. "bạn thân của tôi" needs to land as
+    "ban than" (tail "cua toi" gone, prefix "ban " KEPT) to hit the
+    "Bạn thân" label on Vũ Quốc Bảo. The full strip used to chop "ban"
+    too and reduced the query to "than", which matched nothing.
+    """
+    tokens = folded.split()
     while len(tokens) > 1 and tokens[-1] in _RELATIONAL_TAIL_TOKENS:
         tokens.pop()
     return " ".join(tokens)
@@ -104,6 +126,11 @@ def resolve_recipient(
         return []
     query = _fold(surface)
     query_stripped = _strip_relational(query)
+    # Tail-only variant — preserves relational PREFIXES so multi-word
+    # labels whose first token IS the relational word ("Bạn thân",
+    # "Bạn cấp 3", "Anh Hai") still match. Full strip would chop "bạn"
+    # off and leave only "than", which matches nothing.
+    query_tail = _strip_tail_only(query)
 
     matches: list[ResolvedRecipient] = []
 
@@ -111,7 +138,7 @@ def resolve_recipient(
     # to name lookups. User said "bạn thân" → if no alias matches, return
     # []; the chat asks again rather than guessing a random name.
     if kind == "alias":
-        return _lookup_in_aliases(query, query_stripped, contacts)
+        return _lookup_in_aliases(query, query_stripped, query_tail, contacts)
 
     if kind == "name":
         return _lookup_in_names(query, query_stripped, contacts)
@@ -125,14 +152,17 @@ def resolve_recipient(
     # Alias-first ordering still keeps "bạn thân" / "mẹ" routed correctly;
     # the fall-through only kicks in when no alias matches, and name
     # lookup is strict exact/token (no embedding noise).
-    matches = _lookup_in_aliases(query, query_stripped, contacts)
+    matches = _lookup_in_aliases(query, query_stripped, query_tail, contacts)
     if matches:
         return matches
     return _lookup_in_names(query, query_stripped, contacts)
 
 
 def _lookup_in_aliases(
-    query: str, query_stripped: str, contacts: list[Contact]
+    query: str,
+    query_stripped: str,
+    query_tail: str,
+    contacts: list[Contact],
 ) -> list[ResolvedRecipient]:
     """Exact fold-match against any saved alias of any contact. Also
     accepts the stripped form so "anh Tuấn" matches alias "Tuấn".
@@ -141,13 +171,18 @@ def _lookup_in_aliases(
     chip displayed in the contacts UI: "Mẹ", "Bạn thân", "Sếp"...).
     The seed data carries these on the contact row itself, not as
     separate alias rows, so "bạn thân" was previously returning [].
+
+    Three query forms tried (in order, first match wins per contact):
+      • ``query``         — raw fold, no stripping
+      • ``query_stripped``— prefix + tail stripped ("anh Tuấn của tôi" → "Tuấn")
+      • ``query_tail``    — tail-stripped only ("bạn thân của tôi" → "ban than")
     """
     matches: list[ResolvedRecipient] = []
     for c in contacts:
         matched = False
         for alias in c.aliases:
             folded = _fold(alias)
-            if folded == query or folded == query_stripped:
+            if folded == query or folded == query_stripped or folded == query_tail:
                 matches.append(
                     ResolvedRecipient(
                         contact=c, via_alias=alias, matched_from="alias",
@@ -161,7 +196,11 @@ def _lookup_in_aliases(
         # because the user typed a label, not a stored alias.
         if c.label:
             folded_label = _fold(c.label)
-            if folded_label == query or folded_label == query_stripped:
+            if (
+                folded_label == query
+                or folded_label == query_stripped
+                or folded_label == query_tail
+            ):
                 matches.append(
                     ResolvedRecipient(
                         contact=c, via_alias=c.label, matched_from="alias",

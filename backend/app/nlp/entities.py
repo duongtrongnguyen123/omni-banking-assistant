@@ -185,7 +185,12 @@ _SEMANTIC_RE = re.compile(
 
 # Lookahead stop tokens — used to decide where a recipient name ends.
 _STOP_LOOKAHEAD = (
-    r"\d"
+    # Digit + amount unit — stops the capture at the amount span ("cho mẹ
+    # 2tr" → "mẹ"). Bare digits without a unit (e.g. "Bạn cấp 3", "lớp 12",
+    # "khoá 5") are KEPT inside the recipient surface because they're
+    # part of the label, not an amount. Pre-fix the bare ``\d`` truncated
+    # "Bạn cấp 3" → "Bạn cấp" and the resolver couldn't match the label.
+    r"\d+\s*(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|đ|vnd|tỷ|ty|tỉ|ti|chai|vé|củ|lít|đồng|dong)\b"
     r"|số\s+tiền|so\s+tien"
     r"|số\s+tài|so\s+tai"
     r"|stk"
@@ -228,17 +233,25 @@ _STOP_LOOKAHEAD = (
 # Preposition-led: "cho|tới X" — high precision.
 # NOTE: deliberately drop "đến/den" — it's overloaded in Vietnamese
 # ("đến giờ" = "until now") and causes false-positive recipient captures.
+#
+# Character class: FIRST char must be non-digit (avoids "cho 2 triệu" →
+# who="2 triệu"); subsequent chars allow digits so labels like "Bạn cấp
+# 3" / "Bạn ĐH" / "Khoá 5" stay intact. The STOP_LOOKAHEAD also requires
+# `\d+ + amount unit` (e.g. "3tr") to terminate, so a bare digit inside
+# a label doesn't accidentally end the capture.
 _RECIPIENT_PREP_RE = re.compile(
-    r"(?:cho|tới|toi)\s+(?P<who>[^\d,.\n?!]+?)"
+    r"(?:cho|tới|toi)\s+(?P<who>[^\d,.\n?!][^,.\n?!]*?)"
     rf"(?=\s*(?:{_STOP_LOOKAHEAD}))",
     re.IGNORECASE,
 )
 
 # Verb-led fallback: "chuyển|gửi|trả|nạp X <amount>" — used only when the
 # preposition pattern finds nothing (otherwise "chuyển cho X" double-matches).
+# Same first-char-non-digit guard so "chuyển 2 triệu mẹ" stays out of this
+# pattern and falls through to ``_VERB_AMOUNT_RECIPIENT_RE`` (backward order).
 _RECIPIENT_VERB_RE = re.compile(
     r"(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
-    r"(?P<who>[^\d,.\n?!]+?)"
+    r"(?P<who>[^\d,.\n?!][^,.\n?!]*?)"
     rf"(?=\s*(?:{_STOP_LOOKAHEAD}))",
     re.IGNORECASE,
 )
