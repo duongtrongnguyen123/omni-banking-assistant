@@ -114,6 +114,35 @@ Removing the cap evaluates ~70k test rows but the per-user trained
 model is the same — numbers shift by <2 % in either direction
 (spot-checked on `EVAL_TEST_LIMIT=20000`).
 
+### 2b. Cross-validation on PaySim (2016, 6.36 M tx, 8 213 fraud)
+
+Source: `backend/scripts/eval_fraud_paysim.py`. To check that the
+BankSim numbers aren't a one-dataset fluke we re-ran the same
+Isolation Forest setup on **PaySim** (Kaggle `ealaxi/paysim1`, same
+author family as BankSim, 2 years newer, 10× larger, 0.13 % fraud
+rate — closer to the real-world base rate than BankSim's 1.2 %).
+
+Threshold sweep on a 500 k stratified sample (~9 s wall time):
+
+| Threshold | Recall | Precision | FP-rate |
+|----------:|-------:|----------:|--------:|
+| 0.5  | 0.943 | 0.031 | 0.493 |
+| 0.7  | 0.900 | 0.041 | 0.347 |
+| 0.8  | 0.874 | 0.052 | 0.268 |
+| 0.9  | 0.821 | 0.074 | 0.170 |
+| **0.95** | **0.742** | **0.112** | **0.098** |
+
+At the operating point that matches BankSim recall (0.95 → recall
+0.74), PaySim precision is **0.11** and FP-rate is **0.10** —
+within rounding of BankSim's 0.14 / 0.11. The same model behaves
+the same way on a larger, more realistic dataset. The pitch number
+isn't a BankSim artefact.
+
+Suggester Hit@K is skipped on PaySim: the dataset has ~1 transaction
+per customer (6.35 M customers / 6.36 M rows), so there is no
+per-user history to learn from. BankSim remains the suggester
+benchmark because it concentrates 50 merchants across many users.
+
 ---
 
 ## 3. Suggester Hit@K on BankSim merchants
