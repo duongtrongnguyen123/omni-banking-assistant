@@ -2999,3 +2999,34 @@ def test_description_extractor_strips_la_thanh_linker(
     e = extract(text)
     assert e.description == expected_desc, (text, e.description)
 
+
+@pytest.mark.parametrize(
+    'amount,expected',
+    [
+        (1, 1),
+        (4_999, 4_999),
+        (5_000, 5_000),
+        (9_999, 9_999),
+    ],
+)
+def test_round_to_nice_preserves_sub_10k_amounts(
+    amount: int, expected: int,
+) -> None:
+    """Pre-fix `_round_to_nice` divided by a 10k step then banker's-
+    rounded, so 5_000 → round(0.5) → 0. The predictor then surfaced
+    "đề xuất 0đ" on the confirm card while safety raised
+    `missing_amount` (block) — user saw a contradiction. Below 10k we
+    leave the amount intact: nothing to smooth at that magnitude."""
+    from app.ml.amount_predictor import _round_to_nice
+    assert _round_to_nice(amount) == expected
+
+
+def test_round_to_nice_still_smooths_large_amounts() -> None:
+    """The fix must not regress the smoothing behaviour for the actual
+    target range. 50_000 stays as a "nice" 10k-aligned value; large
+    noisy amounts continue to snap to the appropriate step."""
+    from app.ml.amount_predictor import _round_to_nice
+    assert _round_to_nice(50_000) == 50_000
+    assert _round_to_nice(2_017_345) == 2_000_000
+    assert _round_to_nice(12_345_678) == 12_500_000
+
