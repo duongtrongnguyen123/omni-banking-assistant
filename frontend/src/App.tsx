@@ -895,27 +895,6 @@ export default function App() {
             </div>
           </div>
           <PrivacyBadge />
-          <button
-            type="button"
-            className="phone__receive-btn"
-            onClick={() => setReceiveOpen(true)}
-            aria-label="Mở mã QR nhận tiền"
-            title="Nhận tiền"
-          >
-            Nhận tiền
-          </button>
-          {ttsSupported && (
-            <button
-              type="button"
-              className={`phone__tts-btn ${ttsEnabled ? "phone__tts-btn--on" : ""}`}
-              onClick={() => setTtsEnabled((v) => !v)}
-              aria-label={ttsEnabled ? "Tắt giọng đọc" : "Bật giọng đọc"}
-              aria-pressed={ttsEnabled}
-              title={ttsEnabled ? "Đang đọc to (vi-VN)" : "Đọc to câu trả lời"}
-            >
-              <span aria-hidden="true">{ttsEnabled ? "🔊" : "🔇"}</span>
-            </button>
-          )}
           <ExportMenu />
           <div className="user-pill" aria-label="Người dùng An">AN</div>
         </header>
