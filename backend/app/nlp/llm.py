@@ -124,7 +124,7 @@ Return STRICT JSON only, no prose.
 
 Schema:
 {
-  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|atm_finder|smalltalk|unknown",
+  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|insights|set_budget|set_goal|budget_status|goal_status|atm_finder|my_account|receive_qr|recap|smalltalk|unknown",
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
@@ -171,6 +171,30 @@ Rules:
   emit recipient_text=null.
 - "ATM gần nhất / cây ATM / tìm ATM <bank>" → atm_finder; put the bank
   name (if mentioned) in entities.atm_bank.
+- INBOUND-SIDE intents (no money flow, read-only):
+  • "STK của tôi / TK của mình / số tài khoản của tôi" → my_account.
+  • "Tạo QR nhận tiền / cho tôi QR / mã QR" → receive_qr. If the user
+    states an amount or memo it gets baked into the QR payload.
+- RECAP intent: the user wants to know the state of the CURRENT chat
+  session — what slots are filled, what they just said, what they are
+  in the middle of. Cover ANY phrasing semantically equivalent to
+  "remind me what I'm doing right now" — rule-based keyword lists
+  cannot exhaust this surface, so YOU must classify creatively. Hit
+  recap when the user asks:
+    • What they said / typed earlier ("lúc nãy tôi nói gì", "vừa rồi
+      bảo bao nhiêu", "ơ vừa nói cái gì nhỉ", "tôi vừa làm gì")
+    • The current draft's slots ("đang chuyển bao nhiêu cho ai",
+      "mình đang làm giao dịch nào", "số tiền vừa rồi là bao nhiêu")
+    • Generic recap commands ("tóm tắt", "recap", "nhắc lại",
+      "show what's pending", "what's in progress")
+  Critically: history is for PAST COMPLETED transactions ("tháng trước
+  tôi tiêu bao nhiêu"). Recap is for the LIVE draft / session state.
+  When in doubt, prefer recap whenever the phrasing references an
+  IMMEDIATELY PREVIOUS user utterance ("lúc nãy" / "vừa rồi" / "đang").
+- INSIGHTS intent: analytics about spending patterns (bất thường,
+  khả nghi, so với tháng trước, so sánh chi tiêu).
+- set_budget / budget_status: budget creation vs status query.
+- set_goal  / goal_status:   savings-goal creation vs status query.
 - FOLLOW-UPS: when the current message looks like a continuation
   ("còn tháng trước?", "đổi sang Minh", "mà thôi đổi sang X", "cái nào nhiều
    nhất?", "vậy còn ...?"), INHERIT unmentioned fields from the previous turn
@@ -252,6 +276,48 @@ INPUT: "Tháng này mình gửi mẹ bao nhiêu rồi?"
 
 INPUT: "Tháng này mình tiêu bao nhiêu rồi?"
 {"intent":"history","confidence":0.9,"entities":{}}
+
+# Recap (live draft state) — these reference the CURRENT session, not
+# past transactions. Critical to distinguish from history.
+INPUT: "lúc nãy tôi bảo bao nhiêu"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "số tiền lúc nãy tôi nói là bao nhiêu"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "tôi vừa nói gì"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "ơ vừa nói cái gì nhỉ"
+{"intent":"recap","confidence":0.85,"entities":{}}
+
+INPUT: "đang chuyển bao nhiêu cho ai"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "mình đang làm giao dịch nào ấy nhỉ"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "tóm tắt giúp tôi"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "nhắc lại đi"
+{"intent":"recap","confidence":0.85,"entities":{}}
+
+INPUT: "giao dịch hiện tại của tôi là gì"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+# Inbound — my_account / receive_qr
+INPUT: "STK của tôi là gì"
+{"intent":"my_account","confidence":0.95,"entities":{}}
+
+INPUT: "cho tôi xem số tài khoản của mình"
+{"intent":"my_account","confidence":0.9,"entities":{}}
+
+INPUT: "tạo QR nhận 500k"
+{"intent":"receive_qr","confidence":0.95,"entities":{"amount":500000,"amount_text":"500k"}}
+
+INPUT: "cho tôi mã QR để nhận tiền"
+{"intent":"receive_qr","confidence":0.9,"entities":{}}
 
 INPUT: "Số dư còn bao nhiêu?"
 {"intent":"balance","confidence":0.95,"entities":{}}
