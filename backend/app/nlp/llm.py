@@ -12,6 +12,7 @@ Supported (set the matching env var to enable):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -929,10 +930,20 @@ def _openai_compat(
                 return None
             return choices[0]["message"]["content"]
         except urllib.error.HTTPError as e:
+            # ``HTTPError`` IS a file-like object holding the underlying
+            # socket — Python's ``http.client`` ties the response stream to
+            # the connection. If we don't ``close()`` it the keep-alive
+            # connection stays in CLOSE_WAIT and the per-process FD pool
+            # bleeds out under sustained load (Bug A: backend stalls after
+            # ~25 multi-turn requests). The ``with``-block above only binds
+            # ``resp`` on success; the error path needs an explicit close.
             try:
                 body_text = e.read().decode("utf-8", "ignore")[:240]
             except Exception:
                 body_text = ""
+            finally:
+                with contextlib.suppress(Exception):
+                    e.close()
             log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
             if e.code == 429:
                 status = "429"
