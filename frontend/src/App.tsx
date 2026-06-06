@@ -94,6 +94,7 @@ export default function App() {
   } | null>(null);
   const [authStage, setAuthStage] = useState<"otp" | "biometric">("otp");
   const [authOtp, setAuthOtp] = useState("");
+  const [authOtpError, setAuthOtpError] = useState("");
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readStoredTtsPref());
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -352,6 +353,7 @@ export default function App() {
     setPendingAuth({ draftId, draft, sourceAccountId });
     setAuthStage(needsOtp ? "otp" : "biometric");
     setAuthOtp("");
+    setAuthOtpError("");
   };
 
   const cleanAuthOtp = authOtp.replace(/\D/g, "").slice(0, 6);
@@ -359,6 +361,11 @@ export default function App() {
   // OTP stage "Tiếp tục": advance to the face scan if required, else submit.
   const submitOtp = () => {
     if (!pendingAuth) return;
+    if (cleanAuthOtp !== "123456") {
+      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      return;
+    }
+    setAuthOtpError("");
     if (pendingAuth.draft.auth_required?.includes("biometric")) {
       setAuthStage("biometric");
       return;
@@ -373,6 +380,11 @@ export default function App() {
   // Face scan verified → submit OTP + scan together.
   const finishBiometric = (scan: BiometricScanResult) => {
     if (!pendingAuth) return;
+    if (cleanAuthOtp !== "123456") {
+      setAuthStage("otp");
+      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      return;
+    }
     const { draftId, sourceAccountId } = pendingAuth;
     const otp = cleanAuthOtp;
     setPendingAuth(null);
@@ -1001,20 +1013,27 @@ export default function App() {
                 <input
                   className="otp-input auth-card__otp"
                   value={cleanAuthOtp}
-                  onChange={(e) =>
-                    setAuthOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
+                  onChange={(e) => {
+                    setAuthOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
+                    setAuthOtpError("");
+                  }}
                   inputMode="numeric"
                   maxLength={6}
                   placeholder="••••••"
                   autoFocus
                 />
+                {authOtpError && (
+                  <div className="auth-card__error" role="alert">
+                    {authOtpError}
+                  </div>
+                )}
                 <div className="auth-card__actions">
                   <button
                     className="btn btn--ghost"
                     onClick={() => {
                       setPendingAuth(null);
                       setAuthOtp("");
+                      setAuthOtpError("");
                     }}
                     disabled={busy}
                   >

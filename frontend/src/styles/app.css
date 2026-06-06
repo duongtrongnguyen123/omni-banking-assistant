@@ -787,7 +787,14 @@ textarea:focus-visible,
 }
 
 .auth-card__otp {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+
+.auth-card__error {
+  margin: 0 0 12px;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .auth-card__actions {

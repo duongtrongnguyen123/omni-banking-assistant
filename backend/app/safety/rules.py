@@ -359,14 +359,16 @@ def evaluate(
 
 
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
-    """Whether OTP / step-up auth is required to proceed."""
+    """Whether biometric step-up auth is required to proceed.
+
+    Omni's prototype policy is intentionally simple for the banking demo:
+    only transfers from 10M VND upward require face verification. Other warn
+    flags can still explain risk, but sub-10M transfers stay OTP-only.
+    """
     return any(
         f.code in (
             "new_recipient_large_amount",
             "large_amount",
-            "amount_above_average",
-            "fraud_risk_high",
-            "transfer_velocity_high",
         )
         and f.severity == "warn"
         for f in flags
@@ -380,8 +382,8 @@ def is_blocked(flags: list[SafetyFlag]) -> bool:
 def auth_policy(flags: list[SafetyFlag]) -> list[str]:
     """Risk-based auth policy for MVP.
 
-    Normal transfer: OTP.
-    Warn-level risky transfer: OTP + mock biometric.
+    Normal / sub-10M transfer: OTP.
+    Large transfer (>=10M): OTP + biometric.
     Blocked transfer: no auth path until the user fixes the blocked state.
     """
     if is_blocked(flags):

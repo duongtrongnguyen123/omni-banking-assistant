@@ -1907,6 +1907,28 @@ def confirm_draft(
     draft.awaiting_otp = True
     session.set_draft(draft)
 
+    # --- OTP preflight ---
+    # When OTP + biometric arrive together, validate OTP first so a wrong
+    # code stops immediately instead of making the user complete a face scan.
+    if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is not None:
+        if not otp.strip() or otp.strip() != "123456":
+            text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
+            session.append("user", "Xác minh OTP")
+            session.append("omni", text)
+            try:
+                from .audit_log import record_otp
+                record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+            except Exception:  # pragma: no cover
+                pass
+            return OmniResponse(intent="transfer", text=text, draft=draft)
+        try:
+            from .audit_log import record_otp
+            record_otp(user_id=user_id, draft_id=draft.id, action="verified")
+        except Exception:  # pragma: no cover
+            pass
+        draft.auth_completed.append("otp")
+        session.set_draft(draft)
+
     # --- Biometric (8D face scan) ---
     if (
         "biometric" in draft.auth_required
