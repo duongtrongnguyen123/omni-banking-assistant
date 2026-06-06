@@ -2638,3 +2638,62 @@ def test_thang_nay_is_a_temporal_reference(text: str) -> None:
     e = extract(text)
     assert e.temporal_reference is not None, text
 
+
+
+# ---------------------------------------------------------------------------
+# Modify description mid-flow — "nội dung là X" / "ghi chú là X" updates
+# ---------------------------------------------------------------------------
+
+
+def test_modify_description_mid_flow() -> None:
+    """After an active draft, a judge typing 'nội dung là tiền học' /
+    'ghi chú là tiền cơm' must update draft.description, not fall to
+    the guess-correction page. Pre-fix the modify gate required
+    nlu.intent == 'transfer' — but a bare description message gets
+    intent='unknown' because there's no transfer verb."""
+    s = session_for(USER)
+    s.clear_draft()
+    handle_message(USER, 'gửi mẹ 2 triệu')
+    r = handle_message(USER, 'ghi chú là tiền cơm')
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.description == 'tiền cơm'
+    # Recipient must be preserved.
+    assert r.draft.recipient is not None
+    assert 'Mình chưa rõ' not in r.text
+
+
+def test_modify_description_with_embedded_cho_preserves_recipient() -> None:
+    """'nội dung là tiền học cho em' — the 'cho em' inside the
+    description used to trip the recipient extractor and clobber the
+    active draft's recipient. The description anchor at message start
+    now suppresses recipient extraction, so the draft stays whole."""
+    s = session_for(USER)
+    s.clear_draft()
+    handle_message(USER, 'gửi mẹ 2 triệu')
+    r = handle_message(USER, 'nội dung là tiền học cho em')
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.recipient is not None, 'recipient was clobbered'
+    assert 'tiền học' in (r.draft.description or '')
+
+
+@pytest.mark.parametrize(
+    'text,expected_desc',
+    [
+        ('nội dung là tiền học', 'tiền học'),
+        ('ghi chú là tiền cơm', 'tiền cơm'),
+        ('nội dung tiền học', 'tiền học'),
+        ('ghi chú tiền cơm', 'tiền cơm'),
+    ],
+)
+def test_description_extractor_strips_la_thanh_linker(
+    text: str, expected_desc: str
+) -> None:
+    """Linker words 'là' / 'thành' between the anchor and the actual
+    content must be stripped — pre-fix 'nội dung là tiền học' yielded
+    description='là tiền học'."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.description == expected_desc, (text, e.description)
+

@@ -59,7 +59,13 @@ _TEMPORAL_PATTERNS = [
 _TEMPORAL_RE = re.compile("|".join(_TEMPORAL_PATTERNS), re.IGNORECASE)
 
 _DESC_RE = re.compile(
-    r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu|tiền|tien)\s+"
+    # Anchor phrases — "nội dung / noi dung / ghi chú / ghi chu / tiền /
+    # tien" — optionally followed by a linker ("là / thành / là / =")
+    # that judges naturally put between "nội dung" and the actual
+    # content. Stripping the linker means "nội dung là tiền học" yields
+    # description "tiền học", not "là tiền học".
+    r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu|tiền|tien)"
+    r"\s+(?:là\s+|la\s+|thành\s+|thanh\s+|=\s+)?"
     r"([^,.\n?!]+?)"
     r"(?:$|[,.\n?!]| như | nhu |\s+cho\s+|\s+với\s+|\s+voi\s+)",
     re.IGNORECASE,
@@ -468,9 +474,26 @@ def extract(text: str) -> ExtractedEntities:
         ):
             out.description = desc
 
-    m = _RECIPIENT_PREP_RE.search(text)
-    if m:
-        out.recipient_text = _clean_recipient(m.group("who"))
+    # Description-only modify message — "nội dung là tiền học cho em" /
+    # "ghi chú là tiền cơm" / "đổi nội dung thành X cho em". A judge
+    # editing the description shouldn't have the recipient extractor
+    # latch onto "cho em" inside the description span and clobber the
+    # active draft's recipient. If the message STARTS with one of the
+    # description anchors, suppress recipient extraction entirely —
+    # this is purely a description update.
+    _starts_with_desc_anchor = bool(
+        re.match(
+            r"^\s*(?:đổi\s+|doi\s+|sửa\s+|sua\s+)?"
+            r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+    if not _starts_with_desc_anchor:
+        m = _RECIPIENT_PREP_RE.search(text)
+        if m:
+            out.recipient_text = _clean_recipient(m.group("who"))
 
     if not out.recipient_text:
         m = _RECIPIENT_VERB_RE.search(text)

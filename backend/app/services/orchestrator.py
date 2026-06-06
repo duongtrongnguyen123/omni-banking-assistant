@@ -515,11 +515,17 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
     except Exception:
         pass
 
-    # Follow-up modify path: there's an active draft and the user is still
-    # talking about transfer — treat as an edit, not a brand-new transaction.
+    # Follow-up modify path: there's an active draft and the user is
+    # editing one of the slots (amount / recipient / description).
+    # CRITICAL: don't gate on nlu.intent == "transfer" — judges saying
+    # "nội dung là tiền học cho em" against an existing draft get
+    # nlu.intent="unknown" because the description anchor is the only
+    # signal. Without this broadening they fell to the guess-correction
+    # page mid-flow. _looks_like_modification still gates so non-edit
+    # messages don't accidentally route here.
     if (
         session.current_draft is not None
-        and nlu.intent == "transfer"
+        and nlu.intent in ("transfer", "unknown", "smalltalk")
         and _looks_like_modification(nlu, session.current_draft)
     ):
         resp = _modify_transfer_draft(user_id, session.current_draft, nlu)
