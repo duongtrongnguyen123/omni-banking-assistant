@@ -78,10 +78,31 @@ def _strip_tail_only(folded: str) -> str:
     "ban than" (tail "cua toi" gone, prefix "ban " KEPT) to hit the
     "Bạn thân" label on Vũ Quốc Bảo. The full strip used to chop "ban"
     too and reduced the query to "than", which matched nothing.
+
+    Compound-noun guard: if the strip would collapse the surface to a
+    SINGLE token AND that token is itself a relational PREFIX word
+    (chu/anh/chi/em/ban/...), the original was almost certainly a
+    compound noun ("chủ nhà", "anh em", "chị em") and we should NOT
+    strip. Without this guard, ``_strip_tail_only("chu nha")`` returned
+    "chu" because "nha" is in the tail-token set (kept there for the
+    "mẹ nha" softener) — and "chu" then matched the "Chú" label on a
+    completely unrelated contact. User report: hỏi "chủ nhà" lại nhận
+    suggestion Phạm Văn Đạt (chú).
     """
     tokens = folded.split()
-    while len(tokens) > 1 and tokens[-1] in _RELATIONAL_TAIL_TOKENS:
-        tokens.pop()
+    # Try the strip on a copy so we can revert if it produces a too-short
+    # compound-noun-looking result.
+    stripped = list(tokens)
+    while len(stripped) > 1 and stripped[-1] in _RELATIONAL_TAIL_TOKENS:
+        stripped.pop()
+    if (
+        len(stripped) == 1
+        and len(tokens) > 1
+        and (stripped[0] + " ") in _RELATIONAL_PREFIXES
+    ):
+        # Revert — original was a compound noun like "chủ nhà".
+        return " ".join(tokens)
+    tokens = stripped
     return " ".join(tokens)
 
 
