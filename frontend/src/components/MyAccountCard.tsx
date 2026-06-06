@@ -1,4 +1,5 @@
 import type { MyAccount } from "../types";
+import { copyTextWithToast } from "../lib/clipboard";
 
 interface Props {
   accounts: MyAccount[];
@@ -7,7 +8,7 @@ interface Props {
 export const MyAccountCard = ({ accounts }: Props) => {
   if (!accounts || accounts.length === 0) return null;
   const copy = (val: string) => {
-    if (navigator.clipboard) navigator.clipboard.writeText(val);
+    void copyTextWithToast(val, "Đã sao chép STK");
   };
   return (
     <div className="my-account-card">

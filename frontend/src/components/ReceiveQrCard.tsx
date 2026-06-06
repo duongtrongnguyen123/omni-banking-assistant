@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ReceiveQrPayload } from "../types";
+import { copyTextWithToast } from "../lib/clipboard";
 
 interface Props {
   qr: ReceiveQrPayload;
@@ -11,7 +12,7 @@ const formatVND = (amount: number) =>
 export const ReceiveQrCard = ({ qr }: Props) => {
   const [imgFailed, setImgFailed] = useState(false);
   const copy = (val: string) => {
-    if (navigator.clipboard) navigator.clipboard.writeText(val);
+    void copyTextWithToast(val, "Đã sao chép STK");
   };
   return (
     <div className="qr-card">

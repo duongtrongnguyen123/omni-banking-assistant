@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { formatVND } from "../format";
+import { copyText } from "../lib/clipboard";
 
 interface Props {
   open: boolean;
@@ -126,12 +127,10 @@ export function ReceiveCard({ open, onClose, onToast }: Props) {
   );
 
   const onCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(owner.account_number);
-      fireToast("Đã sao chép số tài khoản.");
-    } catch {
-      fireToast("Không sao chép được — vui lòng thử lại.");
-    }
+    const ok = await copyText(owner.account_number);
+    fireToast(
+      ok ? "Đã sao chép số tài khoản." : "Không sao chép được — vui lòng thử lại.",
+    );
   }, [owner.account_number, fireToast]);
 
   const onDownload = useCallback(() => {

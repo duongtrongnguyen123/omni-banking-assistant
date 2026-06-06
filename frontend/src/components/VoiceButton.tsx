@@ -163,49 +163,91 @@ export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(
   }, [RecognitionCtor, onTranscript]);
 
   const toggle = useCallback(() => {
+    // When listening, the only safe action is STOP — never restart
+    // mid-flight (the duplicate-recognition bug: a second `start()`
+    // before `onend` fires creates two parallel recognition instances
+    // and produces a duplicated transcript).
     if (listening) {
       stop();
-    } else {
-      start();
+      return;
     }
-  }, [listening, start, stop]);
+    // While the chat is submitting (`busy`), suppress NEW starts so a
+    // late click doesn't begin capturing audio that lands after the
+    // input has been cleared. Mirrors the visual lock-out below.
+    if (disabled) return;
+    start();
+  }, [listening, disabled, start, stop]);
 
   if (!supported) {
     return null;
   }
 
-  const label = listening ? "Đang ghi âm — nhấn để dừng" : "Bật ghi âm";
-  const tooltip = listening ? "Đang nghe…" : "Nhấn để nói";
+  // `busy || listening` both render as a non-actionable affordance so
+  // the user can't double-click their way into a duplicate-transcript
+  // race. `listening` keeps the click wired (to STOP); `busy && !
+  // listening` blocks pointer events entirely.
+  const lockedBusy = disabled && !listening;
+  const showStop = listening;
+  const label = showStop
+    ? "Đang ghi âm — nhấn để dừng"
+    : lockedBusy
+    ? "Đang xử lý — chờ một chút"
+    : "Bật ghi âm";
+  const tooltip = showStop
+    ? "Đang nghe…"
+    : lockedBusy
+    ? "Đang xử lý…"
+    : "Nhấn để nói";
 
   return (
     <button
       type="button"
       className={
         "phone__voice-btn" +
-        (listening ? " phone__voice-btn--listening" : "")
+        (showStop ? " phone__voice-btn--listening" : "") +
+        (lockedBusy ? " phone__voice-btn--busy" : "")
       }
       onClick={toggle}
-      disabled={disabled}
-      aria-label={label}
+      // Native `disabled` only when fully busy and NOT listening — a
+      // listening button must stay clickable so the user can stop.
+      disabled={lockedBusy}
+      aria-disabled={lockedBusy || showStop}
       aria-pressed={listening}
+      aria-label={label}
       title={tooltip}
     >
-      <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <rect x="9" y="3" width="6" height="12" rx="3" />
-        <path d="M5 11a7 7 0 0 0 14 0" />
-        <line x1="12" y1="18" x2="12" y2="22" />
-        <line x1="8" y1="22" x2="16" y2="22" />
-      </svg>
+      {showStop ? (
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="6" y="6" width="12" height="12" rx="2" />
+        </svg>
+      ) : (
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M5 11a7 7 0 0 0 14 0" />
+          <line x1="12" y1="18" x2="12" y2="22" />
+          <line x1="8" y1="22" x2="16" y2="22" />
+        </svg>
+      )}
     </button>
   );
   },
