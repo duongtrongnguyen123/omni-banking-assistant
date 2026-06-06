@@ -70,8 +70,31 @@ def evaluate(
     transactions: list[Transaction],
     account: Optional[Account],
     user_id: Optional[str] = None,
+    contacts: Optional[list[Contact]] = None,
 ) -> list[SafetyFlag]:
     flags: list[SafetyFlag] = []
+
+    # Look-alike check runs whenever we have a chosen recipient AND a
+    # contact list to compare against — independent of amount, since the
+    # homograph attack works at any amount (often a small probe first).
+    # Opt-in per caller via the `contacts` kw; None → silently skipped so
+    # existing call sites stay source-compatible.
+    if recipient and contacts:
+        from .lookalike import detect_lookalike
+
+        twin = detect_lookalike(recipient, contacts)
+        if twin is not None:
+            flags.append(
+                SafetyFlag(
+                    code="lookalike_recipient",
+                    severity="warn",
+                    message=(
+                        f"Tên người nhận trông rất giống {twin.display_name} "
+                        f"({twin.bank}, {twin.account_masked}) — chắc bạn "
+                        "chọn đúng người chứ? Mình sẽ yêu cầu xác thực thêm."
+                    ),
+                )
+            )
 
     if not recipient_candidates and not recipient:
         flags.append(
@@ -251,6 +274,7 @@ def requires_step_up(flags: list[SafetyFlag]) -> bool:
             "new_recipient_large_amount",
             "amount_above_average",
             "fraud_risk_high",
+            "lookalike_recipient",
         )
         and f.severity == "warn"
         for f in flags

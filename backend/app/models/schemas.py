@@ -145,6 +145,10 @@ class SafetyFlag(BaseModel):
         # that triggers OTP step-up; never a hard block (false positives
         # on a real bank dataset are too costly to auto-cancel a transfer).
         "fraud_risk_high",
+        # Recipient name folds to within 1 Levenshtein edit of a frequent
+        # contact's — classic homograph attack vector. Warn + step-up so
+        # the user sees the legitimate name they almost confirmed against.
+        "lookalike_recipient",
         "ok",
     ]
     severity: Literal["info", "warn", "block"]
