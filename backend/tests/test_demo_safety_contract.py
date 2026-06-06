@@ -1072,6 +1072,78 @@ def test_colloquial_balance_does_not_eat_other_intents(
 
 
 # ---------------------------------------------------------------------------
+# Help intent — VN "how do I / what can you do" phrasings reach _HELP_TEXT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Exact commands.
+        "/help", "help", "menu", "trợ giúp", "hướng dẫn",
+        # "How do I" — Tier-2 transfer keyword "chuyển" used to steal
+        # this; help check now runs before NLU.
+        "làm sao chuyển tiền",
+        "làm sao để chuyển tiền",
+        "làm cách nào để xem số dư",
+        # "What can you do" — used to fall through to "unknown".
+        "omni làm gì được",
+        "omni có thể làm gì",
+        "có thể làm gì",
+        "bạn làm được gì",
+        "omni biết làm gì",
+        # Guide / instructions.
+        "hướng dẫn sử dụng",
+        "cách dùng",
+        "cách sử dụng",
+        "làm thế nào",
+        # Direct help asks.
+        "giúp mình với",
+        "giúp với",
+        "help me",
+        "giúp đỡ",
+    ],
+)
+def test_help_phrasings_emit_help_text(text: str) -> None:
+    """The judge's first question is almost always "what can you do?"
+    or "how do I X?". Pre-fix these fell to either an empty transfer
+    draft ("Bạn muốn chuyển bao nhiêu cho ai?") or the robotic "Mình
+    chưa rõ ý bạn..." guess-correction page. The help check now runs
+    BEFORE the NLU classifier so Tier-2 transfer/history keywords
+    inside the help question ("làm sao **chuyển** tiền") can't steal
+    the routing."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, text)
+    s.clear_draft()
+    # The deterministic help text starts with "Mình có thể giúp bạn:"
+    # and lists the capability bullets. Pin a single high-signal token
+    # that appears in every help response.
+    assert "Mình có thể giúp bạn" in r.text, (text, r.text[:100])
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Polite prefix "giúp mình" before a real intent must NOT eat
+        # the routing — the user is asking for X, not for help generally.
+        ("giúp mình kiểm tra số dư", "balance"),
+        ("chuyển mẹ 2 triệu", "transfer"),
+        ("tháng này tiêu bao nhiêu", "history"),
+        ("số dư", "balance"),
+    ],
+)
+def test_help_check_does_not_eat_other_intents(
+    text: str, expected: str
+) -> None:
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, text)
+    s.clear_draft()
+    assert r.intent == expected, (text, r.intent, r.text[:100])
+
+
+# ---------------------------------------------------------------------------
 # Smalltalk subtypes — thanks / farewell / greeting each get their own reply
 # ---------------------------------------------------------------------------
 

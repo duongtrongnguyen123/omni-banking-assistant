@@ -158,7 +158,30 @@ _CANCEL_RE = re.compile(
     re.IGNORECASE,
 )
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
-_HELP_RE = re.compile(r"^\s*(/help|help|trợ giúp|tro giup|hướng dẫn|huong dan|menu)\s*$", re.IGNORECASE)
+_HELP_RE = re.compile(
+    # Exact-phrase commands (preserved from origin, plus optional ?!.).
+    r"^\s*(?:/help|help|trợ\s+giúp|tro\s+giup|hướng\s+dẫn|huong\s+dan|menu)\s*[?!.]*\s*$"
+    # "How do I / how to do" — judges asking how to use the assistant.
+    # Substring-safe in a banking app: "làm sao" only appears in
+    # help-shaped questions, never in a transfer / history command.
+    r"|\b(?:làm|lam)\s+(?:sao|thế\s+nào|the\s+nao|cách\s+nào|cach\s+nao)\b"
+    # "What can you do" — "omni làm gì", "bạn có thể làm gì", "có thể
+    # làm gì". The "<subject> + làm gì" shape is unambiguous.
+    # Allows "biết làm gì" / "có thể làm gì" / "làm được gì" — anything
+    # between the subject and the final "gì" that's still a help shape.
+    r"|\b(?:omni|bạn|ban)\s+(?:có\s+thể\s+|co\s+the\s+)?(?:biết\s+|biet\s+)?(?:làm|lam)(?:\s+(?:được|duoc))?\s+gì\b"
+    r"|\b(?:omni|bạn|ban)\s+(?:biết|biet)\s+gì\b"
+    r"|\b(?:có\s+thể|co\s+the)\s+(?:làm|lam)\s+gì\b"
+    # "Guide / instructions / how to use".
+    r"|\b(?:hướng\s+dẫn|huong\s+dan)\b"
+    r"|\b(?:cách|cach)\s+(?:dùng|dung|sử\s+dụng|su\s+dung)\b"
+    # Bare help asks — anchored to avoid eating "giúp mình kiểm tra số
+    # dư" (which is a balance query with a polite prefix).
+    r"|^\s*giúp\s+(?:mình|tôi|minh|toi)?\s*(?:với|voi|ơi|oi)?\s*[?!.]*\s*$"
+    r"|^\s*giúp\s+(?:đỡ|do)\s*[?!.]*\s*$"
+    r"|^\s*help\s+me\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
 
 
 _HELP_TEXT = (
