@@ -2308,6 +2308,70 @@ def test_amount_no_digit_concatenation_before_non_unit_word(
     assert amount == expected_amount, (text, amount)
 
 
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Digit-in-label class — "Bạn cấp 3" is the LABEL of one of the
+        # seed contacts (Phạm Thuý Vy). Pre-fix the rule extractor's
+        # STOP_LOOKAHEAD `\d` truncated "bạn cấp 3" → "bạn cấp" at the
+        # digit, and the resolver couldn't find the label. The new
+        # STOP_LOOKAHEAD requires `\d+ + amount unit` to terminate;
+        # bare digits inside a label stay inside the surface.
+        ("cho bạn cấp 3", "Phạm Thuý Vy"),
+        ("chuyển cho bạn cấp 3 2tr", "Phạm Thuý Vy"),
+        ("chuyển bạn cấp 3 500k", "Phạm Thuý Vy"),
+        ("chuyển cho Bạn cấp 3 1tr", "Phạm Thuý Vy"),
+        ("gửi cho bạn cấp 3 100k", "Phạm Thuý Vy"),
+    ],
+)
+def test_digit_in_label_does_not_truncate_recipient(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    e = extract(text)
+    assert e.recipient_text, (text, "no recipient_text extracted")
+    r = resolve_recipient(e.recipient_text, contacts)
+    names = [c.contact.display_name for c in r]
+    assert expected_recipient in names, (text, names)
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Possessive "của tôi" / "của mình" must be stripped from the
+        # surface form before alias / label lookup. Pre-fix the
+        # _strip_relational chain pre-stripped "bạn" as a relational
+        # prefix AND failed to remove "của", leaving "than" alone —
+        # which matched nothing. New _strip_tail_only variant keeps
+        # the relational prefix intact for label matching.
+        ("chuyển cho bạn thân của tôi", "Vũ Quốc Bảo"),
+        ("chuyển cho bạn thân của tôi 2tr", "Vũ Quốc Bảo"),
+        ("chuyển cho bạn thân của mình 500k", "Vũ Quốc Bảo"),
+        ("chuyển cho bạn cấp 3 của tôi 1tr", "Phạm Thuý Vy"),
+        ("gửi bạn cấp 3 của mình 100k", "Phạm Thuý Vy"),
+        ("chuyển mẹ của tôi 5tr", "Nguyễn Thị Lan"),
+        ("chuyển cho anh Tuấn của mình 1tr", "Phạm Quốc Tuấn"),
+    ],
+)
+def test_possessive_cua_toi_minh_strips_for_label_match(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    e = extract(text)
+    assert e.recipient_text, (text, "no recipient_text extracted")
+    r = resolve_recipient(e.recipient_text, contacts)
+    names = [c.contact.display_name for c in r]
+    assert expected_recipient in names, (text, names)
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a
