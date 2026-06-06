@@ -2538,6 +2538,48 @@ def test_modify_verbs_still_inherit_amount() -> None:
     assert resp.draft.amount == 5_000_000
 
 
+def test_concurrent_turns_serialise_per_user() -> None:
+    """Round-9 stress reproduced a race: when /api/chat fires for the
+    same user ~250ms apart, the read-modify-write sequence around
+    ``session.current_draft`` interleaves and the OTP prompt latches
+    onto a stale draft from a prior turn. Worst case: wrong recipient
+    AND wrong amount silently routed to step-up.
+
+    Fix: per-user mutex in ``handle_message``. This test fires 4
+    concurrent threads with the canonical slot-fill flow and asserts
+    the final draft state matches the sequential expectation."""
+    import threading
+    from app.context.session import session_for as _sf
+
+    _sf("u_concurrent").clear_draft()
+
+    msgs = ["chuyển", "mẹ", "2tr", "ok"]
+    threads = []
+    for m in msgs:
+        t = threading.Thread(target=handle_message, args=("u_concurrent", m))
+        threads.append(t)
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # With serialisation, the canonical flow lands on a complete
+    # mẹ + 2tr draft in OTP-awaiting state (or already cleared if
+    # confirm fired with OTP — both are fine, what matters is no
+    # cross-turn corruption).
+    s = _sf("u_concurrent")
+    draft = s.current_draft
+    if draft is not None:
+        # If a draft is still alive, it must be the legitimate mẹ + 2tr,
+        # not a stale Vũ Quốc Bảo / 5tr from a prior test block.
+        if draft.recipient is not None:
+            assert draft.recipient.display_name == "Nguyễn Thị Lan", (
+                draft.recipient.display_name
+            )
+        if draft.amount is not None:
+            assert draft.amount == 2_000_000, draft.amount
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a

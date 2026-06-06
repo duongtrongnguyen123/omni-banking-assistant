@@ -356,6 +356,27 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     return "this_month"
 
 
+_user_locks: dict[str, "_th.Lock"] = {}
+_user_locks_lock = _th.Lock()
+
+
+def _user_lock(user_id: str) -> "_th.Lock":
+    """Per-user mutex for the chat turn — serialises read-modify-write of
+    the session draft so two rapid-fire requests from the same user
+    can't race. Round-9 stress reproduced wrong-recipient + wrong-amount
+    OTP prompts when /api/chat fired ~250ms apart: request A wrote a
+    draft, request B's NLU classify hit before A's draft write landed,
+    and B picked up a stale draft from a prior turn. The lock makes
+    turns serial within a user; cross-user latency is unaffected.
+    """
+    with _user_locks_lock:
+        lock = _user_locks.get(user_id)
+        if lock is None:
+            lock = _th.Lock()
+            _user_locks[user_id] = lock
+        return lock
+
+
 def handle_message(user_id: str, text: str) -> OmniResponse:
     overall_t0 = time.perf_counter()
     # Capture the intent label even when the inner call raises — Prometheus
@@ -363,7 +384,8 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
     # sentinel used for both unexpected exceptions and missing intents.
     intent_label = "error"
     try:
-        resp = _handle_message_inner(user_id, text)
+        with _user_lock(user_id):
+            resp = _handle_message_inner(user_id, text)
         intent_label = resp.intent or "unknown"
     finally:
         # Best-effort metric recording. The try/except inside .inc()/.observe()
