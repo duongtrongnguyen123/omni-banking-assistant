@@ -486,6 +486,18 @@ export default function App() {
     appendUser(biometricScan ? "Xác minh sinh trắc học" : "Xác minh OTP");
     const pendingId = appendOmniPending();
     setBusy(true);
+    // Lock the Huỷ button on this draft's card while the confirm is in
+    // flight. Without this, the user could fire api.cancel between the
+    // moment runConfirm calls api.confirm and the moment the response
+    // lands — backend's _INFLIGHT_CONFIRMS guard catches the duplicate
+    // execute but not the cancel-after-confirm race that lets a transfer
+    // execute while the UI thinks it was cancelled. Mirror of
+    // sendDraftAction's existing pattern.
+    setInFlightDraftIds((prev) => {
+      const next = new Set(prev);
+      next.add(draftId);
+      return next;
+    });
     try {
       const resp = await api.confirm(draftId, otp, sourceAccountId, biometricScan);
       resolveOmni(pendingId, resp);
@@ -500,6 +512,11 @@ export default function App() {
       failOmni(pendingId, e);
     } finally {
       setBusy(false);
+      setInFlightDraftIds((prev) => {
+        const next = new Set(prev);
+        next.delete(draftId);
+        return next;
+      });
     }
   };
 
