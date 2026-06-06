@@ -49,6 +49,49 @@ export interface TransactionDraft {
   reference_transaction_id: string | null;
   flags: SafetyFlag[];
   requires_step_up: boolean;
+  auth_required: Array<"otp" | "biometric">;
+  auth_completed: Array<"otp" | "biometric">;
+}
+
+export type BiometricScanTarget = "center" | "sideA" | "verticalA" | "sideB";
+export type BiometricScanPath = "clockwise" | "counterClockwise";
+
+export interface BiometricScanPose {
+  yaw: number;
+  pitch: number;
+  roll: number;
+  faceCenterX: number;
+  faceCenterY: number;
+}
+
+export interface BiometricScanStepResult {
+  index: number;
+  target: BiometricScanTarget;
+  stableFrames: number;
+  detectionScore: number;
+  elapsedMs: number;
+  pose: BiometricScanPose;
+  frameSignature: number;
+}
+
+export interface BiometricScanSample {
+  elapsedMs: number;
+  detectionScore: number;
+  pose: BiometricScanPose;
+  frameSignature: number;
+}
+
+export interface BiometricScanResult {
+  challengeId: string;
+  path: BiometricScanPath;
+  requiredStableFrames: number;
+  startedAt: string;
+  finishedAt: string;
+  continuityBreaks: number;
+  faceDescriptor: number[];
+  profileDescriptors: number[][];
+  samples: BiometricScanSample[];
+  steps: BiometricScanStepResult[];
 }
 
 export interface HistoryItem {

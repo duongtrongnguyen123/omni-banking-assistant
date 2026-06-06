@@ -1,4 +1,4 @@
-import type { OmniResponse } from "../types";
+import type { BiometricScanResult, OmniResponse } from "../types";
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
@@ -25,10 +25,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
-  confirm: (draftId: string, otp: string, sourceAccountId?: string) =>
+  confirm: (
+    draftId: string,
+    otp: string,
+    sourceAccountId?: string,
+    biometricScan?: BiometricScanResult,
+  ) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
+      body: JSON.stringify({
+        otp,
+        source_account_id: sourceAccountId,
+        biometric_scan: biometricScan,
+      }),
     }),
   cancel: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {

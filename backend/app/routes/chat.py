@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ..models.schemas import OmniResponse
@@ -27,10 +29,49 @@ class SelectCandidateRequest(BaseModel):
     contact_id: str
 
 
+class BiometricPose(BaseModel):
+    yaw: float
+    pitch: float
+    roll: float
+    faceCenterX: float
+    faceCenterY: float
+
+
+class BiometricStepResult(BaseModel):
+    index: int
+    target: Literal["center", "sideA", "verticalA", "sideB"]
+    stableFrames: int
+    detectionScore: float
+    elapsedMs: int
+    pose: BiometricPose
+    frameSignature: int
+
+
+class BiometricSample(BaseModel):
+    elapsedMs: int
+    detectionScore: float
+    pose: BiometricPose
+    frameSignature: int
+
+
+class BiometricScanResult(BaseModel):
+    challengeId: str
+    path: Literal["clockwise", "counterClockwise"]
+    requiredStableFrames: int
+    startedAt: str
+    finishedAt: str
+    continuityBreaks: int = 0
+    faceDescriptor: list[float]
+    profileDescriptors: list[list[float]]
+    samples: list[BiometricSample] = Field(default_factory=list)
+    steps: list[BiometricStepResult]
+
+
 class ConfirmTransactionRequest(BaseModel):
     otp: str | None = None
     source_account_id: str | None = None
     biometric_verified: bool = False
+    biometric_scan: BiometricScanResult | None = None
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -49,6 +90,7 @@ def confirm(
         draft_id,
         otp=req.otp if req else None,
         source_account_id=req.source_account_id if req else None,
+        biometric_scan=req.biometric_scan.dict() if req and req.biometric_scan else None,
         biometric_verified=req.biometric_verified if req else False,
     )
     if resp.intent == "unknown":

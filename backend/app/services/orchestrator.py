@@ -7,7 +7,7 @@ appropriate side-effects (draft creation, history lookup, schedule creation).
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
@@ -39,6 +39,163 @@ def _is_confirm(text: str) -> bool:
 
 def _is_cancel(text: str) -> bool:
     return bool(_CANCEL_RE.search(text.strip().lower()))
+
+
+_BIO_TARGETS = ["center", "sideA", "verticalA", "sideB", "center"]
+_FACE_MATCH_THRESHOLD = 0.48
+
+
+def _pose_value(step: dict[str, Any], key: str) -> float:
+    pose = step.get("pose") or {}
+    try:
+        return float(pose.get(key, 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _face_distance(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b) or not a:
+        return 999.0
+    return sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _face_match_valid(scan: dict[str, Any]) -> tuple[bool, str]:
+    face_descriptor = scan.get("faceDescriptor") or []
+    profile_descriptors = scan.get("profileDescriptors") or []
+    if len(face_descriptor) != 128:
+        return False, "Chưa nhận được đặc trưng khuôn mặt hiện tại."
+    valid_profiles = [
+        descriptor
+        for descriptor in profile_descriptors
+        if isinstance(descriptor, list) and len(descriptor) == 128
+    ]
+    if not valid_profiles:
+        return False, "Chưa có hồ sơ sinh trắc học đã lưu cho tài khoản này."
+
+    best_distance = min(_face_distance(face_descriptor, descriptor) for descriptor in valid_profiles)
+    if best_distance > _FACE_MATCH_THRESHOLD:
+        return False, "Khuôn mặt không khớp với hồ sơ sinh trắc học đã lưu của tài khoản."
+    return True, ""
+
+
+def _biometric_scan_valid(scan: dict[str, Any] | None, draft_id: str, otp: str | None) -> tuple[bool, str]:
+    if not scan:
+        return False, "Chưa có dữ liệu quét sinh trắc học 8D."
+
+    challenge_id = str(scan.get("challengeId") or "")
+    expected_challenge = f"{draft_id}:{(otp or '').strip() or 'no-otp'}"
+    if challenge_id != expected_challenge:
+        return False, "Phiên sinh trắc học không khớp giao dịch hiện tại."
+
+    steps = scan.get("steps") or []
+    if len(steps) != len(_BIO_TARGETS):
+        return False, "Sinh trắc học chưa hoàn tất đủ vòng quay khuôn mặt."
+
+    path = scan.get("path")
+    if path not in {"clockwise", "counterClockwise"}:
+        return False, "Thử thách sinh trắc học không hợp lệ."
+
+    required_stable = int(scan.get("requiredStableFrames") or 0)
+    if required_stable < 1:
+        return False, "Dữ liệu sinh trắc học chưa đủ số frame ổn định."
+
+    previous_elapsed = -1
+    signatures: set[int] = set()
+    for index, (step, target) in enumerate(zip(steps, _BIO_TARGETS)):
+        if int(step.get("index", -1)) != index or step.get("target") != target:
+            return False, "Thứ tự thử thách sinh trắc học không hợp lệ."
+        if int(step.get("stableFrames") or 0) < required_stable:
+            return False, "Một bước sinh trắc học chưa đủ ổn định."
+        if float(step.get("detectionScore") or 0) < 0.5:
+            return False, "Khuôn mặt chưa đủ rõ để xác minh."
+
+        elapsed = int(step.get("elapsedMs") or 0)
+        if elapsed <= previous_elapsed:
+            return False, "Mốc thời gian sinh trắc học không hợp lệ."
+        previous_elapsed = elapsed
+
+        signatures.add(int(step.get("frameSignature") or 0))
+
+    first_center_yaw = _pose_value(steps[0], "yaw")
+    last_center_yaw = _pose_value(steps[-1], "yaw")
+    first_center_pitch = _pose_value(steps[0], "pitch")
+    last_center_pitch = _pose_value(steps[-1], "pitch")
+    if abs(first_center_yaw) > 0.22 or abs(last_center_yaw) > 0.22:
+        return False, "Khuôn mặt chưa nhìn gần thẳng trong khung."
+    if abs(first_center_pitch) > 0.22 or abs(last_center_pitch) > 0.22:
+        return False, "Khuôn mặt chưa nhìn gần thẳng trong khung."
+
+    side_a_yaw = _pose_value(steps[1], "yaw")
+    vertical_a_pitch = _pose_value(steps[2], "pitch")
+    side_b_yaw = _pose_value(steps[3], "yaw")
+    if abs(side_a_yaw) <= 0.065:
+        return False, "Chưa xác nhận được hướng quay đầu tiên."
+    if abs(side_b_yaw) <= 0.065 or side_a_yaw * side_b_yaw >= 0:
+        return False, "Chưa xác nhận được hướng quay ngược lại."
+    if path == "clockwise":
+        if vertical_a_pitch >= -0.055:
+            return False, "Video/ảnh không khớp chiều quay được yêu cầu."
+    else:
+        if vertical_a_pitch <= 0.055:
+            return False, "Video/ảnh không khớp chiều quay được yêu cầu."
+
+    yaw_span = abs(side_a_yaw - side_b_yaw)
+    if yaw_span < 0.14:
+        return False, "Biên độ chuyển động khuôn mặt chưa đủ để xác minh."
+
+    if len(signatures) < 5:
+        return False, "Các frame sinh trắc học quá giống nhau, vui lòng quét lại."
+
+    if previous_elapsed < 550:
+        return False, "Quá trình quét diễn ra quá nhanh, vui lòng thực hiện lại."
+
+    samples = scan.get("samples") or []
+    if len(samples) < 12:
+        return False, "Cần quét chuyển động liên tục lâu hơn một chút."
+
+    if int(scan.get("continuityBreaks") or 0) > 1:
+        return False, "Chuyển động khuôn mặt bị ngắt quãng, vui lòng quay liên tục thay vì đổi ảnh."
+
+    sample_signatures: set[int] = set()
+    previous_sample_elapsed = -1
+    max_pose_jump = 0.0
+    total_motion = 0.0
+    low_score_samples = 0
+    previous_sample: dict[str, Any] | None = None
+    for sample in samples:
+        elapsed = int(sample.get("elapsedMs") or 0)
+        if elapsed <= previous_sample_elapsed:
+            return False, "Chuỗi frame sinh trắc học không hợp lệ."
+        previous_sample_elapsed = elapsed
+
+        if float(sample.get("detectionScore") or 0) < 0.5:
+            low_score_samples += 1
+        sample_signatures.add(int(sample.get("frameSignature") or 0))
+
+        if previous_sample is not None:
+            pose_jump = (
+                abs(_pose_value(sample, "yaw") - _pose_value(previous_sample, "yaw"))
+                + abs(_pose_value(sample, "pitch") - _pose_value(previous_sample, "pitch"))
+                + abs(_pose_value(sample, "roll") - _pose_value(previous_sample, "roll"))
+            )
+            max_pose_jump = max(max_pose_jump, pose_jump)
+            total_motion += pose_jump
+        previous_sample = sample
+
+    if low_score_samples > 2:
+        return False, "Một số frame khuôn mặt chưa đủ rõ, vui lòng quét lại."
+    if len(sample_signatures) < 7:
+        return False, "Chuỗi hình ảnh quá giống ảnh tĩnh, vui lòng quay mặt thật liên tục."
+    if max_pose_jump > 1:
+        return False, "Pose khuôn mặt nhảy quá nhanh, nghi ngờ đổi ảnh theo từng hướng."
+    if total_motion < 0.55:
+        return False, "Chuyển động khuôn mặt chưa đủ liên tục để xác minh."
+
+    face_ok, face_error = _face_match_valid(scan)
+    if not face_ok:
+        return False, face_error
+
+    return True, ""
 
 
 def _record_audit(
@@ -797,6 +954,7 @@ def confirm_draft(
     draft_id: str,
     otp: str | None = None,
     source_account_id: str | None = None,
+    biometric_scan: dict[str, Any] | None = None,
     biometric_verified: bool = False,
 ) -> OmniResponse:
     session = session_for(user_id)
@@ -848,7 +1006,14 @@ def confirm_draft(
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    if biometric_verified and "biometric" in draft.auth_required:
+    if "biometric" in draft.auth_required and "biometric" not in draft.auth_completed and (biometric_scan or biometric_verified):
+        scan_ok, scan_error = _biometric_scan_valid(biometric_scan, draft.id, otp)
+        if not scan_ok:
+            text = scan_error
+            _record_audit(user_id, message="Xac minh sinh trac hoc", draft=draft, decision="auth_failed")
+            session.append("user", "Xác minh sinh trắc học")
+            session.append("omni", text)
+            return OmniResponse(intent="transfer", text=text, draft=draft)
         if "biometric" not in draft.auth_completed:
             draft.auth_completed.append("biometric")
         session.set_draft(draft)

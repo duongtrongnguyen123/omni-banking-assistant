@@ -8,7 +8,7 @@
         "id": "acc_an_main",
         "bank": "Omni Bank",
         "number": "1234567890",
-        "balance": 24350000,
+        "balance": 100000000,
         "currency": "VND",
         "primary": true
       },
