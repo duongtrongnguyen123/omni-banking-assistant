@@ -40,5 +40,23 @@ data/demo/omni.db-*
 backend/app/data/bandit_state.json
 backend/app/data/bandit_state.tmp
 
+# Stray seed copies — test fixtures (test_metrics, test_demo_recorder) write
+# JSON seeds to BANKING_DATA_DIR. If a developer accidentally exports
+# BANKING_DATA_DIR="" the shell evaluates it as set-but-empty, Path("")
+# resolves to the CWD, and the seeds land at backend/ root instead of the
+# tmp dir conftest.py intended. Ignore the four stray copies so the dirty
+# git tree from that run-with-empty-env doesn't get committed. The
+# fixtures themselves now treat empty-string as unset and fall back to
+# `.tmp_test_seed/`, so this serves as belt-and-braces against an older
+# checkout that still has the original fixture.
+backend/contacts.json
+backend/transactions.json
+backend/users.json
+backend/schedules.json
+
+# Tests-local seed copy that the fallback path writes to. Auto-created
+# by test_metrics / test_demo_recorder when BANKING_DATA_DIR is empty.
+backend/tests/.tmp_test_seed/
+
 .claude/
 backend/.venv/

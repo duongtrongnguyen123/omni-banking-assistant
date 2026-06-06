@@ -21,7 +21,18 @@ from fastapi.testclient import TestClient
 def _seed_demo_user():
     """Copy the canonical JSON seed into the conftest's isolated tmp
     data dir so the demo user exists for /api/chat tests."""
-    data_dir = Path(os.environ["BANKING_DATA_DIR"])
+    # Defensive: if BANKING_DATA_DIR is unset OR empty-string (which
+    # happens when developers do ``BANKING_DATA_DIR= pytest …``), fall
+    # back to a tests-local tmp dir. Without this guard, ``Path("")``
+    # resolves to the CWD and the seed copies land at the repo root,
+    # leaking 4 JSON files into the dirty git tree.
+    env_dir = os.environ.get("BANKING_DATA_DIR", "").strip()
+    if not env_dir:
+        env_dir = str(
+            Path(__file__).resolve().parent.parent / ".tmp_test_seed"
+        )
+        os.environ["BANKING_DATA_DIR"] = env_dir
+    data_dir = Path(env_dir).resolve()
     src = Path(__file__).resolve().parent.parent / "app" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     for name in ("users.json", "contacts.json", "transactions.json", "schedules.json"):
