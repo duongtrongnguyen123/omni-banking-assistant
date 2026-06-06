@@ -104,6 +104,21 @@ is consumed once then never reused (orchestrator clears the session
 draft after confirm), so the cache stays small in practice. A wider
 LRU bound is in TODO but not load-bearing for the demo."""
 
+_INFLIGHT_CONFIRMS: set[str] = set()
+"""Draft cache keys whose confirm handler is currently executing.
+
+Closes the race documented in user feedback "nhập opt rồi nhấn huỷ
+nhưng mà sao vẫn chuyển?": user clicks confirm, transfer starts,
+user clicks cancel before the response arrives. Without this guard
+the cancel endpoint would clear the session while ``confirm_draft``
+is mid-execute — the transfer has already been written but the UI
+shows "đã huỷ", which is worse than either pure outcome.
+
+With this guard the cancel arm returns a polite "đang xử lý" notice
+so the user sees the transfer either complete or fail on its own.
+The frontend's matching ``inFlightDraftIds`` set already disables
+the Huỷ button — this is a server-side belt for the same braces."""
+
 
 @router.post("/transactions/{draft_id}/confirm", response_model=OmniResponse)
 def confirm(
@@ -124,12 +139,16 @@ def confirm(
     # doesn't consume them yet — they'll be wired when we land the
     # face-scan auth layer. For now they're accepted-and-ignored so the
     # frontend can ship the wire without backend failure.
-    resp = confirm_draft(
-        user_id,
-        draft_id,
-        otp=req.otp if req else None,
-        source_account_id=req.source_account_id if req else None,
-    )
+    _INFLIGHT_CONFIRMS.add(cache_key)
+    try:
+        resp = confirm_draft(
+            user_id,
+            draft_id,
+            otp=req.otp if req else None,
+            source_account_id=req.source_account_id if req else None,
+        )
+    finally:
+        _INFLIGHT_CONFIRMS.discard(cache_key)
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
     # Only cache fully-confirmed transfers — OTP prompts / re-confirm
@@ -143,6 +162,18 @@ def confirm(
 
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
 def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+    cache_key = f"{user_id}:{draft_id}"
+    # Confirm is mid-execute — refuse to clear the session under it.
+    if cache_key in _INFLIGHT_CONFIRMS:
+        return OmniResponse(
+            intent="transfer",
+            text="Giao dịch đang được xử lý, không thể huỷ ở bước này.",
+        )
+    # Confirm already finished — replay the idempotent confirm response
+    # instead of pretending the cancel succeeded.
+    cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
+    if cached is not None:
+        return cached
     return cancel_draft(user_id, draft_id)
 
 

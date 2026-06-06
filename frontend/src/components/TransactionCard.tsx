@@ -117,6 +117,11 @@ interface Props {
    *  resolves it to a contact-picker modal then POST /transactions/split. */
   onSplitBill?: (amount: number, description: string) => void;
   disabled?: boolean;
+  /** True while a confirm/cancel HTTP request for THIS draft is still
+   *  travelling. Locks both Huỷ and Xác nhận so the user can't fire a
+   *  cancel that races a confirm. Closes the SAFETY bug from user
+   *  feedback "nhập opt rồi nhấn huỷ nhưng mà sao vẫn chuyển?". */
+  inFlight?: boolean;
   actionable?: boolean;
 }
 
@@ -128,6 +133,7 @@ export const TransactionCard = ({
   onModifyAmount,
   onSplitBill,
   disabled,
+  inFlight = false,
   actionable = true,
 }: Props) => {
   const [editingAmount, setEditingAmount] = useState(false);
@@ -168,7 +174,7 @@ export const TransactionCard = ({
   const selectedBalanceBlocks =
     !!selectedAccount && draft.amount != null && draft.amount > selectedAccount.balance;
   const canSubmit =
-    actionable && !disabled && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
+    actionable && !disabled && !inFlight && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
   const cleanOtp = otp.replace(/\D/g, "").slice(0, 6);
 
   const handleOtpChange = (value: string) => {
@@ -176,11 +182,23 @@ export const TransactionCard = ({
   };
 
   const handleConfirm = () => {
+    // Defend at the handler — the button's ``disabled`` attr should
+    // already block this, but a fast double-click can land both events
+    // in the same React batch before re-render. Drop the second one.
+    if (inFlight) return;
     if (!otpOpen) {
       setOtpOpen(true);
       return;
     }
     onConfirm(cleanOtp, sourceAccountId || undefined);
+  };
+
+  const handleCancel = () => {
+    // Once a confirm is travelling we refuse to fire a cancel that
+    // would arrive AFTER the transfer is written. Backend has the
+    // matching guard in routes/chat.py.
+    if (inFlight) return;
+    onCancel();
   };
 
   // Surface the step-up reason as a hero banner so the safety layer is
@@ -640,8 +658,9 @@ export const TransactionCard = ({
           <div className="tx-actions">
             <button
               className="btn btn--ghost"
-              onClick={onCancel}
-              disabled={disabled}
+              onClick={handleCancel}
+              disabled={disabled || inFlight}
+              title={inFlight ? "Đang xử lý — không thể huỷ" : undefined}
             >
               Huỷ
             </button>
@@ -649,7 +668,7 @@ export const TransactionCard = ({
               <button
                 className="btn btn--ghost"
                 onClick={onEdit}
-                disabled={disabled}
+                disabled={disabled || inFlight}
               >
                 Sửa
               </button>
@@ -657,10 +676,11 @@ export const TransactionCard = ({
             <button
               className={`btn ${draft.requires_step_up || otpOpen ? "btn--warn" : "btn--primary"}`}
               onClick={handleConfirm}
-              disabled={!canSubmit || (otpOpen && cleanOtp.length !== 6)}
+              disabled={!canSubmit || (otpOpen && cleanOtp.length !== 6) || inFlight}
+              aria-busy={inFlight}
               data-onboarding="confirm"
             >
-              {otpOpen ? "Xác minh & chuyển" : "Xác nhận"}
+              {inFlight ? "Đang xử lý…" : otpOpen ? "Xác minh & chuyển" : "Xác nhận"}
             </button>
           </div>
         </>

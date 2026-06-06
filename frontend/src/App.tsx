@@ -65,6 +65,12 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
+  // Drafts whose confirm/cancel HTTP request is in flight. Locks the
+  // matching TransactionCard's Huỷ button so user can't fire a cancel
+  // that races a confirm — the SAFETY bug from user feedback "nhập opt
+  // rồi nhấn huỷ nhưng mà sao vẫn chuyển?". Cleared in the request's
+  // finally block.
+  const [inFlightDraftIds, setInFlightDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   // Bumped after every executed transfer so the suggestion strip re-ranks.
@@ -258,6 +264,13 @@ export default function App() {
     appendUser(actionLabel);
     const pendingId = appendOmniPending();
     setBusy(true);
+    if (closeDraftId) {
+      setInFlightDraftIds((prev) => {
+        const next = new Set(prev);
+        next.add(closeDraftId);
+        return next;
+      });
+    }
     try {
       const resp = await action();
       if (closeDraftId && !resp.draft) {
@@ -290,6 +303,14 @@ export default function App() {
       failOmni(pendingId, e);
     } finally {
       setBusy(false);
+      if (closeDraftId) {
+        setInFlightDraftIds((prev) => {
+          if (!prev.has(closeDraftId)) return prev;
+          const next = new Set(prev);
+          next.delete(closeDraftId);
+          return next;
+        });
+      }
     }
   };
 
@@ -752,6 +773,7 @@ export default function App() {
               }}
               busy={busy}
               actionableDraftIds={actionableDraftIds}
+              inFlightDraftIds={inFlightDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
               ttsEnabled={ttsEnabled}
             />

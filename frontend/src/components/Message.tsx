@@ -41,6 +41,10 @@ interface Props {
   onDraftResolved?: (resp: OmniResponse) => void;
   busy?: boolean;
   actionableDraftIds?: Set<string>;
+  /** Drafts whose confirm/cancel request is currently in flight.
+   *  TransactionCard locks both buttons + shows a spinner so the user
+   *  can't fire a cancel that races a confirm. */
+  inFlightDraftIds?: Set<string>;
   actionableScheduleDraftIds?: Set<string>;
   ttsEnabled?: boolean;
 }
@@ -60,6 +64,7 @@ export const Message = ({
   onDraftResolved,
   busy,
   actionableDraftIds,
+  inFlightDraftIds,
   actionableScheduleDraftIds,
   ttsEnabled,
 }: Props) => {
@@ -136,6 +141,7 @@ export const Message = ({
             }
             onSplitBill={onSplitBill}
             disabled={busy}
+            inFlight={inFlightDraftIds?.has(r.draft.id) ?? false}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
           />
         )}
