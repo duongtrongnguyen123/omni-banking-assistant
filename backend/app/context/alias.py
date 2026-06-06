@@ -134,9 +134,16 @@ def _lookup_in_aliases(
     query: str, query_stripped: str, contacts: list[Contact]
 ) -> list[ResolvedRecipient]:
     """Exact fold-match against any saved alias of any contact. Also
-    accepts the stripped form so "anh Tuấn" matches alias "Tuấn"."""
+    accepts the stripped form so "anh Tuấn" matches alias "Tuấn".
+
+    Also matches against ``contact.label`` (the kinship/relationship
+    chip displayed in the contacts UI: "Mẹ", "Bạn thân", "Sếp"...).
+    The seed data carries these on the contact row itself, not as
+    separate alias rows, so "bạn thân" was previously returning [].
+    """
     matches: list[ResolvedRecipient] = []
     for c in contacts:
+        matched = False
         for alias in c.aliases:
             folded = _fold(alias)
             if folded == query or folded == query_stripped:
@@ -145,7 +152,20 @@ def _lookup_in_aliases(
                         contact=c, via_alias=alias, matched_from="alias",
                     )
                 )
+                matched = True
                 break
+        if matched:
+            continue
+        # Fall through to label match — keeps the via_alias slot empty
+        # because the user typed a label, not a stored alias.
+        if c.label:
+            folded_label = _fold(c.label)
+            if folded_label == query or folded_label == query_stripped:
+                matches.append(
+                    ResolvedRecipient(
+                        contact=c, via_alias=c.label, matched_from="alias",
+                    )
+                )
     return _dedupe(matches)
 
 
