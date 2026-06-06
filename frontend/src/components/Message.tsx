@@ -24,6 +24,10 @@ interface Props {
   onConfirmSchedule: (draftId: string, otp: string, sourceAccountId?: string) => void;
   onCancelSchedule: (draftId: string) => void;
   onPrefill?: (text: string) => void;
+  /** Fire-and-forget send — bypasses the input box. Used by the inline
+   *  edit-amount UI on TransactionCard so the user gets one-tap edits
+   *  without a typing detour. */
+  onSubmitText?: (text: string) => void;
   /**
    * Notify the parent that a budget/goal draft was confirmed (or
    * cancelled) so it can refresh the sidebar BudgetCard / GoalsCard
@@ -48,6 +52,7 @@ export const Message = ({
   onConfirmSchedule,
   onCancelSchedule,
   onPrefill,
+  onSubmitText,
   onDraftResolved,
   busy,
   actionableDraftIds,
@@ -118,6 +123,11 @@ export const Message = ({
             onEdit={
               onPrefill
                 ? () => onPrefill("đổi sang ")
+                : undefined
+            }
+            onModifyAmount={
+              onSubmitText
+                ? (amount: number) => onSubmitText(`đổi sang ${amount}`)
                 : undefined
             }
             disabled={busy}

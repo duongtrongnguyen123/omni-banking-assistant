@@ -109,6 +109,10 @@ interface Props {
   onConfirm: (otp: string, sourceAccountId?: string) => void;
   onCancel: () => void;
   onEdit?: () => void;
+  /** Submit a new amount for this draft — wired to the orchestrator's
+   *  modify-draft path (sends "đổi sang <amount>" so the existing NLU
+   *  + draft patch flow handles it without a new endpoint). */
+  onModifyAmount?: (amount: number) => void;
   disabled?: boolean;
   actionable?: boolean;
 }
@@ -118,9 +122,12 @@ export const TransactionCard = ({
   onConfirm,
   onCancel,
   onEdit,
+  onModifyAmount,
   disabled,
   actionable = true,
 }: Props) => {
+  const [editingAmount, setEditingAmount] = useState(false);
+  const [pendingAmount, setPendingAmount] = useState("");
   const [otpOpen, setOtpOpen] = useState(false);
   const [otp, setOtp] = useState("");
   const [sourceAccountId, setSourceAccountId] = useState(
@@ -287,30 +294,83 @@ export const TransactionCard = ({
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>
-          <div className="tx-card__amount-value">
-            {formatVND(draft.amount)}
-            {draft.predicted_amount && (
-              <>
-                <span
-                  className="tx-card__predicted-chip"
-                  title={
-                    draft.amount_prediction_reason ??
-                    "Số tiền được đề xuất từ giao dịch trước đây với người này"
-                  }
-                >
-                  đề xuất từ lịch sử
-                </span>
-                {typeof draft.amount_prediction_confidence === "number" && (
+          {editingAmount && onModifyAmount ? (
+            <form
+              className="tx-card__amount-edit"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const cleaned = pendingAmount.replace(/[^\d]/g, "");
+                const n = parseInt(cleaned, 10);
+                if (!isFinite(n) || n <= 0) {
+                  setEditingAmount(false);
+                  return;
+                }
+                onModifyAmount(n);
+                setEditingAmount(false);
+              }}
+            >
+              <input
+                className="tx-card__amount-input"
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                value={pendingAmount}
+                onChange={(e) =>
+                  setPendingAmount(e.target.value.replace(/[^\d.,\s]/g, ""))
+                }
+                onBlur={() => setEditingAmount(false)}
+                aria-label="Số tiền mới (VND)"
+                placeholder="Số tiền VND"
+              />
+              <button
+                type="submit"
+                className="btn btn--primary tx-card__amount-save"
+                disabled={!pendingAmount.replace(/[^\d]/g, "")}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                Lưu
+              </button>
+            </form>
+          ) : (
+            <div className="tx-card__amount-value">
+              {formatVND(draft.amount)}
+              {draft.predicted_amount && (
+                <>
                   <span
-                    className="tx-card__confidence-badge"
-                    title="Độ tin cậy của dự đoán (từ amount_predictor)"
+                    className="tx-card__predicted-chip"
+                    title={
+                      draft.amount_prediction_reason ??
+                      "Số tiền được đề xuất từ giao dịch trước đây với người này"
+                    }
                   >
-                    {Math.round(draft.amount_prediction_confidence * 100)}%
+                    đề xuất từ lịch sử
                   </span>
-                )}
-              </>
-            )}
-          </div>
+                  {typeof draft.amount_prediction_confidence === "number" && (
+                    <span
+                      className="tx-card__confidence-badge"
+                      title="Độ tin cậy của dự đoán (từ amount_predictor)"
+                    >
+                      {Math.round(draft.amount_prediction_confidence * 100)}%
+                    </span>
+                  )}
+                </>
+              )}
+              {onModifyAmount && actionable && (
+                <button
+                  type="button"
+                  className="tx-card__amount-edit-trigger"
+                  onClick={() => {
+                    setPendingAmount(String(draft.amount ?? ""));
+                    setEditingAmount(true);
+                  }}
+                  aria-label="Sửa số tiền"
+                  title="Sửa số tiền"
+                >
+                  ✎
+                </button>
+              )}
+            </div>
+          )}
           {draft.category && <CategoryChip category={draft.category} />}
         </div>
       )}

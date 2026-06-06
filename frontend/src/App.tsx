@@ -658,6 +658,7 @@ export default function App() {
                 setInput(text);
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
+              onSubmitText={(text) => send(text)}
               onDraftResolved={(resp) => {
                 // A budget or goal draft was confirmed/cancelled. Bump
                 // the sidebar refresh key so BudgetCard / GoalsCard

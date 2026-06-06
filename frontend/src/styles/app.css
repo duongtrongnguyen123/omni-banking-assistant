@@ -482,6 +482,29 @@ textarea:focus-visible,
   border: 1px solid var(--orange);
   letter-spacing: 0.01em;
 }
+.tx-card__amount-edit-trigger {
+  appearance: none; border: none; background: transparent;
+  margin-left: 8px;
+  font-size: 14px; color: var(--muted); cursor: pointer;
+  padding: 2px 6px; border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.tx-card__amount-edit-trigger:hover {
+  background: var(--cream); color: var(--orange);
+}
+.tx-card__amount-edit {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: 4px;
+}
+.tx-card__amount-input {
+  flex: 1; min-width: 0;
+  font: 700 22px/1.2 inherit; color: var(--ink);
+  border: 2px solid var(--orange); border-radius: 10px;
+  padding: 8px 12px; background: white;
+  outline: none;
+}
+.tx-card__amount-input::placeholder { color: #cbd5e1; font-weight: 600; }
+.tx-card__amount-save { padding: 8px 18px; }
 
 .tx-row {
   display: grid; grid-template-columns: 88px 1fr; align-items: center;
