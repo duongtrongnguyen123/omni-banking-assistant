@@ -23,6 +23,7 @@ from .routes import (
     ws,
 )
 from .services import lifecycle
+from .speech import router as speech_router
 
 log = logging.getLogger("omni.main")
 
@@ -104,6 +105,7 @@ app.include_router(metrics.router)
 app.include_router(health.router)
 app.include_router(atm.router)
 app.include_router(qr.router)
+app.include_router(speech_router)
 
 
 @app.on_event("startup")
@@ -190,3 +192,23 @@ def trigger_embed() -> dict:
     from .nlp.embedder import fill_missing_embeddings
 
     return fill_missing_embeddings()
+
+
+@app.get("/health/cache")
+def cache_health() -> dict:
+    """Soi trạng thái + hiệu quả lớp cache Redis (hit/miss, hit_rate, số key).
+
+    Added on origin/main when the hien branch landed the read-path cache.
+    Guarded so the route stays callable even when the redis_client module
+    or its dependencies aren't present in the integration build."""
+    try:
+        from . import redis_client  # type: ignore[attr-defined]
+
+        return {
+            "data_backend": getattr(settings, "data_backend", "memory"),
+            "cache_enabled": getattr(settings, "cache_enabled", False),
+            "ttl_seconds": getattr(settings, "cache_ttl_seconds", 300),
+            "redis": redis_client.stats(),
+        }
+    except Exception as e:  # pragma: no cover — defensive
+        return {"enabled": False, "error": str(e)}

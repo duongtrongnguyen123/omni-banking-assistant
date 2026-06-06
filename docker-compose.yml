@@ -1,34 +1,56 @@
-# Optional dev-time stack — judges who want to see real Redis backing
-# the session store can run `docker compose up redis` and start the
-# backend with `OMNI_SESSION_BACKEND=redis`.
+# Hạ tầng phụ trợ cho Omni — chạy local bằng: docker compose up -d
 #
-# The Omni backend itself is *not* containerised here on purpose:
-# the demo is `uvicorn --reload` against the host Python so file
-# edits hot-reload. This compose file exists purely so you can prove
-# the persistence wiring is real.
-version: "3.9"
+# CHỈ chạy Redis ở đây. Postgres "omni" của dự án là DB managed trên AWS RDS
+# (đã seed sẵn ~590k giao dịch) — app/script kết nối qua DATABASE_URL trỏ tới
+# endpoint RDS, KHÔNG cần Postgres local.
+#
+# Two use cases:
+#   1. SESSION BACKEND. Run Redis here, start backend with
+#      OMNI_SESSION_BACKEND=redis to persist drafts across uvicorn
+#      restarts. The judges-see-real-Redis demo path.
+#   2. READ-PATH CACHE. The hien branch added a cache-aside layer on
+#      get_balance / get_history (CACHE_ENABLED=true). Same Redis
+#      instance backs it.
+#
+# (Tùy chọn) Nếu muốn dev offline với Postgres local thay cho RDS, bỏ comment
+# block 'postgres' bên dưới rồi đổi DATABASE_URL=postgresql://omni:omni@localhost:5432/omni
+# và seed lại bằng backend/scripts/push_to_postgres.py.
 
 services:
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: omni-postgres
+  #   environment:
+  #     POSTGRES_USER: omni
+  #     POSTGRES_PASSWORD: omni
+  #     POSTGRES_DB: omni
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U omni -d omni"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+  #   restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: omni-redis
-    restart: unless-stopped
     ports:
       - "6379:6379"
-    command:
-      - redis-server
-      - --save
-      - "60"
-      - "1"
-      - --loglevel
-      - warning
+    # save 60 1: snapshot ra đĩa mỗi 60s nếu có >=1 key đổi (đủ cho demo, không bật AOF).
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 2s
+      interval: 10s
+      timeout: 3s
       retries: 5
-    volumes:
-      - omni-redis-data:/data
+    restart: unless-stopped
 
 volumes:
-  omni-redis-data:
+  redis-data:
+  # postgres-data:   # chỉ cần khi bật service postgres local ở trên

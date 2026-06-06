@@ -154,6 +154,25 @@ export const api = {
     jsonFetch<Array<Contact & { aliases?: string[]; label?: string | null }>>(
       `/api/banking/contacts`,
     ),
+  // From origin/main — recent-recipients widget + STT endpoint. Speech
+  // backend (app/speech) wires the latter; the former is a banking
+  // helper route that already exists.
+  recentRecipients: (limit = 10) =>
+    jsonFetch<Array<{ contact: Contact; last_amount: number; last_at: string }>>(
+      `/api/banking/recent-recipients?limit=${limit}`,
+    ),
+  stt: async (blob: Blob) => {
+    const form = new FormData();
+    form.append("audio", blob, "audio.webm");
+    const res = await fetch("/api/speech/stt", {
+      method: "POST",
+      body: form,
+      headers: { "x-user-id": "u_an" },
+    });
+    if (!res.ok) throw new ApiError(res.status, res.statusText || "STT failed");
+    const data = (await res.json()) as { text: string };
+    return data.text;
+  },
   cancel: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {
       method: "POST",

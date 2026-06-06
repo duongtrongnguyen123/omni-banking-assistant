@@ -23,6 +23,7 @@ frontend/dist/
 # Contest CSV bundle — too big for git; regenerate via scripts/load_contest_full.py
 /generated/
 /generated.zip
+transactions_enriched_6m.csv
 
 # Public reference datasets — downloaded on demand by load_czech.py /
 # load_banksim.py. Both are large (Czech ~55 MB, BankSim ~50 MB) and
@@ -45,10 +46,7 @@ backend/app/data/bandit_state.tmp
 # BANKING_DATA_DIR="" the shell evaluates it as set-but-empty, Path("")
 # resolves to the CWD, and the seeds land at backend/ root instead of the
 # tmp dir conftest.py intended. Ignore the four stray copies so the dirty
-# git tree from that run-with-empty-env doesn't get committed. The
-# fixtures themselves now treat empty-string as unset and fall back to
-# `.tmp_test_seed/`, so this serves as belt-and-braces against an older
-# checkout that still has the original fixture.
+# git tree from that run-with-empty-env doesn't get committed.
 backend/contacts.json
 backend/transactions.json
 backend/users.json

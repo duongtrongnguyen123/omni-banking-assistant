@@ -1,14 +1,14 @@
 [
   {
     "id": "u_an",
-    "display_name": "An",
+    "display_name": "Nguyễn Hoàng An",
     "phone": "0912345678",
     "accounts": [
       {
         "id": "acc_an_main",
         "bank": "Omni Bank",
         "number": "1234567890",
-        "balance": 24350000,
+        "balance": 100000000,
         "currency": "VND",
         "primary": true
       },

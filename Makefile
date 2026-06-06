@@ -1,4 +1,4 @@
-.PHONY: install backend frontend smoke check reset test-nlu test verify docker-build docker-run docker-redis dev clean
+.PHONY: install backend frontend smoke check reset test-nlu test verify docker-build docker-run docker-redis dev clean redis
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
@@ -67,6 +67,12 @@ docker-run:
 docker-redis:
 	docker compose up -d redis
 	@echo "Redis on localhost:6379. Start backend with OMNI_SESSION_BACKEND=redis."
+
+# Bring up the full docker-compose stack (Postgres + Redis). From the
+# hien branch — used when the backend is configured with
+# OMNI_STORE_BACKEND=postgres.
+redis:
+	docker compose up -d
 
 dev:
 	@echo "Run 'make backend' and 'make frontend' in two terminals."

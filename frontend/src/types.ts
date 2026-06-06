@@ -70,6 +70,8 @@ export interface AnomalyDetails {
   current_amount: number;
 }
 
+export type AuthMethod = "otp" | "biometric";
+
 export interface TransactionDraft {
   id: string;
   recipient: Contact | null;
@@ -92,6 +94,54 @@ export interface TransactionDraft {
     category?: string | null;
   }> | null;
   category?: string | null;
+  // Biometric auth additions from origin/main. Optional so existing
+  // draft producers don't need to change.
+  auth_required?: Array<"otp" | "biometric">;
+  auth_completed?: Array<"otp" | "biometric">;
+}
+
+// Biometric scan types — added on origin/main for the face-scan flow.
+// Kept exported even though the integration TransactionCard doesn't
+// render them yet; the next merge wave wires the UI.
+export type BiometricScanTarget = "center" | "sideA" | "verticalA" | "sideB";
+export type BiometricScanPath = "clockwise" | "counterClockwise";
+
+export interface BiometricScanPose {
+  yaw: number;
+  pitch: number;
+  roll: number;
+  faceCenterX: number;
+  faceCenterY: number;
+}
+
+export interface BiometricScanStepResult {
+  index: number;
+  target: BiometricScanTarget;
+  stableFrames: number;
+  detectionScore: number;
+  elapsedMs: number;
+  pose: BiometricScanPose;
+  frameSignature: number;
+}
+
+export interface BiometricScanSample {
+  elapsedMs: number;
+  detectionScore: number;
+  pose: BiometricScanPose;
+  frameSignature: number;
+}
+
+export interface BiometricScanResult {
+  challengeId: string;
+  path: BiometricScanPath;
+  requiredStableFrames: number;
+  startedAt: string;
+  finishedAt: string;
+  continuityBreaks: number;
+  faceDescriptor: number[];
+  profileDescriptors: number[][];
+  samples: BiometricScanSample[];
+  steps: BiometricScanStepResult[];
 }
 
 export interface HistoryItem {
@@ -274,6 +324,17 @@ export interface InsightsSummary {
   anomalies: AnomalyItem[];
   subscriptions: SubscriptionItem[];
   generated_at: string;
+}
+
+export interface RecentRecipient {
+  contact: {
+    id: string;
+    display_name: string;
+    bank: string;
+    account_masked: string;
+    label: string | null;
+  };
+  last_at: string;
 }
 
 export interface ChatMessage {

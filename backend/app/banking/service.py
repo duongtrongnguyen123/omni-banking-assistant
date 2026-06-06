@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from statistics import mean
 from typing import Optional
 
+from ..config import get_settings
 from ..models.schemas import Contact, Schedule, Transaction
 from ..services import events
 from ..store import get_store, new_id, now
@@ -16,6 +17,24 @@ from ..store import get_store, new_id, now
 # the user's primary account drops under 100k VND — at that point a
 # heads-up is genuinely useful (typical Omni demo balance is 24M).
 _BALANCE_LOW_THRESHOLD = 100_000
+
+
+def _cached(key: str, producer):
+    """Cache-aside cho kết quả truy vấn (dict nhỏ, đắt để tính trên 591k dòng).
+
+    Tắt cache => gọi thẳng producer. Redis sập => producer (fail-open).
+    """
+    settings = get_settings()
+    if not settings.cache_enabled:
+        return producer()
+    from .. import redis_client
+
+    cached = redis_client.get_cache(key)
+    if cached is not None:
+        return cached
+    value = producer()
+    redis_client.set_cache(key, value, settings.cache_ttl_seconds)
+    return value
 
 
 def execute_transfer(
@@ -113,30 +132,45 @@ def execute_transfer(
 
 
 def get_balance(user_id: str) -> dict:
-    store = get_store()
-    user = store.get_user(user_id)
-    # 7-day rolling outflow series — one cell per day, oldest → newest.
-    # Powers the sparkline on BalanceCard so the user sees their recent
-    # spending shape at a glance instead of opening the history view.
-    ref = now()
-    today = ref.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = today - timedelta(days=6)
-    daily = [0] * 7
-    txs = store.transactions_of(
-        user_id, since=start, status="completed",
-    )
-    for t in txs:
-        if t.amount <= 0:
-            continue
-        bucket = (t.created_at - start).days
-        if 0 <= bucket < 7:
-            daily[bucket] += t.amount
-    return {
-        "display_name": user.display_name,
-        "accounts": [a.model_dump() for a in user.accounts],
-        "total": sum(a.balance for a in user.accounts),
-        "recent_outflow_7d": daily,
-    }
+    """Return current balance + 7-day outflow sparkline.
+
+    Wrapped in the hien-branch ``_cached`` layer so identical reads
+    inside the cache TTL window skip the SQL. Sparkline is part of the
+    cached payload — judges see the same 7-day shape until a new
+    transfer invalidates (next invocation re-computes after TTL).
+    """
+    def _compute() -> dict:
+        store = get_store()
+        user = store.get_user(user_id)
+        # 7-day rolling outflow series — one cell per day, oldest → newest.
+        # Powers the sparkline on BalanceCard so the user sees their recent
+        # spending shape at a glance instead of opening the history view.
+        ref = now()
+        today = ref.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = today - timedelta(days=6)
+        daily = [0] * 7
+        txs = store.transactions_of(
+            user_id, since=start, status="completed",
+        )
+        for t in txs:
+            if t.amount <= 0:
+                continue
+            bucket = (t.created_at - start).days
+            if 0 <= bucket < 7:
+                daily[bucket] += t.amount
+        return {
+            "display_name": user.display_name,
+            "accounts": [a.model_dump() for a in user.accounts],
+            "total": sum(a.balance for a in user.accounts),
+            "recent_outflow_7d": daily,
+        }
+
+    try:
+        from ..redis_client import user_balance_key
+
+        return _cached(user_balance_key(user_id), _compute)
+    except Exception:  # pragma: no cover — redis layer optional
+        return _compute()
 
 
 def _month_window(ref: datetime) -> tuple[datetime, datetime]:
@@ -168,6 +202,12 @@ def get_history(
         token overlap against ``description`` and ``category``.
       * ``limit`` truncates the items list (kept sorted by created_at desc)
         and rolls aggregates from the truncated set.
+
+    Not cached: the cache key on origin/main only covered (user, contact,
+    period) and would return stale results for ``specific_month`` /
+    ``all_time`` / ``limit`` / ``semantic_filter`` variants. Until the
+    cache key is extended to cover all kwargs, the compute path runs
+    every call.
     """
     store = get_store()
     txs = store.transactions_of(user_id)

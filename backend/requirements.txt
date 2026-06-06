@@ -14,8 +14,13 @@ google-generativeai==0.8.3
 # absent. ``redis-py`` for production deployments, ``fakeredis`` for
 # the test suite and for judges who want to see the Redis wire path
 # without running a docker container.
-redis>=5.0
+redis==5.0.1
 fakeredis>=2.20
+# Postgres adapter (hien branch — managed-DB read path when
+# DATA_BACKEND=postgres). The binary wheel ships with libpq.
+psycopg2-binary==2.9.9
+# Speech-to-text (main branch — backend/app/speech). CPU-only, lazy-load.
+faster-whisper>=1.2.0
 # QR generation for the "Nhận tiền" modal + camera-scan transfer
 # pre-fill. ``qrcode[pil]`` pulls Pillow (already present) and a tiny
 # pure-Python QR encoder — <100KB combined.

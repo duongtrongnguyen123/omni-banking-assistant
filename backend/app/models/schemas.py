@@ -137,6 +137,8 @@ class SafetyFlag(BaseModel):
         "missing_amount",
         "missing_recipient",
         "ambiguous_recipient",
+        "account_hint_mismatch",
+        "large_amount",
         "new_recipient_large_amount",
         "amount_above_average",
         "insufficient_balance",
@@ -205,6 +207,11 @@ class TransactionDraft(BaseModel):
     # confirm card. Raw dicts (``amount, created_at, description``) to
     # keep the schema layer free of banking-side imports.
     recent_to_recipient: Optional[list[dict]] = None
+    # Biometric auth additions (from origin/main face-scan flow). The
+    # next merge wave wires the orchestrator to populate these; for now
+    # they exist so the wire schema includes them.
+    auth_required: list[Literal["otp", "biometric"]] = Field(default_factory=list)
+    auth_completed: list[Literal["otp", "biometric"]] = Field(default_factory=list)
 
 
 class ContactDraft(BaseModel):
@@ -326,3 +333,24 @@ class OmniResponse(BaseModel):
     # judges never see internal latency numbers leak into a serialized
     # response.
     telemetry: Optional[dict] = None
+
+
+class AuditEvent(BaseModel):
+    """Per-decision audit row — populated by services/audit_log when the
+    Store.audit_of API is added (next merge wave from feat/audit-explain).
+    Schema kept here so the wire shape stays stable when the explainer UI
+    lands."""
+
+    id: str
+    created_at: datetime
+    user_id: str
+    message: str = ""
+    nlu_source: Literal["rule", "llm", "unknown"] = "unknown"
+    intent: str = "unknown"
+    entities: dict = Field(default_factory=dict)
+    resolved_recipient: Optional[str] = None
+    selected_account: Optional[str] = None
+    safety_flags: list[str] = Field(default_factory=list)
+    auth_required: list[str] = Field(default_factory=list)
+    auth_completed: list[str] = Field(default_factory=list)
+    decision: str

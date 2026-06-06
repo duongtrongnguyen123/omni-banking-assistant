@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -32,9 +34,49 @@ class SelectCandidateRequest(BaseModel):
     contact_id: str
 
 
+class BiometricPose(BaseModel):
+    yaw: float
+    pitch: float
+    roll: float
+    faceCenterX: float
+    faceCenterY: float
+
+
+class BiometricStepResult(BaseModel):
+    index: int
+    target: Literal["center", "sideA", "verticalA", "sideB"]
+    stableFrames: int
+    detectionScore: float
+    elapsedMs: int
+    pose: BiometricPose
+    frameSignature: int
+
+
+class BiometricSample(BaseModel):
+    elapsedMs: int
+    detectionScore: float
+    pose: BiometricPose
+    frameSignature: int
+
+
+class BiometricScanResult(BaseModel):
+    challengeId: str
+    path: Literal["clockwise", "counterClockwise"]
+    requiredStableFrames: int
+    startedAt: str
+    finishedAt: str
+    continuityBreaks: int = 0
+    faceDescriptor: list[float]
+    profileDescriptors: list[list[float]]
+    samples: list[BiometricSample] = Field(default_factory=list)
+    steps: list[BiometricStepResult]
+
+
 class ConfirmTransactionRequest(BaseModel):
     otp: str | None = None
     source_account_id: str | None = None
+    biometric_verified: bool = False
+    biometric_scan: BiometricScanResult | None = None
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -77,6 +119,11 @@ def confirm(
     if cached is not None:
         return cached
 
+    # Biometric params are part of ConfirmTransactionRequest (kept from
+    # origin/main wire schema) but the orchestrator's confirm_draft
+    # doesn't consume them yet — they'll be wired when we land the
+    # face-scan auth layer. For now they're accepted-and-ignored so the
+    # frontend can ship the wire without backend failure.
     resp = confirm_draft(
         user_id,
         draft_id,
@@ -131,7 +178,12 @@ def select(
 ) -> OmniResponse:
     resp = select_candidate(user_id, draft_id, req.contact_id)
     if resp.intent == "unknown":
-        raise HTTPException(status_code=404, detail=resp.text)
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                "Phiên giao dịch vừa được làm mới. Bạn nhập lại câu chuyển tiền giúp mình nhé."
+            ),
+        )
     return resp
 
 
