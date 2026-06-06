@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextvars
 import re
 import time
-from typing import Optional
+from typing import Any, Optional
 
 # Per-request telemetry bucket. The chat route sets this to {} when the
 # caller passes ``?dev=1``; the orchestrator and NLU layer fill it as
@@ -71,7 +71,7 @@ from ..nlp.amount import format_vnd
 from ..nlp.entities import normalize_alias
 from ..nlp.llm import llm_phrase
 from ..nlp.pipeline import understand
-from ..safety.rules import evaluate, is_blocked, requires_step_up
+from ..safety.rules import auth_policy, evaluate, is_blocked, requires_step_up
 from ..store import get_store, new_id, now
 
 # Insights chat handler — lives in a sibling module so the dispatch site
@@ -598,6 +598,8 @@ def _modify_transfer_draft(
         user_id=user_id,
     )
     draft.requires_step_up = requires_step_up(draft.flags)
+    draft.auth_required = auth_policy(draft.flags)
+    draft.auth_completed = [a for a in draft.auth_completed if a in draft.auth_required]
     # Recipient may have changed in this edit; refresh the mini-ledger
     # so the chat card matches the new recipient.
     draft.recent_to_recipient = _recent_to_recipient(user_id, draft.recipient)
@@ -1555,6 +1557,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         reference_transaction_id=reference_tx_id,
         flags=flags,
         requires_step_up=requires_step_up(flags),
+        auth_required=auth_policy(flags),
         predicted_amount=prediction is not None,
         amount_prediction_reason=(
             prediction.get("rationale") if prediction is not None else None
@@ -1674,6 +1677,167 @@ def _match_candidate(text: str, candidates: list[Contact]) -> Optional[Contact]:
 
 
 # ---------------------------------------------------------------------------
+# Biometric (8D face scan) verification
+# ---------------------------------------------------------------------------
+
+_BIO_TARGETS = ["center", "sideA", "verticalA", "sideB", "center"]
+_FACE_MATCH_THRESHOLD = 0.48
+
+
+def _pose_value(step: dict[str, Any], key: str) -> float:
+    pose = step.get("pose") or {}
+    try:
+        return float(pose.get(key, 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _face_distance(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b) or not a:
+        return 999.0
+    return sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _face_match_valid(scan: dict[str, Any]) -> tuple[bool, str]:
+    face_descriptor = scan.get("faceDescriptor") or []
+    profile_descriptors = scan.get("profileDescriptors") or []
+    if len(face_descriptor) != 128:
+        return False, "Chưa nhận được đặc trưng khuôn mặt hiện tại."
+    valid_profiles = [
+        descriptor
+        for descriptor in profile_descriptors
+        if isinstance(descriptor, list) and len(descriptor) == 128
+    ]
+    if not valid_profiles:
+        return False, "Chưa có hồ sơ sinh trắc học đã lưu cho tài khoản này."
+
+    best_distance = min(_face_distance(face_descriptor, descriptor) for descriptor in valid_profiles)
+    if best_distance > _FACE_MATCH_THRESHOLD:
+        return False, "Khuôn mặt không khớp với hồ sơ sinh trắc học đã lưu của tài khoản."
+    return True, ""
+
+
+def _biometric_scan_valid(scan: dict[str, Any] | None, draft_id: str, otp: str | None) -> tuple[bool, str]:
+    if not scan:
+        return False, "Chưa có dữ liệu quét sinh trắc học 8D."
+
+    challenge_id = str(scan.get("challengeId") or "")
+    expected_challenge = f"{draft_id}:{(otp or '').strip() or 'no-otp'}"
+    if challenge_id != expected_challenge:
+        return False, "Phiên sinh trắc học không khớp giao dịch hiện tại."
+
+    steps = scan.get("steps") or []
+    if len(steps) != len(_BIO_TARGETS):
+        return False, "Sinh trắc học chưa hoàn tất đủ vòng quay khuôn mặt."
+
+    path = scan.get("path")
+    if path not in {"clockwise", "counterClockwise"}:
+        return False, "Thử thách sinh trắc học không hợp lệ."
+
+    required_stable = int(scan.get("requiredStableFrames") or 0)
+    if required_stable < 1:
+        return False, "Dữ liệu sinh trắc học chưa đủ số frame ổn định."
+
+    previous_elapsed = -1
+    signatures: set[int] = set()
+    for index, (step, target) in enumerate(zip(steps, _BIO_TARGETS)):
+        if int(step.get("index", -1)) != index or step.get("target") != target:
+            return False, "Thứ tự thử thách sinh trắc học không hợp lệ."
+        if int(step.get("stableFrames") or 0) < required_stable:
+            return False, "Một bước sinh trắc học chưa đủ ổn định."
+        if float(step.get("detectionScore") or 0) < 0.5:
+            return False, "Khuôn mặt chưa đủ rõ để xác minh."
+
+        elapsed = int(step.get("elapsedMs") or 0)
+        if elapsed <= previous_elapsed:
+            return False, "Mốc thời gian sinh trắc học không hợp lệ."
+        previous_elapsed = elapsed
+
+        signatures.add(int(step.get("frameSignature") or 0))
+
+    first_center_yaw = _pose_value(steps[0], "yaw")
+    last_center_yaw = _pose_value(steps[-1], "yaw")
+    first_center_pitch = _pose_value(steps[0], "pitch")
+    last_center_pitch = _pose_value(steps[-1], "pitch")
+    if abs(first_center_yaw) > 0.22 or abs(last_center_yaw) > 0.22:
+        return False, "Khuôn mặt chưa nhìn gần thẳng trong khung."
+    if abs(first_center_pitch) > 0.22 or abs(last_center_pitch) > 0.22:
+        return False, "Khuôn mặt chưa nhìn gần thẳng trong khung."
+
+    side_a_yaw = _pose_value(steps[1], "yaw")
+    vertical_a_pitch = _pose_value(steps[2], "pitch")
+    side_b_yaw = _pose_value(steps[3], "yaw")
+    if abs(side_a_yaw) <= 0.065:
+        return False, "Chưa xác nhận được hướng quay đầu tiên."
+    if abs(side_b_yaw) <= 0.065 or side_a_yaw * side_b_yaw >= 0:
+        return False, "Chưa xác nhận được hướng quay ngược lại."
+    if path == "clockwise":
+        if vertical_a_pitch >= -0.055:
+            return False, "Video/ảnh không khớp chiều quay được yêu cầu."
+    else:
+        if vertical_a_pitch <= 0.055:
+            return False, "Video/ảnh không khớp chiều quay được yêu cầu."
+
+    yaw_span = abs(side_a_yaw - side_b_yaw)
+    if yaw_span < 0.14:
+        return False, "Biên độ chuyển động khuôn mặt chưa đủ để xác minh."
+
+    if len(signatures) < 5:
+        return False, "Các frame sinh trắc học quá giống nhau, vui lòng quét lại."
+
+    if previous_elapsed < 550:
+        return False, "Quá trình quét diễn ra quá nhanh, vui lòng thực hiện lại."
+
+    samples = scan.get("samples") or []
+    if len(samples) < 12:
+        return False, "Cần quét chuyển động liên tục lâu hơn một chút."
+
+    if int(scan.get("continuityBreaks") or 0) > 1:
+        return False, "Chuyển động khuôn mặt bị ngắt quãng, vui lòng quay liên tục thay vì đổi ảnh."
+
+    sample_signatures: set[int] = set()
+    previous_sample_elapsed = -1
+    max_pose_jump = 0.0
+    total_motion = 0.0
+    low_score_samples = 0
+    previous_sample: dict[str, Any] | None = None
+    for sample in samples:
+        elapsed = int(sample.get("elapsedMs") or 0)
+        if elapsed <= previous_sample_elapsed:
+            return False, "Chuỗi frame sinh trắc học không hợp lệ."
+        previous_sample_elapsed = elapsed
+
+        if float(sample.get("detectionScore") or 0) < 0.5:
+            low_score_samples += 1
+        sample_signatures.add(int(sample.get("frameSignature") or 0))
+
+        if previous_sample is not None:
+            pose_jump = (
+                abs(_pose_value(sample, "yaw") - _pose_value(previous_sample, "yaw"))
+                + abs(_pose_value(sample, "pitch") - _pose_value(previous_sample, "pitch"))
+                + abs(_pose_value(sample, "roll") - _pose_value(previous_sample, "roll"))
+            )
+            max_pose_jump = max(max_pose_jump, pose_jump)
+            total_motion += pose_jump
+        previous_sample = sample
+
+    if low_score_samples > 2:
+        return False, "Một số frame khuôn mặt chưa đủ rõ, vui lòng quét lại."
+    if len(sample_signatures) < 7:
+        return False, "Chuỗi hình ảnh quá giống ảnh tĩnh, vui lòng quay mặt thật liên tục."
+    if max_pose_jump > 1:
+        return False, "Pose khuôn mặt nhảy quá nhanh, nghi ngờ đổi ảnh theo từng hướng."
+    if total_motion < 0.55:
+        return False, "Chuyển động khuôn mặt chưa đủ liên tục để xác minh."
+
+    face_ok, face_error = _face_match_valid(scan)
+    if not face_ok:
+        return False, face_error
+
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
 # Public draft actions
 # ---------------------------------------------------------------------------
 
@@ -1683,6 +1847,8 @@ def confirm_draft(
     draft_id: str,
     otp: str | None = None,
     source_account_id: str | None = None,
+    biometric_scan: dict[str, Any] | None = None,
+    biometric_verified: bool = False,
 ) -> OmniResponse:
     session = session_for(user_id)
     draft = session.current_draft
@@ -1715,6 +1881,8 @@ def confirm_draft(
     )
     draft.flags = fresh_flags
     draft.requires_step_up = requires_step_up(fresh_flags)
+    draft.auth_required = auth_policy(fresh_flags)
+    draft.auth_completed = [a for a in draft.auth_completed if a in draft.auth_required]
 
     if is_blocked(draft.flags):
         msg = " ".join(f.message for f in draft.flags if f.severity == "block")
@@ -1728,22 +1896,46 @@ def confirm_draft(
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    # MVP step-up auth: every transfer must pass an OTP check before execution.
-    # Two ways to provide the OTP:
-    #   1) UI card sends it via the confirm endpoint body (`otp` param here).
-    #   2) User types the digits in chat — handle_message catches that and
-    #      re-routes to this function with `otp` filled in.
-    if otp is None:
-        # Mark the draft as awaiting OTP so handle_message can route the
-        # next digit-only chat message back here.
-        draft.awaiting_otp = True
+    # Step-up auth state machine. draft.auth_required is set from
+    # auth_policy() above:
+    #   normal transfer        -> ["otp"]
+    #   risky (warn) transfer  -> ["otp", "biometric"]
+    # The confirm endpoint sends otp + biometric_scan together, but each
+    # method is verified independently so partial-auth retries also work.
+    # awaiting_otp stays True until execution clears the draft, so the
+    # chat.py idempotency cache never memoises an intermediate auth step.
+    draft.awaiting_otp = True
+    session.set_draft(draft)
+
+    # --- Biometric (8D face scan) ---
+    if (
+        "biometric" in draft.auth_required
+        and "biometric" not in draft.auth_completed
+        and (biometric_scan or biometric_verified)
+    ):
+        scan_ok, scan_error = _biometric_scan_valid(biometric_scan, draft.id, otp)
+        if not scan_ok:
+            session.append("user", "Xác minh sinh trắc học")
+            session.append("omni", scan_error)
+            return OmniResponse(intent="transfer", text=scan_error, draft=draft)
+        draft.auth_completed.append("biometric")
         session.set_draft(draft)
+        if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is None:
+            text = "Sinh trắc học đã xác minh. Vui lòng nhập OTP để hoàn tất. Mã demo: 123456."
+            session.append("user", "Xác minh sinh trắc học")
+            session.append("omni", text)
+            return OmniResponse(intent="transfer", text=text, draft=draft)
+
+    # --- OTP ---
+    if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is None:
         text = "Vui lòng nhập OTP để xác minh giao dịch. Mã demo: 123456."
+        if "biometric" in draft.auth_required and "biometric" not in draft.auth_completed:
+            text = (
+                "Giao dịch rủi ro cần OTP và sinh trắc học. "
+                "Vui lòng quét khuôn mặt và nhập OTP. Mã demo: 123456."
+            )
         session.append("user", "Xác nhận giao dịch")
         session.append("omni", text)
-        # Audit OTP request — never the OTP itself (mock 123456 here,
-        # but the contract documents no-OTP-value-logged for real
-        # integrations).
         try:
             from .audit_log import record_otp
             record_otp(user_id=user_id, draft_id=draft.id, action="requested")
@@ -1751,7 +1943,12 @@ def confirm_draft(
             pass
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    if otp.strip() != "123456":
+    if (
+        "otp" in draft.auth_required
+        and "otp" not in draft.auth_completed
+        and otp
+        and otp.strip() != "123456"
+    ):
         text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
         session.append("user", "Xác minh OTP")
         session.append("omni", text)
@@ -1762,14 +1959,29 @@ def confirm_draft(
             pass
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
-    # OTP verified — log before execute so the audit trail captures
-    # the verify event even if execute throws.
-    try:
-        from .audit_log import record_otp
-        record_otp(user_id=user_id, draft_id=draft.id, action="verified")
-    except Exception:  # pragma: no cover
-        pass
-    return _execute_and_record(user_id, draft, otp_used=True)
+    if "otp" in draft.auth_required and otp and "otp" not in draft.auth_completed:
+        # OTP verified — log before execute so the audit trail captures
+        # the verify event even if execute throws.
+        try:
+            from .audit_log import record_otp
+            record_otp(user_id=user_id, draft_id=draft.id, action="verified")
+        except Exception:  # pragma: no cover
+            pass
+        draft.auth_completed.append("otp")
+
+    # --- Any required method still outstanding? ---
+    missing_auth = [m for m in draft.auth_required if m not in draft.auth_completed]
+    if missing_auth:
+        if "biometric" in missing_auth:
+            text = "Còn thiếu xác minh sinh trắc học. Vui lòng quét khuôn mặt 8D rồi gửi lại xác nhận nhé."
+        else:
+            text = "Còn thiếu xác thực: " + ", ".join(missing_auth) + "."
+        session.set_draft(draft)
+        session.append("user", "Xác minh giao dịch")
+        session.append("omni", text)
+        return OmniResponse(intent="transfer", text=text, draft=draft)
+
+    return _execute_and_record(user_id, draft, otp_used="otp" in draft.auth_completed)
 
 
 def _execute_and_record(
@@ -1985,6 +2197,8 @@ def select_candidate(user_id: str, draft_id: str, contact_id: str) -> OmniRespon
     draft.candidates = []
     draft.flags = flags
     draft.requires_step_up = requires_step_up(flags)
+    draft.auth_required = auth_policy(flags)
+    draft.auth_completed = [a for a in draft.auth_completed if a in draft.auth_required]
     # KB3: the user just picked one of the candidate "Minh"s — fill in
     # the mini-ledger so the confirm card matches what the no-ambiguity
     # path (KB1) shows.
