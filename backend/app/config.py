@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     cache_enabled: bool = False
     # TTL mặc định cho các key cache (giây). 300s = 5 phút như kế hoạch.
     cache_ttl_seconds: int = 300
+    # Compliance retention: completed transaction records are retained for
+    # 10 years for reporting, audit, dispute lookup, and competent-authority
+    # requests. Demo code does not purge rows before this horizon.
+    transaction_retention_years: int = 10
 
     @property
     def cors_list(self) -> list[str]:

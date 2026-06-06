@@ -59,6 +59,26 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     }
     if "response_json" not in cols:
         conn.execute("ALTER TABLE chat_messages ADD COLUMN response_json TEXT")
+    user_cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "kyc_level" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN kyc_level TEXT NOT NULL DEFAULT 'normal'")
+    tx_cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
+    }
+    tx_migrations = {
+        "auth_methods": "ALTER TABLE transactions ADD COLUMN auth_methods TEXT NOT NULL DEFAULT ''",
+        "kyc_level": "ALTER TABLE transactions ADD COLUMN kyc_level TEXT",
+        "daily_limit_vnd": "ALTER TABLE transactions ADD COLUMN daily_limit_vnd INTEGER",
+        "daily_total_before_vnd": "ALTER TABLE transactions ADD COLUMN daily_total_before_vnd INTEGER",
+        "retention_until": "ALTER TABLE transactions ADD COLUMN retention_until TEXT",
+    }
+    for col, sql in tx_migrations.items():
+        if col not in tx_cols:
+            conn.execute(sql)
 
 
 def reset_connection() -> None:

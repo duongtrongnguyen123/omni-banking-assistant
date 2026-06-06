@@ -15,8 +15,9 @@ import os
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from ..config import get_settings
 from ..db import chat_log
 from ..db.connection import get_connection
 from ..nlp import privacy
@@ -157,13 +158,25 @@ class AdminTransactionRow(BaseModel):
     category: str
     status: str
     created_at: str
+    auth_methods: list[str] = Field(default_factory=list)
+    kyc_level: Optional[str] = None
+    daily_limit_vnd: Optional[int] = None
+    daily_total_before_vnd: Optional[int] = None
+    retention_until: Optional[str] = None
 
 
 class AdminTransactionsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    retention_years: int
     transactions: list[AdminTransactionRow]
+
+
+class RetentionPolicyResponse(BaseModel):
+    transaction_retention_years: int
+    scope: list[str]
+    note: str
 
 
 @router.get("/llm-audit", response_model=LLMAuditResponse)
@@ -219,6 +232,10 @@ def _admin_transaction_where(
     user_id: Optional[str],
     q: Optional[str],
     status: Optional[str],
+    from_date: Optional[str],
+    to_date: Optional[str],
+    min_amount: Optional[int],
+    max_amount: Optional[int],
 ) -> tuple[str, list[object]]:
     where: list[str] = []
     params: list[object] = []
@@ -228,6 +245,18 @@ def _admin_transaction_where(
     if status:
         where.append("t.status = ?")
         params.append(status)
+    if from_date:
+        where.append("t.created_at >= ?")
+        params.append(from_date)
+    if to_date:
+        where.append("t.created_at < ?")
+        params.append(to_date)
+    if min_amount is not None:
+        where.append("t.amount >= ?")
+        params.append(min_amount)
+    if max_amount is not None:
+        where.append("t.amount <= ?")
+        params.append(max_amount)
     if q:
         like = f"%{q.strip()}%"
         where.append(
@@ -249,12 +278,24 @@ def admin_transactions(
     user_id: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None, max_length=120),
     status: Optional[str] = Query(default="completed", max_length=40),
+    from_date: Optional[str] = Query(default=None, description="ISO datetime lower bound"),
+    to_date: Optional[str] = Query(default=None, description="ISO datetime upper bound"),
+    min_amount: Optional[int] = Query(default=None, ge=0),
+    max_amount: Optional[int] = Query(default=None, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> AdminTransactionsResponse:
     """Read-only ledger of transfers executed through Omni."""
     conn = get_connection()
-    where_sql, params = _admin_transaction_where(user_id=user_id, q=q, status=status)
+    where_sql, params = _admin_transaction_where(
+        user_id=user_id,
+        q=q,
+        status=status,
+        from_date=from_date,
+        to_date=to_date,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
     total_row = conn.execute(
         f"""
         SELECT COUNT(*) AS n
@@ -268,6 +309,8 @@ def admin_transactions(
         f"""
         SELECT t.id, t.owner_id AS user_id, t.contact_id, t.amount,
                t.description, t.category, t.status, t.created_at,
+               t.auth_methods, t.kyc_level, t.daily_limit_vnd,
+               t.daily_total_before_vnd, t.retention_until,
                c.display_name AS recipient_name,
                c.bank AS recipient_bank,
                c.account_masked AS recipient_account_masked
@@ -283,7 +326,38 @@ def admin_transactions(
         total=int(total_row["n"] if total_row else 0),
         limit=limit,
         offset=offset,
-        transactions=[AdminTransactionRow(**dict(r)) for r in rows],
+        retention_years=get_settings().transaction_retention_years,
+        transactions=[
+            AdminTransactionRow(
+                **{
+                    **dict(r),
+                    "auth_methods": [
+                        m for m in (r["auth_methods"] or "").split(",") if m
+                    ],
+                }
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.get("/compliance/retention", response_model=RetentionPolicyResponse)
+def retention_policy() -> RetentionPolicyResponse:
+    """Document the demo retention contract for transaction/audit records."""
+    years = get_settings().transaction_retention_years
+    return RetentionPolicyResponse(
+        transaction_retention_years=years,
+        scope=[
+            "completed transaction ledger",
+            "transaction auth metadata",
+            "file-based safety/OTP/transfer audit trail",
+        ],
+        note=(
+            f"Omni demo marks completed transaction rows for at least {years} "
+            "years of retention for reporting, dispute lookup, audit, and "
+            "competent-authority requests. No purge job deletes rows before "
+            "retention_until."
+        ),
     )
 
 

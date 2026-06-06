@@ -27,6 +27,12 @@ from ..nlp.amount import format_vnd
 # history to compute a meaningful baseline.
 ANOMALY_MULTIPLIER = 10
 NEW_RECIPIENT_LARGE_THRESHOLD = 10_000_000  # 10M VND
+BIOMETRIC_SINGLE_TRANSFER_THRESHOLD = 10_000_000
+BIOMETRIC_DAILY_SUB_THRESHOLD_TOTAL = 20_000_000
+DAILY_TRANSFER_LIMITS = {
+    "ekyc": 10_000_000,
+    "normal": 2_000_000_000,
+}
 
 # Per-recipient anomaly: minimum tx count to trust a per-contact baseline,
 # and modified z-score cutoff (3.5 ≈ industry-standard outlier threshold,
@@ -41,6 +47,37 @@ _MODIFIED_Z_THRESHOLD = 3.5
 # that demo runs won't false-positive.
 _VELOCITY_N = 3
 _VELOCITY_WINDOW_SEC = 60
+
+
+def _daily_biometric_total(user_id: str) -> int:
+    try:
+        from ..store import get_store
+
+        return get_store().biometric_daily_total(user_id)
+    except Exception:  # pragma: no cover - fail open to existing auth policy
+        return 0
+
+
+def _daily_completed_transfer_total(user_id: str) -> int:
+    try:
+        from ..store import get_store
+
+        return get_store().completed_transfer_total_today(user_id)
+    except Exception:  # pragma: no cover - fail open to balance/auth checks
+        return 0
+
+
+def _user_daily_transfer_limit(user_id: str) -> tuple[str, int]:
+    try:
+        from ..store import get_store
+
+        user = get_store().get_user_or_none(user_id)
+        level = user.kyc_level if user is not None else "normal"
+    except Exception:  # pragma: no cover - preserve existing users on read errors
+        level = "normal"
+    if level not in DAILY_TRANSFER_LIMITS:
+        level = "normal"
+    return level, DAILY_TRANSFER_LIMITS[level]
 
 
 def _per_contact_baseline(
@@ -110,6 +147,34 @@ def evaluate(
             )
         )
 
+    if user_id and amount is not None and amount > 0:
+        kyc_level, daily_limit = _user_daily_transfer_limit(user_id)
+        used_today = _daily_completed_transfer_total(user_id)
+        projected_today = used_today + amount
+        if projected_today > daily_limit:
+            label = "eKYC" if kyc_level == "ekyc" else "tài khoản định danh đầy đủ"
+            flags.append(
+                SafetyFlag(
+                    code="daily_transfer_limit_exceeded",
+                    severity="block",
+                    message=(
+                        f"Giao dịch này sẽ vượt hạn mức chuyển khoản trong ngày của {label}: "
+                        f"đã dùng {format_vnd(used_today)}, lệnh hiện tại "
+                        f"{format_vnd(amount)}, hạn mức {format_vnd(daily_limit)}. "
+                        "Bạn vui lòng ra chi nhánh ngân hàng để được hỗ trợ thực hiện "
+                        "giao dịch giá trị lớn hoặc nâng hạn mức/hoàn thiện hồ sơ."
+                    ),
+                    details={
+                        "kind": "daily_transfer_limit",
+                        "kyc_level": kyc_level,
+                        "used_today_vnd": int(used_today),
+                        "current_amount": int(amount),
+                        "projected_today_vnd": int(projected_today),
+                        "daily_limit_vnd": int(daily_limit),
+                    },
+                )
+            )
+
     # If we have a chosen recipient + amount, run anomaly + balance checks.
     if recipient and amount:
         # Count the user's prior completed transactions to this recipient
@@ -151,6 +216,30 @@ def evaluate(
                     ),
                 )
             )
+        elif user_id:
+            daily_total = _daily_biometric_total(user_id)
+            projected_total = daily_total + amount
+            if projected_total >= BIOMETRIC_DAILY_SUB_THRESHOLD_TOTAL:
+                flags.append(
+                    SafetyFlag(
+                        code="daily_biometric_limit",
+                        severity="warn",
+                        message=(
+                            "Tổng các lệnh dưới 10.000.000đ hôm nay sau lần "
+                            "sinh trắc gần nhất sẽ đạt "
+                            f"{format_vnd(projected_total)}. Theo quy định, "
+                            "lệnh này cần xác thực sinh trắc học trước khi thực hiện."
+                        ),
+                        details={
+                            "kind": "daily_biometric_limit",
+                            "current_total_vnd": int(daily_total),
+                            "current_amount": int(amount),
+                            "projected_total_vnd": int(projected_total),
+                            "threshold_vnd": BIOMETRIC_DAILY_SUB_THRESHOLD_TOTAL,
+                            "single_transfer_threshold_vnd": BIOMETRIC_SINGLE_TRANSFER_THRESHOLD,
+                        },
+                    )
+                )
 
         # Statistical anomaly: per-recipient baseline first (precise), global
         # fallback for cold contacts (catches first-time fraud where the
@@ -386,14 +475,16 @@ def evaluate(
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
     """Whether biometric step-up auth is required to proceed.
 
-    Omni's prototype policy is intentionally simple for the banking demo:
-    only transfers from 10M VND upward require face verification. Other warn
-    flags can still explain risk, but sub-10M transfers stay OTP-only.
+    SBV-style policy for the banking demo:
+    * any single transfer from 10M VND upward requires face verification;
+    * sub-10M transfers require face verification when their same-day total
+      since the last biometric reaches 20M VND.
     """
     return any(
         f.code in (
             "new_recipient_large_amount",
             "large_amount",
+            "daily_biometric_limit",
         )
         and f.severity == "warn"
         for f in flags
@@ -408,7 +499,7 @@ def auth_policy(flags: list[SafetyFlag]) -> list[str]:
     """Risk-based auth policy for MVP.
 
     Normal / sub-10M transfer: OTP.
-    Large transfer (>=10M): OTP + biometric.
+    Single >=10M or cumulative sub-10M daily limit reached: OTP + biometric.
     Blocked transfer: no auth path until the user fixes the blocked state.
     """
     if is_blocked(flags):

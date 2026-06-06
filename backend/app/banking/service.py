@@ -52,8 +52,18 @@ def execute_transfer(
     description: str = "",
     source_account_id: str | None = None,
     category: str | None = None,
+    auth_methods: list[str] | None = None,
 ) -> Transaction:
     store = get_store()
+    user = store.get_user_or_none(user_id)
+    kyc_level = user.kyc_level if user is not None else "normal"
+    try:
+        from ..safety.rules import DAILY_TRANSFER_LIMITS
+
+        daily_limit = DAILY_TRANSFER_LIMITS.get(kyc_level, DAILY_TRANSFER_LIMITS["normal"])
+    except Exception:  # pragma: no cover - compliance metadata is best-effort
+        daily_limit = None
+    daily_total_before = store.completed_transfer_total_today(user_id)
     acc = (
         store.account_by_id(user_id, source_account_id)
         if source_account_id
@@ -86,6 +96,10 @@ def execute_transfer(
         category=category,
         status="completed",
         created_at=now(),
+        auth_methods=[m for m in (auth_methods or []) if m in {"otp", "biometric"}],
+        kyc_level=kyc_level,
+        daily_limit_vnd=daily_limit,
+        daily_total_before_vnd=daily_total_before,
     )
     saved = store.add_transaction(tx)
 

@@ -74,7 +74,13 @@ from ..nlp.amount import format_vnd
 from ..nlp.entities import normalize_alias
 from ..nlp.llm import llm_draft_action, llm_phrase
 from ..nlp.pipeline import understand
-from ..safety.rules import auth_policy, evaluate, is_blocked, requires_step_up
+from ..safety.rules import (
+    BIOMETRIC_SINGLE_TRANSFER_THRESHOLD,
+    auth_policy,
+    evaluate,
+    is_blocked,
+    requires_step_up,
+)
 from ..store import get_store, new_id, now
 
 # Insights chat handler — lives in a sibling module so the dispatch site
@@ -3383,6 +3389,7 @@ def _execute_and_record(
             description=draft.description,
             source_account_id=draft.source_account_id,
             category=draft.category,
+            auth_methods=list(draft.auth_completed),
         )
     except ValueError as e:
         # Audit Bug B: do NOT surface the raw English exception code
@@ -3396,6 +3403,15 @@ def _execute_and_record(
         text = "Có lỗi khi xử lý giao dịch, bạn thử lại sau nhé."
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
+
+    try:
+        store = get_store()
+        if "biometric" in draft.auth_completed:
+            store.reset_biometric_daily_total(user_id)
+        elif tx.amount < BIOMETRIC_SINGLE_TRANSFER_THRESHOLD:
+            store.add_biometric_daily_amount(user_id, tx.amount)
+    except Exception:  # pragma: no cover - counter must never roll back transfer
+        pass
 
     session.clear_draft()
     otp_note = " (đã xác minh OTP)" if otp_used else ""
@@ -3420,6 +3436,13 @@ def _execute_and_record(
             recipient_name=draft.recipient.display_name,  # type: ignore[union-attr]
             source_account_id=draft.source_account_id or "",
             category=draft.category,
+            auth_methods=tx.auth_methods,
+            kyc_level=tx.kyc_level,
+            daily_limit_vnd=tx.daily_limit_vnd,
+            daily_total_before_vnd=tx.daily_total_before_vnd,
+            retention_until=(
+                tx.retention_until.isoformat() if tx.retention_until else None
+            ),
         )
     except Exception:  # pragma: no cover — audit must never break chat
         pass

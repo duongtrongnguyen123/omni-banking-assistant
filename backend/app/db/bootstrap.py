@@ -46,8 +46,14 @@ def bootstrap_if_empty() -> None:
     try:
         for u in _read_json("users.json"):
             cur.execute(
-                "INSERT OR IGNORE INTO users(id, display_name, phone) VALUES(?,?,?)",
-                (u["id"], u["display_name"], u.get("phone", "")),
+                """INSERT OR IGNORE INTO users
+                   (id, display_name, phone, kyc_level) VALUES(?,?,?,?)""",
+                (
+                    u["id"],
+                    u["display_name"],
+                    u.get("phone", ""),
+                    u.get("kyc_level", "normal"),
+                ),
             )
             for acc in u.get("accounts", []):
                 cur.execute(

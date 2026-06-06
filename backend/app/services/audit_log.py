@@ -116,6 +116,11 @@ def record_transfer_executed(
     recipient_name: str,
     source_account_id: str,
     category: Optional[str] = None,
+    auth_methods: Optional[list[str]] = None,
+    kyc_level: Optional[str] = None,
+    daily_limit_vnd: Optional[int] = None,
+    daily_total_before_vnd: Optional[int] = None,
+    retention_until: Optional[str] = None,
 ) -> None:
     record(
         "transfer_executed",
@@ -125,6 +130,11 @@ def record_transfer_executed(
         recipient_name=recipient_name,
         source_account_id=source_account_id,
         category=category,
+        auth_methods=auth_methods or [],
+        kyc_level=kyc_level,
+        daily_limit_vnd=daily_limit_vnd,
+        daily_total_before_vnd=daily_total_before_vnd,
+        retention_until=retention_until,
     )
 
 

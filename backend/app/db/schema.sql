@@ -14,7 +14,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
     display_name  TEXT NOT NULL,
-    phone         TEXT
+    phone         TEXT,
+    kyc_level     TEXT NOT NULL DEFAULT 'normal'
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -60,6 +61,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     category     TEXT NOT NULL DEFAULT 'other',
     status       TEXT NOT NULL DEFAULT 'completed',
     created_at   TEXT NOT NULL,
+    auth_methods TEXT NOT NULL DEFAULT '',
+    kyc_level    TEXT,
+    daily_limit_vnd INTEGER,
+    daily_total_before_vnd INTEGER,
+    retention_until TEXT,
     embedding    BLOB
 );
 CREATE INDEX IF NOT EXISTS ix_tx_owner_created ON transactions(owner_id, created_at DESC);
@@ -79,6 +85,19 @@ CREATE INDEX IF NOT EXISTS ix_tx_owner_category ON transactions(owner_id, catego
 -- whose cardinality is ~3).
 CREATE INDEX IF NOT EXISTS ix_tx_owner_status_created
     ON transactions(owner_id, status, created_at DESC);
+
+-- SBV-style biometric transfer counter. Tracks the sum of completed
+-- sub-10M transfers since the user's last biometric verification for
+-- the local banking day. The day key makes the counter reset naturally
+-- at midnight; completing any biometric-gated transfer resets total_vnd
+-- to 0 for that day.
+CREATE TABLE IF NOT EXISTS biometric_daily_counters (
+    user_id     TEXT NOT NULL,
+    day         TEXT NOT NULL,
+    total_vnd   INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (user_id, day)
+);
 
 CREATE TABLE IF NOT EXISTS schedules (
     id                 TEXT PRIMARY KEY,

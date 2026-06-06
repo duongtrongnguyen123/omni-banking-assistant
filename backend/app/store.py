@@ -16,9 +16,10 @@ from __future__ import annotations
 import contextlib
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
+from .config import get_settings
 from .db.bootstrap import bootstrap_if_empty
 from .db.connection import get_connection
 from .models.schemas import (
@@ -53,7 +54,7 @@ class Store:
     def get_user_or_none(self, user_id: str) -> Optional[User]:
         conn = get_connection()
         row = conn.execute(
-            "SELECT id, display_name, phone FROM users WHERE id = ?",
+            "SELECT id, display_name, phone, kyc_level FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
         if row is None:
@@ -63,6 +64,7 @@ class Store:
             id=row["id"],
             display_name=row["display_name"],
             phone=row["phone"] or "",
+            kyc_level=row["kyc_level"] or "normal",
             accounts=accounts,
         )
 
@@ -255,6 +257,40 @@ class Store:
 
     # ---- transactions --------------------------------------------------
 
+    @staticmethod
+    def _retention_until(created_at: datetime) -> datetime:
+        years = max(1, int(get_settings().transaction_retention_years))
+        try:
+            return created_at.replace(year=created_at.year + years)
+        except ValueError:
+            # Leap-day transaction: retain until Feb 28 in the retention year.
+            return created_at.replace(year=created_at.year + years, day=28)
+
+    @staticmethod
+    def _auth_methods_from_db(raw: str | None) -> list[str]:
+        if not raw:
+            return []
+        return [m for m in raw.split(",") if m in {"otp", "biometric"}]
+
+    def _row_to_transaction(self, r) -> Transaction:
+        created_at = datetime.fromisoformat(r["created_at"])
+        retention_raw = r["retention_until"]
+        return Transaction(
+            id=r["id"], owner_id=r["owner_id"],
+            contact_id=r["contact_id"] or "",
+            amount=r["amount"], description=r["description"],
+            category=r["category"], status=r["status"],
+            created_at=created_at,
+            auth_methods=self._auth_methods_from_db(r["auth_methods"]),
+            kyc_level=r["kyc_level"],
+            daily_limit_vnd=r["daily_limit_vnd"],
+            daily_total_before_vnd=r["daily_total_before_vnd"],
+            retention_until=(
+                datetime.fromisoformat(retention_raw)
+                if retention_raw else self._retention_until(created_at)
+            ),
+        )
+
     def transactions_of(
         self,
         user_id: str,
@@ -299,7 +335,8 @@ class Store:
 
         sql = (
             "SELECT id, owner_id, contact_id, amount, description, category, "
-            "status, created_at FROM transactions "
+            "status, created_at, auth_methods, kyc_level, daily_limit_vnd, "
+            "daily_total_before_vnd, retention_until FROM transactions "
             f"WHERE {where} ORDER BY created_at DESC"
         )
         if limit is not None:
@@ -307,16 +344,7 @@ class Store:
             params.append(int(limit))
 
         rows = get_connection().execute(sql, params).fetchall()
-        return [
-            Transaction(
-                id=r["id"], owner_id=r["owner_id"],
-                contact_id=r["contact_id"] or "",
-                amount=r["amount"], description=r["description"],
-                category=r["category"], status=r["status"],
-                created_at=datetime.fromisoformat(r["created_at"]),
-            )
-            for r in rows
-        ]
+        return [self._row_to_transaction(r) for r in rows]
 
     def transaction_count(self, user_id: str) -> int:
         """OPT-3 (bench): cheap counterpart to ``transactions_of`` for the
@@ -327,6 +355,22 @@ class Store:
             (user_id,),
         ).fetchone()
         return int(row["n"]) if row else 0
+
+    def completed_transfer_total_today(self, user_id: str) -> int:
+        """Total completed outgoing amount for the current local day."""
+        start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        row = get_connection().execute(
+            """SELECT COALESCE(SUM(amount), 0) AS total
+               FROM transactions
+               WHERE owner_id = ?
+                 AND status = 'completed'
+                 AND amount > 0
+                 AND created_at >= ?
+                 AND created_at < ?""",
+            (user_id, start.isoformat(), end.isoformat()),
+        ).fetchone()
+        return int(row["total"]) if row else 0
 
     def transactions_raw(
         self,
@@ -385,19 +429,79 @@ class Store:
 
     def add_transaction(self, tx: Transaction) -> Transaction:
         conn = get_connection()
+        retention_until = tx.retention_until or self._retention_until(tx.created_at)
         with self._lock:
             conn.execute(
                 """INSERT INTO transactions
                    (id, owner_id, contact_id, amount, description, category,
-                    status, created_at)
-                   VALUES(?,?,?,?,?,?,?,?)""",
+                    status, created_at, auth_methods, kyc_level, daily_limit_vnd,
+                    daily_total_before_vnd, retention_until)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     tx.id, tx.owner_id, tx.contact_id, tx.amount,
                     tx.description, tx.category, tx.status,
                     tx.created_at.isoformat(),
+                    ",".join(tx.auth_methods),
+                    tx.kyc_level,
+                    tx.daily_limit_vnd,
+                    tx.daily_total_before_vnd,
+                    retention_until.isoformat(),
                 ),
             )
+        tx.retention_until = retention_until
         return tx
+
+    # ---- biometric daily counter --------------------------------------
+
+    @staticmethod
+    def _biometric_day_key(ref: Optional[datetime] = None) -> str:
+        return (ref or now()).date().isoformat()
+
+    def biometric_daily_total(self, user_id: str) -> int:
+        """Sum of completed sub-10M transfers since last biometric today.
+
+        The row is keyed by local calendar day, so a missing row means either
+        no transfer yet or midnight has rolled over: both are total 0.
+        """
+        row = get_connection().execute(
+            """SELECT total_vnd FROM biometric_daily_counters
+               WHERE user_id = ? AND day = ?""",
+            (user_id, self._biometric_day_key()),
+        ).fetchone()
+        return int(row["total_vnd"]) if row else 0
+
+    def add_biometric_daily_amount(self, user_id: str, amount: int) -> int:
+        """Add an OTP-only sub-threshold transfer to today's counter."""
+        if amount <= 0:
+            return self.biometric_daily_total(user_id)
+        conn = get_connection()
+        day = self._biometric_day_key()
+        ts = now().isoformat()
+        with self._lock:
+            conn.execute(
+                """INSERT INTO biometric_daily_counters
+                   (user_id, day, total_vnd, updated_at)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(user_id, day) DO UPDATE SET
+                       total_vnd = total_vnd + excluded.total_vnd,
+                       updated_at = excluded.updated_at""",
+                (user_id, day, int(amount), ts),
+            )
+        return self.biometric_daily_total(user_id)
+
+    def reset_biometric_daily_total(self, user_id: str) -> None:
+        """Reset today's cumulative total after biometric verification."""
+        conn = get_connection()
+        with self._lock:
+            conn.execute(
+                """INSERT INTO biometric_daily_counters
+                   (user_id, day, total_vnd, updated_at)
+                   VALUES(?,?,0,?)
+                   ON CONFLICT(user_id, day) DO UPDATE SET
+                       total_vnd = 0,
+                       updated_at = excluded.updated_at""",
+                (user_id, self._biometric_day_key(), now().isoformat()),
+            )
 
     # ---- schedules -----------------------------------------------------
 

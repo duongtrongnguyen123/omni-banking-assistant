@@ -62,6 +62,7 @@ class User(BaseModel):
     id: str
     display_name: str
     phone: str
+    kyc_level: Literal["ekyc", "normal"] = "normal"
     accounts: list[Account]
 
 
@@ -87,6 +88,11 @@ class Transaction(BaseModel):
     category: str = "other"
     status: Literal["pending", "completed", "cancelled", "needs_confirm"] = "completed"
     created_at: datetime
+    auth_methods: list[Literal["otp", "biometric"]] = Field(default_factory=list)
+    kyc_level: Optional[Literal["ekyc", "normal"]] = None
+    daily_limit_vnd: Optional[int] = None
+    daily_total_before_vnd: Optional[int] = None
+    retention_until: Optional[datetime] = None
 
 
 class Schedule(BaseModel):
@@ -177,6 +183,14 @@ class SafetyFlag(BaseModel):
         # legitimate bursts happen (paying multiple people right after
         # payday) and a hard block enrages real users.
         "transfer_velocity_high",
+        # SBV Decision 2345-style biometric rule: a single transfer >=10M
+        # needs biometric, and multiple same-day sub-10M transfers need it
+        # once their running total reaches 20M since the last biometric.
+        "daily_biometric_limit",
+        # Per-customer daily transfer cap. eKYC users are capped at 10M/day;
+        # normal users at 2B/day. Exceeding it blocks chat execution and
+        # suggests completing the transfer at a branch.
+        "daily_transfer_limit_exceeded",
         "ok",
     ]
     severity: Literal["info", "warn", "block"]
