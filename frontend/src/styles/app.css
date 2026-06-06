@@ -656,6 +656,12 @@ textarea:focus-visible,
 .sched-card__title { color: var(--good); font-weight: 700; }
 .sched-card__amount { font-size: 22px; font-weight: 800; margin: 6px 0; }
 .sched-card__desc { color: var(--muted); font-size: 13px; }
+.sched-card__cron {
+  display: inline-block; margin-top: 6px;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--cream); color: var(--orange);
+  font-size: 11.5px; font-weight: 600;
+}
 .sched-card__meta { font-size: 13.5px; margin-top: 8px; }
 .sched-card__status {
   display: inline-block; margin-top: 8px; padding: 3px 10px;
