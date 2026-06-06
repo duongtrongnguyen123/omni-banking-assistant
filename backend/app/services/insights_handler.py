@@ -37,6 +37,11 @@ _ASK_SUBS = (
     "thuê bao", "thue bao", "cắt giảm", "cat giam",
     "khoản nào thừa", "khoan nao thua",
 )
+_ASK_FORECAST = (
+    "đến cuối tháng", "den cuoi thang", "cuối tháng còn", "cuoi thang con",
+    "dự báo", "du bao", "với đà này", "voi da nay",
+    "sẽ tiêu hết", "se tieu het", "tiêu hết bao nhiêu", "tieu het bao nhieu",
+)
 
 # Mirrors the Vietnamese category labels the InsightsCard component uses so
 # the chat reply matches what the user sees in the sidebar.
@@ -80,13 +85,48 @@ def handle_insights(
     mom = data.get("mom") or {}
     anomalies = data.get("anomalies") or []
     subs = data.get("subscriptions") or []
+    fcast = data.get("forecast")
 
     q = nlu.raw_text.lower()
     asks_anomaly = any(kw in q for kw in _ASK_ANOMALY)
     asks_compare = any(kw in q for kw in _ASK_COMPARE)
     asks_subs = any(kw in q for kw in _ASK_SUBS)
+    asks_forecast = any(kw in q for kw in _ASK_FORECAST)
 
     parts: list[str] = []
+
+    if asks_forecast and fcast:
+        # Lead with the most urgent warning when present — overdraft beats
+        # over_budget which beats under_budget — so the actionable bit
+        # isn't buried at the tail of the projection sentence.
+        prefix = ""
+        if fcast.get("overdraft_risk"):
+            prefix = (
+                "Cảnh báo: với đà này tài khoản sẽ âm trước cuối tháng — "
+                "bạn cân nhắc giảm chi tiêu nhé. "
+            )
+        elif fcast.get("over_budget"):
+            prefix = "Cảnh báo: đang tiêu vượt mức tháng trước rõ rệt. "
+        elif fcast.get("under_budget"):
+            prefix = "Đang tiêu tiết kiệm hơn tháng trước. "
+        pace = fcast.get("pace_vs_last_month")
+        pace_phrase = ""
+        if pace is not None:
+            if pace >= 1.15:
+                pace_phrase = f" — nhanh hơn tháng trước {pace:.1f}×"
+            elif pace <= 0.85:
+                pace_phrase = f" — chậm hơn tháng trước {pace:.1f}×"
+        parts.append(
+            f"{prefix}Với đà {format_vnd(fcast['daily_rate'])}/ngày, "
+            f"dự kiến cuối tháng tiêu {format_vnd(fcast['projected_total'])} "
+            f"(đến giờ {format_vnd(fcast['spent_so_far'])}, "
+            f"ngày {fcast['days_elapsed']}/{fcast['days_in_month']}){pace_phrase}. "
+            f"Tài khoản còn lại dự kiến {format_vnd(fcast['projected_eom_balance'])}."
+        )
+    elif asks_forecast and fcast is None:
+        parts.append(
+            "Tháng này còn quá sớm để dự báo — bạn quay lại sau vài ngày nhé."
+        )
 
     if asks_anomaly or (not asks_compare and not asks_subs and anomalies):
         if anomalies:

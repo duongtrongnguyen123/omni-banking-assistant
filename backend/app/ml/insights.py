@@ -261,6 +261,90 @@ def subscriptions(
     return results
 
 
+# ----- 4. month-end forecast ------------------------------------------------
+
+
+def forecast(
+    user_id: str,
+    when: datetime,
+    *,
+    _txs: Optional[list] = None,
+) -> Optional[dict]:
+    """Project month-end spend & remaining balance from the running rate.
+
+    Returns ``None`` when the data is too thin to project — ≤3 days into
+    the month (daily rate is dominated by single tx) or zero spend so
+    far. ``_txs`` lets ``summary`` thread a cached tx list through so we
+    don't re-materialise the 520k-row contest history.
+
+    Output:
+      - ``days_elapsed`` / ``days_in_month``
+      - ``spent_so_far``      / ``daily_rate`` (spent/days_elapsed)
+      - ``projected_total``   / ``projected_remaining_spend``
+      - ``current_balance``   / ``projected_eom_balance``
+      - ``last_month_total``  / ``pace_vs_last_month``
+      - ``over_budget``       (pace ≥ 1.20× last month)
+      - ``under_budget``      (pace ≤ 0.80× last month)
+      - ``overdraft_risk``    (projected_eom_balance < 0)
+    """
+    from ..store import get_store
+
+    this_start, this_end = _month_bounds(when)
+    days_in_month = (this_end - this_start).days
+    days_elapsed = max(1, (when - this_start).days + 1)
+    if days_elapsed < 3:
+        return None
+
+    txs = _txs if _txs is not None else _completed_tx(user_id)
+    spent_so_far = sum(
+        t.amount for t in txs if this_start <= t.created_at < this_end
+    )
+    if spent_so_far <= 0:
+        return None
+
+    last_start, last_end = _prev_month_bounds(when)
+    last_month_total = sum(
+        t.amount for t in txs if last_start <= t.created_at < last_end
+    )
+
+    daily_rate = spent_so_far // days_elapsed
+    projected_total = daily_rate * days_in_month
+    projected_remaining_spend = max(0, projected_total - spent_so_far)
+
+    store = get_store()
+    user = store.get_user_or_none(user_id)
+    current_balance = sum(a.balance for a in user.accounts) if user else 0
+    projected_eom_balance = current_balance - projected_remaining_spend
+
+    pace_ratio: Optional[float] = None
+    over_budget = False
+    under_budget = False
+    if last_month_total > 0:
+        pace_ratio = round(projected_total / last_month_total, 2)
+        # ±20% band — tight enough to flag a real shift in habit, loose
+        # enough that month-length variance (29 vs 31 days) doesn't fire.
+        over_budget = pace_ratio >= 1.20
+        under_budget = pace_ratio <= 0.80
+
+    overdraft_risk = projected_eom_balance < 0
+
+    return {
+        "days_elapsed": days_elapsed,
+        "days_in_month": days_in_month,
+        "spent_so_far": int(spent_so_far),
+        "daily_rate": int(daily_rate),
+        "projected_total": int(projected_total),
+        "projected_remaining_spend": int(projected_remaining_spend),
+        "current_balance": int(current_balance),
+        "projected_eom_balance": int(projected_eom_balance),
+        "last_month_total": int(last_month_total),
+        "pace_vs_last_month": pace_ratio,
+        "over_budget": over_budget,
+        "under_budget": under_budget,
+        "overdraft_risk": overdraft_risk,
+    }
+
+
 # ----- aggregate ------------------------------------------------------------
 
 
@@ -282,5 +366,6 @@ def summary(user_id: str, when: Optional[datetime] = None) -> dict:
         "mom": month_over_month(user_id, when, _txs=txs),
         "anomalies": anomalies(user_id, when, _txs=txs),
         "subscriptions": subscriptions(user_id, _txs=txs),
+        "forecast": forecast(user_id, when, _txs=txs),
         "generated_at": when.isoformat(),
     }
