@@ -877,6 +877,80 @@ def test_audit_log_records_transfer_lifecycle(
     assert "cancel" in kinds, "draft cancel not recorded"
 
 
+# ---------------------------------------------------------------------------
+# Schedule cron — DOW extraction + cron→Python weekday translation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected_cron",
+    [
+        # Numeric Vietnamese DOW. "thứ 5 hàng tuần" used to silently
+        # map to Monday — wrong-day schedule.
+        ("đặt lịch chuyển mẹ 2tr thứ 5 hàng tuần", "0 9 * * 4"),
+        ("đặt lịch chuyển mẹ 2tr thứ 2 hàng tuần", "0 9 * * 1"),
+        ("đặt lịch chuyển mẹ 2tr thứ 6 hàng tuần", "0 9 * * 5"),
+        ("đặt lịch chuyển mẹ 2tr thứ 7 hàng tuần", "0 9 * * 6"),
+        # Spelled-out.
+        ("đặt lịch chuyển mẹ 2tr thứ hai hàng tuần", "0 9 * * 1"),
+        ("đặt lịch chuyển mẹ 2tr Chủ nhật hàng tuần", "0 9 * * 0"),
+        ("đặt lịch chuyển mẹ 2tr CN hàng tuần", "0 9 * * 0"),
+        # Daily.
+        ("mỗi ngày 100k cho mẹ", "0 9 * * *"),
+        # Defaults preserved.
+        ("đặt lịch chuyển mẹ 2tr hàng tuần", "0 9 * * 1"),
+        ("đặt lịch chuyển mẹ 2tr mùng 5 hàng tháng", "0 9 5 * *"),
+    ],
+)
+def test_schedule_cron_extracts_day_of_week(
+    text: str, expected_cron: str
+) -> None:
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.schedule_cron == expected_cron, text
+
+
+def test_next_run_for_translates_cron_dow_to_python_weekday() -> None:
+    """next_run_for used to compare cron DOW directly against Python's
+    ``datetime.weekday()`` — so every day landed one off. Monday cron
+    fell on Tuesday, Sunday cron fell on Monday, etc. Wrong-schedule
+    bug judges would hit on day 2 of using the calendar feature."""
+    from datetime import datetime, timezone, timedelta
+
+    from app.banking.service import next_run_for
+
+    # 2026-06-06 was Saturday (per CLAUDE.md's current-date pin).
+    sat = datetime(2026, 6, 6, 12, 0, tzinfo=timezone(timedelta(hours=7)))
+
+    expected = {
+        "0 9 * * 1": 0,  # next Monday — weekday 0
+        "0 9 * * 2": 1,  # Tuesday
+        "0 9 * * 3": 2,  # Wednesday
+        "0 9 * * 4": 3,  # Thursday
+        "0 9 * * 5": 4,  # Friday
+        "0 9 * * 6": 5,  # Saturday (next, not today)
+        "0 9 * * 0": 6,  # Sunday
+    }
+    for cron, expected_weekday in expected.items():
+        n = next_run_for(cron, sat)
+        assert n.weekday() == expected_weekday, (
+            f"cron {cron!r} → weekday {n.weekday()}, expected {expected_weekday}"
+        )
+
+
+def test_cron_label_renders_correct_vn_day() -> None:
+    """``_cron_label`` mapped DOW=1 (Monday) to "thứ Ba" (Tuesday) — every
+    weekly schedule rendered the wrong Vietnamese day. Pin the correct
+    mapping so a future revert is caught."""
+    from app.services.orchestrator import _cron_label
+
+    assert _cron_label("0 9 * * 1") == "vào thứ Hai hàng tuần"
+    assert _cron_label("0 9 * * 4") == "vào thứ Năm hàng tuần"
+    assert _cron_label("0 9 * * 6") == "vào thứ Bảy hàng tuần"
+    assert _cron_label("0 9 * * 0") == "vào Chủ Nhật hàng tuần"
+    assert _cron_label("0 9 * * *") == "mỗi ngày"
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /

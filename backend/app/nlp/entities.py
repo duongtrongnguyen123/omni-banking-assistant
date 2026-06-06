@@ -68,6 +68,35 @@ _CRON_DAY_OF_MONTH = re.compile(
 )
 _CRON_MONTHLY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*tháng", re.IGNORECASE)
 _CRON_WEEKLY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*tuần", re.IGNORECASE)
+_CRON_DAILY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*ng[àa]y", re.IGNORECASE)
+
+# Day-of-week extraction for weekly schedules. Maps Vietnamese forms
+# ("thứ 2" / "thứ hai" / "Chủ nhật") to cron DOW (0=Sun, 1=Mon, …, 6=Sat).
+# CRITICAL: ``_CRON_WEEKLY`` alone always emitted cron DOW=1 (Monday) no
+# matter what the user said, so "đặt lịch thứ 5 hàng tuần" got scheduled
+# for Monday — wrong-day bug. This table + the new pattern below close
+# that gap.
+_DOW_PATTERNS: list[tuple[str, int]] = [
+    # Spelled-out + numeric Vietnamese.
+    (r"chủ\s+nhật|chu\s+nhat|\bcn\b", 0),
+    (r"thứ\s+(?:hai|2)|thu\s+(?:hai|2)", 1),
+    (r"thứ\s+(?:ba|3)|thu\s+(?:ba|3)", 2),
+    (r"thứ\s+(?:tư|4)|thu\s+(?:tu|4)", 3),
+    (r"thứ\s+(?:năm|5)|thu\s+(?:nam|5)", 4),
+    (r"thứ\s+(?:sáu|6)|thu\s+(?:sau|6)", 5),
+    (r"thứ\s+(?:bảy|7)|thu\s+(?:bay|7)", 6),
+]
+_DOW_COMPILED = [(re.compile(p, re.IGNORECASE), d) for p, d in _DOW_PATTERNS]
+
+
+def _extract_dow(text: str) -> Optional[int]:
+    """Return cron DOW (0-6) for a Vietnamese day-of-week mention, or
+    ``None`` if no day was named. Uses an ordered table so "thứ 2" wins
+    over the bare "2" inside other contexts."""
+    for rx, dow in _DOW_COMPILED:
+        if rx.search(text):
+            return dow
+    return None
 
 # ---------------------------------------------------------------------------
 # History-intent specific extractors — needed when the LLM is rate-limited
@@ -322,7 +351,13 @@ def extract(text: str) -> ExtractedEntities:
     elif _CRON_MONTHLY.search(text):
         out.schedule_cron = "0 9 1 * *"
     elif _CRON_WEEKLY.search(text):
-        out.schedule_cron = "0 9 * * 1"
+        # Honour the user's day-of-week. Falls back to Monday (DOW=1) only
+        # when the message says "hàng tuần" without naming a day.
+        dow = _extract_dow(text)
+        out.schedule_cron = f"0 9 * * {dow if dow is not None else 1}"
+    elif _CRON_DAILY.search(text):
+        # "mỗi ngày 100k cho mẹ" — fire every day at 9 a.m.
+        out.schedule_cron = "0 9 * * *"
 
     # History-intent specific entities — extracted regardless of intent so
     # the orchestrator gets full information when the rule pipeline runs.

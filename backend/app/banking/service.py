@@ -380,7 +380,9 @@ def next_run_for(cron: str, ref: datetime) -> datetime:
 
     Supports:
       "0 9 D * *"   -> hour H on day-D of each month
-      "0 9 * * w"   -> hour H every weekday w (1=Mon..7=Sun)
+      "0 9 * * w"   -> hour H every weekday w in STANDARD CRON DOW
+                      (0=Sun, 1=Mon, ..., 6=Sat)
+      "0 9 * * *"   -> hour H every day
     Falls back to ref+30d if the expression doesn't match.
     """
     parts = cron.split()
@@ -397,8 +399,21 @@ def next_run_for(cron: str, ref: datetime) -> datetime:
             candidate = _safe_day_in_month(year, month, day, h)
         return candidate
 
+    if dow == "*":
+        # Daily: next occurrence at H today (if still future) or tomorrow.
+        candidate = ref.replace(hour=h, minute=0, second=0, microsecond=0)
+        if candidate <= ref:
+            candidate = candidate + timedelta(days=1)
+        return candidate
+
     if dow.isdigit():
-        target = int(dow) % 7
+        # Convert standard cron DOW (0=Sun, 1=Mon, ..., 6=Sat) to Python's
+        # datetime.weekday() convention (0=Mon, 1=Tue, ..., 6=Sun).
+        # ``(cron_dow - 1) % 7`` does the rotation. The pre-fix code used
+        # ``int(dow) % 7`` which silently aliased every day off by one —
+        # "Monday" cron landed on Tuesday, "Sunday" landed on Monday.
+        cron_dow = int(dow) % 7
+        target = (cron_dow - 1) % 7  # → 0=Mon..6=Sun in datetime convention
         days_ahead = (target - ref.weekday()) % 7
         days_ahead = days_ahead or 7
         return (ref + timedelta(days=days_ahead)).replace(

@@ -1024,14 +1024,30 @@ def _handle_schedule(user_id: str, nlu: NLUResult) -> OmniResponse:
 
 
 def _cron_label(cron: str) -> str:
-    """Pretty-print the cron expressions we generate in the entity extractor."""
+    """Pretty-print the cron expressions we generate in the entity extractor.
+
+    Cron DOW: 0=Sun, 1=Mon, 2=Tue, ..., 6=Sat. The previous mapping
+    indexed Monday (DOW=1) into ``names[1] = "thứ Ba"`` (Tuesday) —
+    every weekly schedule rendered with the wrong day label. Now keyed
+    by the standard cron DOW directly.
+    """
     parts = cron.split()
     if len(parts) == 5:
         _, _, dom, _, dow = parts
         if dom.isdigit():
             return f"vào ngày {int(dom)} hàng tháng"
+        if dow == "*":
+            return "mỗi ngày"
         if dow.isdigit():
-            names = ["thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ Nhật"]
+            names = {
+                0: "Chủ Nhật",
+                1: "thứ Hai",
+                2: "thứ Ba",
+                3: "thứ Tư",
+                4: "thứ Năm",
+                5: "thứ Sáu",
+                6: "thứ Bảy",
+            }
             return f"vào {names[int(dow) % 7]} hàng tuần"
     return "định kỳ"
 
