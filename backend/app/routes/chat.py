@@ -108,7 +108,12 @@ class BiometricScanResult(BaseModel):
 class ConfirmTransactionRequest(BaseModel):
     otp: str | None = None
     source_account_id: str | None = None
-    biometric_verified: bool = False
+    # Audit Bug A: there is intentionally no ``biometric_verified`` boolean
+    # here. Biometric auth is gated by a real scan payload only — a
+    # client-supplied "I already verified" flag is a trust-the-attacker
+    # primitive even when the current ``_biometric_scan_valid`` happens to
+    # reject ``None``. Future refactors must not be able to flip a bit
+    # in the request body to bypass the 8D scan.
     biometric_scan: BiometricScanResult | None = None
     session_id: str | None = None
 
@@ -459,7 +464,6 @@ def confirm(
                 otp=req.otp if req else None,
                 source_account_id=req.source_account_id if req else None,
                 biometric_scan=req.biometric_scan.dict() if req and req.biometric_scan else None,
-                biometric_verified=req.biometric_verified if req else False,
             )
         finally:
             _INFLIGHT_CONFIRMS.discard(cache_key)

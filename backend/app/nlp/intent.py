@@ -396,6 +396,27 @@ _CATEGORY_LEAD_RE = re.compile(
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
 
+# Bare leading preposition + recipient surface — "cho bố", "gửi mẹ",
+# "tới Lan". Stress agent reproduced: after a draft is closed, typing a
+# bare ``cho <alias>`` (no verb, no amount) falls through every tier
+# and lands at ``unknown`` → "Mình chưa rõ ý bạn..." (audit Bug C).
+# The transfer slot-fill branch in ``handle_message`` also bails because
+# it only fires when an existing draft is missing a recipient.
+#
+# Treat the bare form as a transfer intent (low-mid confidence) so the
+# entities extractor and downstream pipeline get a chance to slot-fill
+# the recipient and ask for the amount. The recipient surface is kept
+# short (≤30 chars, no digits, no comma/punct) so we don't accidentally
+# swallow "cho biết số dư" or other "cho" phrasings that mean something
+# else. The Tier-1 keyword loop runs first, so anything more specific
+# (balance, history, schedule, …) keeps winning.
+_BARE_RECIPIENT_RE = re.compile(
+    r"^\s*(?:cho|toi|tới|gui|gửi)\s+"
+    r"[a-zà-ỹ][a-zà-ỹ\s]{0,28}[a-zà-ỹ]"
+    r"\s*[?.!]?\s*$",
+    re.IGNORECASE,
+)
+
 # Date / temporal references that should route to history.
 #
 # Two flavours:
@@ -600,6 +621,18 @@ def classify(text: str) -> tuple[Intent, float]:
 
     # Tier 3 — bare digit means an unclassified transfer command.
     if re.search(r"\d", folded):
+        return "transfer", 0.4
+
+    # Tier 3.5 — bare "cho|tới|gửi <alias>" with no verb and no amount.
+    # Audit Bug C: stress agent reproduced a regression where the user
+    # types "cho bố" after a draft is closed and gets routed to
+    # ``unknown``. The bare-recipient slot-fill branch in
+    # ``handle_message`` only triggers when an existing draft is missing
+    # its recipient; with no draft, "cho bố" should still classify as a
+    # transfer so the pipeline can extract the alias and ask for the
+    # amount. Conservative confidence (0.4) keeps the LLM in charge when
+    # both providers are reachable; deterministic when they're not.
+    if _BARE_RECIPIENT_RE.search(text):
         return "transfer", 0.4
 
     return "unknown", 0.0

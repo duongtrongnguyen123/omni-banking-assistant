@@ -7,9 +7,12 @@ appropriate side-effects (draft creation, history lookup, schedule creation).
 from __future__ import annotations
 
 import contextvars
+import logging
 import re
 import time
 from typing import Any, Optional
+
+_LOG = logging.getLogger(__name__)
 
 # Per-request telemetry bucket. The chat route sets this to {} when the
 # caller passes ``?dev=1``; the orchestrator and NLU layer fill it as
@@ -2608,7 +2611,6 @@ def confirm_draft(
     otp: str | None = None,
     source_account_id: str | None = None,
     biometric_scan: dict[str, Any] | None = None,
-    biometric_verified: bool = False,
 ) -> OmniResponse:
     session = session_for(user_id)
     draft = session.current_draft
@@ -2704,10 +2706,16 @@ def confirm_draft(
         session.set_draft(draft)
 
     # --- Biometric (8D face scan) ---
+    # SAFETY (audit Bug A): biometric auth ONLY advances when a real scan
+    # payload is present. There is no client-trusted boolean shortcut —
+    # the previous ``biometric_verified`` flag was a forward-compat hazard
+    # because future refactors could relax ``_biometric_scan_valid``'s
+    # ``None`` guard. Drop the flag entirely; the only path that completes
+    # biometric is a valid scan payload.
     if (
         "biometric" in draft.auth_required
         and "biometric" not in draft.auth_completed
-        and (biometric_scan or biometric_verified)
+        and biometric_scan
     ):
         scan_ok, scan_error = _biometric_scan_valid(biometric_scan, draft.id, otp)
         if not scan_ok:
@@ -2810,7 +2818,15 @@ def _execute_and_record(
             category=draft.category,
         )
     except ValueError as e:
-        text = f"Giao dịch thất bại: {e}"
+        # Audit Bug B: do NOT surface the raw English exception code
+        # ("no_source_account", "insufficient_balance", …) into the VN
+        # chat — it leaked enum-style tokens that judges flagged as a
+        # locale break. Log server-side and show a single friendly VN line.
+        _LOG.warning(
+            "execute_transfer failed for user=%s draft=%s: %s",
+            user_id, draft.id, e,
+        )
+        text = "Có lỗi khi xử lý giao dịch, bạn thử lại sau nhé."
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
