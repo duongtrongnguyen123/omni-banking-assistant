@@ -264,6 +264,15 @@ export default function App() {
           }
         }
       }
+      // Adding a contact via chat ("Lưu Lê Mai STK …" → Lưu danh bạ)
+      // doesn't go through the closeDraftId branch above because the
+      // contact confirm/cancel call sites don't pass a draft id. Bump
+      // the refresh key here so the SuggestionStrip + ContactPicker
+      // pick up the freshly-saved contact instead of waiting until the
+      // next page load.
+      if (resp.intent === "add_contact" && !resp.contact_draft) {
+        setSuggestRefresh((n) => n + 1);
+      }
       resolveOmni(pendingId, resp);
     } catch (e) {
       failOmni(pendingId, e);
