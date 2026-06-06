@@ -19,6 +19,20 @@ _UNITS = {
     "triệu": 1_000_000,
     "trieu": 1_000_000,
     "tr": 1_000_000,
+    # VN slang for triệu (million) — judges use these on phone-typed
+    # messages: "2 củ" = 2 triệu, "5 chai" = 5 triệu, "1.5m" = 1.5M.
+    # Pre-fix the parser returned None → amount predictor silently
+    # overrode with median. "vé" / "lít" not added — too ambiguous
+    # (tickets / liquid volume).
+    "củ": 1_000_000,
+    "cu": 1_000_000,
+    "chai": 1_000_000,
+    # "m" for million — common on phone typing ("1.5m", "5m"). The
+    # negative-lookahead guard ``(?![A-Za-zÀ-ỹ])`` on the unit position
+    # in ``_PRIMARY_RE`` keeps "4 mình" / "4 mặt" from matching since
+    # the next char is a Vietnamese letter; only "4m" / "4 m" /
+    # "1.5m" reach this branch.
+    "m": 1_000_000,
     "trăm nghìn": 100_000,  # "5 trăm nghìn" = 500K
     "tram nghin": 100_000,
     "trăm ngàn": 100_000,
