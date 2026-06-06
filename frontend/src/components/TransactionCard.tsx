@@ -113,6 +113,9 @@ interface Props {
    *  modify-draft path (sends "đổi sang <amount>" so the existing NLU
    *  + draft patch flow handles it without a new endpoint). */
   onModifyAmount?: (amount: number) => void;
+  /** Open the split-bill flow from a just-confirmed receipt. App.tsx
+   *  resolves it to a contact-picker modal then POST /transactions/split. */
+  onSplitBill?: (amount: number, description: string) => void;
   disabled?: boolean;
   actionable?: boolean;
 }
@@ -123,6 +126,7 @@ export const TransactionCard = ({
   onCancel,
   onEdit,
   onModifyAmount,
+  onSplitBill,
   disabled,
   actionable = true,
 }: Props) => {
@@ -217,6 +221,16 @@ export const TransactionCard = ({
           </div>
           <div className="tx-receipt__time">{time}</div>
         </div>
+        {onSplitBill && draft.amount && (
+          <button
+            type="button"
+            className="tx-receipt__split"
+            onClick={() => onSplitBill(draft.amount!, draft.description || "")}
+            title="Chia tiền với người khác"
+          >
+            Chia tiền
+          </button>
+        )}
       </div>
     );
   }

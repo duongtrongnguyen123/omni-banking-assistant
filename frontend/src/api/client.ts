@@ -1,6 +1,7 @@
 import type {
   AtmHit,
   BudgetRow,
+  Contact,
   InsightsSummary,
   OmniResponse,
   RecipientSuggestion,
@@ -136,6 +137,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
     }),
+  splitBill: (
+    totalAmount: number,
+    description: string,
+    recipientIds: string[],
+  ) =>
+    jsonFetch<OmniResponse>(`/api/transactions/split`, {
+      method: "POST",
+      body: JSON.stringify({
+        total_amount: totalAmount,
+        description,
+        recipient_ids: recipientIds,
+      }),
+    }),
+  contacts: () =>
+    jsonFetch<Array<Contact & { aliases?: string[]; label?: string | null }>>(
+      `/api/banking/contacts`,
+    ),
   cancel: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {
       method: "POST",

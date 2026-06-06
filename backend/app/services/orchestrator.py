@@ -90,6 +90,10 @@ from .goal_status_handler import handle_goal_status as _handle_goal_status
 # which is the same UX the schedule draft has after its TTL expires.
 _budget_drafts: dict[str, BudgetDraft] = {}
 _goal_drafts: dict[str, GoalDraft] = {}
+# Per-user pending split-bill queue. When a user invokes split, the first
+# draft becomes active in the session; the rest sit here until each
+# confirm pops the next. Wiped on session reset or successful drain.
+_split_queues: dict[str, list[TransactionDraft]] = {}
 _drafts_lock = _th.Lock()
 
 
@@ -1818,7 +1822,103 @@ def _execute_and_record(
     except Exception:
         pass
 
+    # Split-bill queue: if this draft was part of a split, advance the
+    # queue and surface the next draft. The user confirms each split
+    # share one tap at a time; "Đã chia tiền với 3 người" is the demo
+    # closing line once the queue drains.
+    next_split = None
+    with _drafts_lock:
+        queue = _split_queues.get(user_id)
+        if queue:
+            next_split = queue.pop(0)
+            if not queue:
+                _split_queues.pop(user_id, None)
+    if next_split is not None:
+        session.set_draft(next_split)
+        remaining = len(_split_queues.get(user_id, [])) + 1
+        body = (
+            f"{text}\nCòn {remaining} người trong yêu cầu chia tiền — "
+            f"xác nhận chuyển {format_vnd(next_split.amount or 0)} cho "  # type: ignore[arg-type]
+            f"{next_split.recipient.display_name}?"  # type: ignore[union-attr]
+        )
+        return OmniResponse(intent="transfer", text=body, draft=next_split)
+
     return OmniResponse(intent="transfer", text=text)
+
+
+def start_split_bill(
+    user_id: str,
+    *,
+    total_amount: int,
+    description: str,
+    recipient_ids: list[str],
+) -> OmniResponse:
+    """Create N transfer drafts splitting ``total_amount`` evenly across
+    ``recipient_ids``. First draft becomes active; the rest queue.
+
+    Each draft is a regular TransactionDraft — the existing confirm /
+    cancel paths handle them. After each successful confirm the queue
+    advances automatically (see ``_execute_and_record``).
+    """
+    if not recipient_ids:
+        return OmniResponse(
+            intent="transfer",
+            text="Cần ít nhất 1 người để chia tiền.",
+        )
+    n = len(recipient_ids)
+    per_person = total_amount // n
+    if per_person <= 0:
+        return OmniResponse(
+            intent="transfer",
+            text="Số tiền chia ra nhỏ hơn 0đ — kiểm tra lại nhé.",
+        )
+
+    store = get_store()
+    contacts = {c.id: c for c in store.contacts_of(user_id)}
+    primary = store.primary_account(user_id)
+    accounts = store.get_user(user_id).accounts
+
+    drafts: list[TransactionDraft] = []
+    for cid in recipient_ids:
+        contact = contacts.get(cid)
+        if contact is None:
+            continue
+        drafts.append(
+            TransactionDraft(
+                id=new_id("d"),
+                recipient=contact,
+                candidates=[],
+                source_account_id=primary.id if primary else None,
+                source_accounts=accounts,
+                amount=per_person,
+                description=f"Chia tiền: {description}" if description else "Chia tiền",
+                source_text=f"split:{description}",
+                flags=[],
+                requires_step_up=False,
+                category="omni",
+            )
+        )
+
+    if not drafts:
+        return OmniResponse(
+            intent="transfer",
+            text="Không tìm thấy người nhận hợp lệ.",
+        )
+
+    # First draft active, rest queued.
+    session = session_for(user_id)
+    session.set_draft(drafts[0])
+    with _drafts_lock:
+        _split_queues[user_id] = drafts[1:]
+
+    names = [d.recipient.display_name for d in drafts]  # type: ignore[union-attr]
+    text = (
+        f"Đã tạo {len(drafts)} yêu cầu chia tiền — "
+        f"mỗi người {format_vnd(per_person)}.\n"
+        f"Người nhận: {', '.join(names)}.\n"
+        f"Xác nhận chuyển cho {names[0]} trước nhé."
+    )
+    return OmniResponse(intent="transfer", text=text, draft=drafts[0])
 
 
 def cancel_draft(user_id: str, draft_id: str) -> OmniResponse:

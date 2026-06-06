@@ -659,6 +659,71 @@ export default function App() {
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
               onSubmitText={(text) => send(text)}
+              onSplitBill={async (amount, description) => {
+                // Lightweight picker — collects comma-separated names,
+                // resolves them to contact ids by display_name match,
+                // then dispatches the split endpoint. Future polish:
+                // multi-select modal with checkboxes; this is the
+                // demo-friendly minimum.
+                const raw = window.prompt(
+                  `Chia ${amount.toLocaleString("vi-VN")}đ với ai? ` +
+                    `Nhập tên cách nhau bởi dấu phẩy (vd: mẹ, Minh, Hùng)`,
+                  "mẹ, Minh, Hùng",
+                );
+                if (!raw) return;
+                const names = raw
+                  .split(",")
+                  .map((s) => s.trim().toLowerCase())
+                  .filter((s) => s.length > 0);
+                if (names.length === 0) return;
+                try {
+                  const contacts = await api.contacts();
+                  const matchIds: string[] = [];
+                  for (const n of names) {
+                    const hit = contacts.find((c) => {
+                      const dn = c.display_name.toLowerCase();
+                      const label = (c.label || "").toLowerCase();
+                      const aliases = (c.aliases || []).map((a) =>
+                        a.toLowerCase(),
+                      );
+                      return (
+                        dn.includes(n) ||
+                        label.includes(n) ||
+                        aliases.some((a) => a.includes(n))
+                      );
+                    });
+                    if (hit) matchIds.push(hit.id);
+                  }
+                  if (matchIds.length === 0) {
+                    alert("Không tìm thấy ai khớp trong danh bạ.");
+                    return;
+                  }
+                  const resp = await api.splitBill(
+                    amount,
+                    description,
+                    matchIds,
+                  );
+                  // Push the response into the message stream like a
+                  // normal chat reply so the user sees the new draft
+                  // queue land in chat.
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: `s-${Date.now()}`,
+                      role: "user",
+                      text: `Chia tiền với ${names.join(", ")}`,
+                    },
+                    {
+                      id: `o-${Date.now() + 1}`,
+                      role: "omni",
+                      text: resp.text,
+                      response: resp,
+                    },
+                  ]);
+                } catch (e) {
+                  alert(friendlyApiError(e));
+                }
+              }}
               onDraftResolved={(resp) => {
                 // A budget or goal draft was confirmed/cancelled. Bump
                 // the sidebar refresh key so BudgetCard / GoalsCard

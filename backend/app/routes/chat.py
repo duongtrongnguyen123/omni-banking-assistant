@@ -16,6 +16,7 @@ from ..services.orchestrator import (
     end_telemetry,
     handle_message,
     select_candidate,
+    start_split_bill,
 )
 from ._ratelimit import enforce_user_rate_limit
 from .deps import current_user
@@ -96,6 +97,30 @@ def confirm(
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
 def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     return cancel_draft(user_id, draft_id)
+
+
+class SplitBillRequest(BaseModel):
+    total_amount: int = Field(gt=0)
+    description: str = ""
+    recipient_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+@router.post("/transactions/split", response_model=OmniResponse)
+def split_bill(
+    req: SplitBillRequest,
+    user_id: str = Depends(current_user),
+) -> OmniResponse:
+    """Create N split-share drafts from a confirmed receipt. First draft
+    becomes active in the session; the rest queue. Each successful
+    confirm pops the next from the queue and surfaces it to the user.
+    """
+    enforce_user_rate_limit(user_id)
+    return start_split_bill(
+        user_id,
+        total_amount=req.total_amount,
+        description=req.description,
+        recipient_ids=req.recipient_ids,
+    )
 
 
 @router.post("/transactions/{draft_id}/select", response_model=OmniResponse)

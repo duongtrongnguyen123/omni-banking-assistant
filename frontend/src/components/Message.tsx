@@ -28,6 +28,9 @@ interface Props {
    *  edit-amount UI on TransactionCard so the user gets one-tap edits
    *  without a typing detour. */
   onSubmitText?: (text: string) => void;
+  /** Open the split-bill picker — called from the just-confirmed receipt
+   *  card. App.tsx implements the contact picker + POST. */
+  onSplitBill?: (amount: number, description: string) => void;
   /**
    * Notify the parent that a budget/goal draft was confirmed (or
    * cancelled) so it can refresh the sidebar BudgetCard / GoalsCard
@@ -53,6 +56,7 @@ export const Message = ({
   onCancelSchedule,
   onPrefill,
   onSubmitText,
+  onSplitBill,
   onDraftResolved,
   busy,
   actionableDraftIds,
@@ -130,6 +134,7 @@ export const Message = ({
                 ? (amount: number) => onSubmitText(`đổi sang ${amount}`)
                 : undefined
             }
+            onSplitBill={onSplitBill}
             disabled={busy}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
           />
