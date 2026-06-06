@@ -199,4 +199,10 @@ def handle_insights(
     text = "\n\n".join(parts) if parts else (
         "Mình chưa đủ dữ liệu để tổng hợp insight cho bạn lúc này."
     )
-    return OmniResponse(intent="insights", text=text)
+    # Surface the structured forecast payload whenever it's available — the
+    # UI renders a card; the text fallback above stays useful for AT users,
+    # replays, and the dev overlay. The card is also surfaced when the user
+    # asked a generic "phân tích chi tiêu" rollup (so the card matches what
+    # the sidebar would have shown) but suppressed when forecast() bailed
+    # early-in-month (None) — empty card would just confuse the renderer.
+    return OmniResponse(intent="insights", text=text, forecast_card=fcast)

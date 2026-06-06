@@ -300,6 +300,13 @@ class OmniResponse(BaseModel):
     # Frontend renders this via ``<HelpCard />``; the plain ``text``
     # field carries an equivalent prose fallback for AT users / replays.
     help_sections: Optional[list[dict]] = None
+    # Populated when the ``insights`` intent fires the forecast facet.
+    # Shape matches ``ml.insights.forecast``'s output verbatim (days_*,
+    # spent_so_far, daily_rate, projected_*, last_month_total,
+    # pace_vs_last_month, over_budget / under_budget / overdraft_risk).
+    # Frontend renders a structured forecast card; the plain ``text``
+    # field still carries the same numbers as a fallback sentence.
+    forecast_card: Optional[dict] = None
     needs_disambiguation: bool = False
     # Populated only when the ``?dev=1`` query param flags the request as
     # a telemetry-overlay client. ``None`` in the default UI path so
