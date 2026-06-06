@@ -276,7 +276,22 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     folded = normalize_alias(temporal_ref)
     if "thang truoc" in folded or "lan truoc" in folded:
         return "last_month"
-    if "tuan truoc" in folded or "hom qua" in folded or "vua roi" in folded:
+    # Single-day windows. "hôm qua" used to fall into recent_30d (last
+    # 30 days), which silently broadened "tôi tiêu gì hôm qua" into a
+    # month total. Scope it to yesterday.
+    if "hom nay" in folded:
+        return "today"
+    if "hom qua" in folded:
+        return "yesterday"
+    if "tuan nay" in folded:
+        return "this_week"
+    if "tuan truoc" in folded:
+        return "last_week"
+    if "nam nay" in folded:
+        return "this_year"
+    if "nam ngoai" in folded:
+        return "last_year"
+    if "vua roi" in folded:
         return "recent_30d"
     return "this_month"
 
@@ -865,8 +880,14 @@ def _handle_history(
             fell_back = True
 
     period_label = {
+        "today": "hôm nay",
+        "yesterday": "hôm qua",
+        "this_week": "tuần này",
+        "last_week": "tuần trước",
         "this_month": "tháng này",
         "last_month": "tháng trước",
+        "this_year": "năm nay",
+        "last_year": "năm ngoái",
         "recent_30d": "30 ngày gần đây",
         "all_time": "tất cả thời gian",
     }.get(period, period)

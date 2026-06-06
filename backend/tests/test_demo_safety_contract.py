@@ -1072,6 +1072,79 @@ def test_colloquial_balance_does_not_eat_other_intents(
 
 
 # ---------------------------------------------------------------------------
+# Fine-grained history periods — hôm nay, hôm qua, tuần này/trước, năm
+# nay/ngoái. Previously every temporal phrase except "tháng trước" fell into
+# either "this_month" (the default) or "recent_30d", so "hôm nay tiêu bao
+# nhiêu" returned a month aggregate. The fix maps each phrase to its own
+# window in get_history().
+# ---------------------------------------------------------------------------
+
+
+def test_history_period_today_is_today_only() -> None:
+    """The period label echoes back as "hôm nay" — confirms the window
+    didn't silently widen to this_month."""
+    from app.banking.service import get_history
+    h = get_history(user_id=USER, period="today")
+    assert h["period"] == "today"
+    # End is exclusive; window must be ≤ 24h so we never accidentally
+    # roll yesterday's spending into today's count.
+    from datetime import datetime
+    start = datetime.fromisoformat(h["start"])
+    end = datetime.fromisoformat(h["end"])
+    assert (end - start).total_seconds() == 86400
+
+
+def test_history_period_this_week_is_seven_days() -> None:
+    from app.banking.service import get_history
+    h = get_history(user_id=USER, period="this_week")
+    assert h["period"] == "this_week"
+    from datetime import datetime
+    start = datetime.fromisoformat(h["start"])
+    end = datetime.fromisoformat(h["end"])
+    assert (end - start).total_seconds() == 7 * 86400
+
+
+def test_history_period_this_year_starts_jan_1() -> None:
+    from app.banking.service import get_history
+    h = get_history(user_id=USER, period="this_year")
+    from datetime import datetime
+    start = datetime.fromisoformat(h["start"])
+    end = datetime.fromisoformat(h["end"])
+    assert start.month == 1 and start.day == 1
+    assert end.month == 1 and end.day == 1
+    assert end.year == start.year + 1
+
+
+@pytest.mark.parametrize(
+    "phrase,expected_period",
+    [
+        ("hôm nay", "today"),
+        ("hom nay", "today"),
+        ("hôm qua", "yesterday"),
+        ("hom qua", "yesterday"),
+        ("tuần này", "this_week"),
+        ("tuan nay", "this_week"),
+        ("tuần trước", "last_week"),
+        ("tuan truoc", "last_week"),
+        ("năm nay", "this_year"),
+        ("nam nay", "this_year"),
+        ("năm ngoái", "last_year"),
+        ("nam ngoai", "last_year"),
+        ("tháng trước", "last_month"),  # baseline — still works
+    ],
+)
+def test_temporal_phrase_maps_to_correct_period(
+    phrase: str, expected_period: str
+) -> None:
+    """Each temporal phrase must map to its specific window. Critically:
+    "hôm qua" must NOT keep mapping to recent_30d (last 30 days) — that
+    silent broadening was the original bug that hid in tháng-trước's
+    shadow because tests only ever pinned the tháng-trước path."""
+    from app.services.orchestrator import _period_from_temporal
+    assert _period_from_temporal(phrase) == expected_period
+
+
+# ---------------------------------------------------------------------------
 # "Lặp lại?" only fires when draft.amount actually matches the referenced tx
 # ---------------------------------------------------------------------------
 
