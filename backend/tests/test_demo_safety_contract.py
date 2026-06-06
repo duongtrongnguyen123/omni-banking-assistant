@@ -355,6 +355,54 @@ def test_goal_status_empty_state_is_helpful() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Confirm / cancel everyday Vietnamese phrasings
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "okay",
+        "oki",
+        "được",
+        "được rồi",
+        "được luôn",
+        "được nha",
+        "ừ",
+        "ừm",
+    ],
+)
+def test_everyday_vietnamese_confirms(text: str) -> None:
+    """``ok`` / ``đồng ý`` / ``yes`` were already in the confirm regex
+    but ``okay`` / ``được`` / ``được rồi`` / ``ừ`` — what judges
+    actually say — fell through to ``unknown`` and the active draft
+    stayed dangling. Now match at word-boundary so all of these
+    confirm the in-flight transfer."""
+    from app.services.orchestrator import _is_confirm
+    assert _is_confirm(text) is True, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "thôi",
+        "thôi nha",
+        "thôi không gửi nữa",
+        "đừng",
+        "đừng nữa",
+        "khoan",
+    ],
+)
+def test_everyday_vietnamese_cancels(text: str) -> None:
+    """``huỷ`` / ``cancel`` / ``no`` worked but the much more common
+    ``thôi`` / ``đừng`` / ``khoan`` were missing. Now they short-circuit
+    the orchestrator into the cancel path instead of running NLU and
+    silently leaving the draft open."""
+    from app.services.orchestrator import _is_cancel
+    assert _is_cancel(text) is True, text
+
+
+# ---------------------------------------------------------------------------
 # Bounded "hi"/"hey" smalltalk match — substring vs word-boundary
 # ---------------------------------------------------------------------------
 

@@ -130,8 +130,13 @@ def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
 
 _CONFIRM_RE = re.compile(
     # Plain confirmation tokens — must occur at message start.
-    r"^(?:xac nhan|xacnhan|ok|đồng ý|dong y|y|yes|confirm|duyệt|duyet)\b"
+    r"^(?:xac nhan|xacnhan|ok|okay|oki|đồng ý|dong y|y|yes|confirm|duyệt|duyet|ừ|ừm|ư|um)\b"
     r"|^xác nhận"
+    # "được" / "duoc" alone or with a continuation particle ("được rồi",
+    # "được luôn", "được nha"). The plain word means "OK / fine" in
+    # Vietnamese — judges use it constantly.
+    r"|^(?:được|duoc)\s*[!.?]?\s*$"
+    r"|^(?:được|duoc)\s+(?:rồi|roi|luôn|luon|nha|nhe|nhé|đó|do|đấy|day|chứ|chu)\b"
     # "lưu" / "luu" alone OR followed by a confirming particle. CRITICAL:
     # bare "lưu <Name>" is the add-contact verb, NOT a confirm. So we
     # only treat it as confirm when it stands alone or pairs with a
@@ -140,7 +145,14 @@ _CONFIRM_RE = re.compile(
     r"|^(?:lưu|luu)\s+(?:lại|lai|đi|di|giúp|giup|cho|nha|nhe|nhé)\b",
     re.IGNORECASE,
 )
-_CANCEL_RE = re.compile(r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo)\b", re.IGNORECASE)
+# "thôi" / "đừng" / "khoan" are everyday cancel particles missing from
+# the original list. ``khong`` already covered "không, …" via word-boundary;
+# the leading punctuation case ("không, huỷ đi") is matched too because
+# ``\b`` succeeds before the comma.
+_CANCEL_RE = re.compile(
+    r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo|thôi|thoi|đừng|dung|khoan)\b",
+    re.IGNORECASE,
+)
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
 _HELP_RE = re.compile(r"^\s*(/help|help|trợ giúp|tro giup|hướng dẫn|huong dan|menu)\s*$", re.IGNORECASE)
 
