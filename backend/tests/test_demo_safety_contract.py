@@ -1072,6 +1072,64 @@ def test_colloquial_balance_does_not_eat_other_intents(
 
 
 # ---------------------------------------------------------------------------
+# First-person pronoun guard — "mình"/"tôi" must not be mistaken for "Minh"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Each of these was previously misrouted to an "Bạn muốn chuyển
+        # bao nhiêu cho Minh nào (giữa ...)" prompt because diacritic-
+        # stripping "mình" → "minh" matched the contact alias.
+        "ai gửi tiền cho mình",
+        "ai chuyển tiền cho mình",
+        "có ai vừa chuyển cho mình không",
+        "gửi mình 200k",
+        "chuyển cho mình 500k",
+        "trả tôi 100k",
+        "cho tôi 50k",
+    ],
+)
+def test_self_pronoun_not_extracted_as_recipient(text: str) -> None:
+    """The diacritic-bearing first-person pronouns must NOT survive the
+    recipient extractor — otherwise "ai gửi tiền cho mình" turns into a
+    confused transfer draft offering to send Minh money. The contact
+    "Minh" (no `ì`) still resolves; only the pronoun form is dropped.
+
+    We assert on the extracted entity, not the full response, so the
+    test stays sharp even if the orchestrator's downstream phrasing
+    changes."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.recipient_text is None, (
+        f"{text!r} → extracted {e.recipient_text!r}; should be dropped"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The contact "Minh" (no diacritic) must STILL resolve as a
+        # recipient — otherwise we've thrown the baby out with the
+        # bathwater.
+        "gửi Minh 200k",
+        "chuyển cho Minh 500k",
+        "gửi minh 200k",  # lowercase no-diacritic = ambiguous, defer to name
+    ],
+)
+def test_contact_minh_still_resolves(text: str) -> None:
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.recipient_text is not None, (
+        f"{text!r} dropped the real contact name"
+    )
+    # Both "Minh" and "minh" survive (diacritic-fold equal); we don't
+    # care about case here.
+    assert e.recipient_text.lower() == "minh"
+
+
+# ---------------------------------------------------------------------------
 # Fine-grained history periods — hôm nay, hôm qua, tuần này/trước, năm
 # nay/ngoái. Previously every temporal phrase except "tháng trước" fell into
 # either "this_month" (the default) or "recent_30d", so "hôm nay tiêu bao
