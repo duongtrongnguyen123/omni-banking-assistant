@@ -149,6 +149,16 @@ def chat(
         session_id = chat_log.resolve_session(user_id, req.session_id)
     response.headers["X-Chat-Session-Id"] = session_id
     _enter_chat_session(user_id, session_id)
+    # Archive the USER turn BEFORE invoking the orchestrator. If
+    # ``handle_message`` raises (LLM blew up, downstream banking error)
+    # the user's typed message must still land in the sidebar — losing
+    # both the reply AND the user's own message is the worst possible UX
+    # (the user can't even see what they sent). Best-effort: a logging
+    # failure must never break the user's transfer flow.
+    try:
+        chat_log.append_message(session_id, user_id, "user", req.message)
+    except Exception:  # noqa: BLE001 — archival is non-critical
+        pass
     if dev:
         begin_telemetry()
     try:
@@ -156,10 +166,10 @@ def chat(
     finally:
         if dev:
             end_telemetry()
-    # Persist both sides of the turn. Best-effort: a logging failure must
-    # never break the user's transfer flow.
+    # Archive the omni reply only on success. (If ``handle_message``
+    # raised, control never reaches here — FastAPI surfaces the 500 to
+    # the client, the user message is already archived above.)
     try:
-        chat_log.append_message(session_id, user_id, "user", req.message)
         chat_log.append_message(
             session_id,
             user_id,
