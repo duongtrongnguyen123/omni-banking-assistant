@@ -89,6 +89,12 @@ class Schedule(BaseModel):
 
 class ExtractedEntities(BaseModel):
     recipient_text: Optional[str] = None
+    # LLM hint for resolver routing. When set, the resolver constrains
+    # its lookup to the matching table (contact_aliases vs display_name)
+    # — this kills the embedding-fallback noise that turned "bạn thân"
+    # into 84 garbage candidates. Rule fallback uses a relational-prefix
+    # heuristic when this is None.
+    recipient_kind: Optional[Literal["alias", "name"]] = None
     amount: Optional[int] = None
     amount_text: Optional[str] = None
     description: Optional[str] = None

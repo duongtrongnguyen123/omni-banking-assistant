@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Optional
 
 from ..models.schemas import Contact, ResolvedRecipient
 
@@ -57,93 +58,123 @@ def _last_token(folded_name: str) -> str:
     return parts[-1] if parts else folded_name
 
 
+_ALIAS_HEURISTIC_TOKENS = frozenset({
+    # Vietnamese kinship / role idioms — treated as alias kind when the
+    # LLM didn't classify. Tokens used STAND-ALONE OR with a single
+    # qualifier ("bạn thân", "anh hai"); a multi-word kinship-role
+    # phrase whose head token is here also routes to alias.
+    "me", "ba", "bo", "ny", "vo", "chong", "sep", "boss",
+    "ban", "anh", "chi", "em", "co", "chu", "bac", "ong", "ba",
+})
+
+
+def _looks_like_alias_kind(folded: str) -> bool:
+    """Heuristic for rule-fallback when LLM didn't tag recipient_kind.
+
+    True when the surface starts with a kinship/role token and is short
+    (≤ 3 tokens). Examples: 'bạn thân', 'anh hai', 'sếp', 'mẹ'. Rejects
+    'Nguyễn Văn Minh', 'Nam', 'Tuấn'.
+    """
+    tokens = folded.split()
+    if not tokens or len(tokens) > 3:
+        return False
+    return tokens[0] in _ALIAS_HEURISTIC_TOKENS
+
+
 def resolve_recipient(
-    surface: str, contacts: list[Contact]
+    surface: str,
+    contacts: list[Contact],
+    *,
+    kind: Optional[str] = None,
 ) -> list[ResolvedRecipient]:
+    """Resolve a recipient surface to candidate contacts.
+
+    ``kind`` (NEW) is the LLM's hint, one of "alias" | "name" | None:
+      - "alias": lookup ONLY in contact_aliases (exact fold match).
+      - "name":  lookup ONLY in display_name (exact + token-exact).
+      - None:    try alias first, then name. Drops the embedding
+                 fallback that was returning noise on cold queries
+                 like "bạn thân" or "grabfood".
+
+    The previous semantic-fallback returned arbitrary "similar" names
+    (5 garbage contacts on "cho Nam") — gone. Better to return 0 and
+    let the chat ask again than confidently pick the wrong person.
+    """
     if not surface:
         return []
     query = _fold(surface)
     query_stripped = _strip_relational(query)
 
+    # When the LLM didn't say, but the surface looks alias-shaped, treat
+    # it as an alias query so the user's "bạn thân" → empty rather than
+    # falling into name-token noise.
+    if kind is None and _looks_like_alias_kind(query):
+        kind = "alias"
+
     matches: list[ResolvedRecipient] = []
 
-    # 0) Exact display-name match (highest precision short-circuit).
-    #    "Vũ Thị Hạnh" should resolve to that one contact even when no
-    #    alias exists for the full string. Without this, multi-token
-    #    full names fall through to RAG (step 5) and may surface a wide
-    #    set of semantically similar names — exactly the reported bug.
+    # When kind is explicitly "alias", DO NOT fall through to name lookups.
+    # User said "bạn thân" → if no alias matches, return []; the chat asks
+    # again rather than guessing a random name.
+    if kind == "alias":
+        return _lookup_in_aliases(query, query_stripped, contacts)
+
+    if kind == "name":
+        return _lookup_in_names(query, query_stripped, contacts)
+
+    # kind is None — try alias-first, then name. No semantic fallback.
+    # That eliminates the noise class on "bạn thân" / "grabfood" / "cho Nam".
+    matches = _lookup_in_aliases(query, query_stripped, contacts)
+    if matches:
+        return matches
+    return _lookup_in_names(query, query_stripped, contacts)
+
+
+def _lookup_in_aliases(
+    query: str, query_stripped: str, contacts: list[Contact]
+) -> list[ResolvedRecipient]:
+    """Exact fold-match against any saved alias of any contact. Also
+    accepts the stripped form so "anh Tuấn" matches alias "Tuấn"."""
+    matches: list[ResolvedRecipient] = []
     for c in contacts:
-        if _fold(c.display_name) == query or _fold(c.display_name) == query_stripped:
+        for alias in c.aliases:
+            folded = _fold(alias)
+            if folded == query or folded == query_stripped:
+                matches.append(
+                    ResolvedRecipient(
+                        contact=c, via_alias=alias, matched_from="alias",
+                    )
+                )
+                break
+    return _dedupe(matches)
+
+
+def _lookup_in_names(
+    query: str, query_stripped: str, contacts: list[Contact]
+) -> list[ResolvedRecipient]:
+    """Match against display_name:
+      1. Full-name fold exact ("Nguyễn Văn Minh") → matched_from="exact"
+      2. Any TOKEN of display_name equals the query ("Minh" → multiple
+         contacts) → matched_from="name"
+    No prefix match, no embedding fallback — those returned noise.
+    """
+    matches: list[ResolvedRecipient] = []
+    # Stage 1: full-name exact
+    for c in contacts:
+        folded = _fold(c.display_name)
+        if folded == query or folded == query_stripped:
             matches.append(ResolvedRecipient(contact=c, matched_from="exact"))
     if matches:
         return _dedupe(matches)
 
-    # 1) Direct alias match (high precision)
+    # Stage 2: token-exact (any whole token of display_name == query)
     for c in contacts:
-        for alias in c.aliases:
-            if _fold(alias) == query or _fold(alias) == query_stripped:
-                matches.append(
-                    ResolvedRecipient(contact=c, via_alias=alias, matched_from="alias")
-                )
-                break
-    if matches:
-        return _dedupe(matches)
-
-    # 2) Last-name token equality on display name
-    #    e.g., "Minh" -> "Nguyễn Văn Minh" and "Trần Hoàng Minh"
-    for c in contacts:
-        folded_name = _fold(c.display_name)
-        if _last_token(folded_name) == query_stripped or query_stripped in folded_name.split():
-            matches.append(
-                ResolvedRecipient(contact=c, matched_from="name")
-            )
-    if matches:
-        return _dedupe(matches)
-
-    # 3) Token prefix match on display name (e.g. "Min" → "Minh")
-    #    Match must align to a word boundary so "anh" doesn't sneak into
-    #    "Hạnh" via raw substring.
-    for c in contacts:
-        for token in _fold(c.display_name).split():
-            if query_stripped and token.startswith(query_stripped):
-                matches.append(ResolvedRecipient(contact=c, matched_from="name"))
-                break
-    if matches:
-        return _dedupe(matches)
-
-    # 4) Whole-token match within an alias (e.g. "anh" matches alias
-    #    "anh tuấn" but not "hạnh" / "chị bích").
-    for c in contacts:
-        for alias in c.aliases:
-            if not query_stripped:
-                continue
-            alias_tokens = _fold(alias).split()
-            if query_stripped in alias_tokens:
-                matches.append(
-                    ResolvedRecipient(contact=c, via_alias=alias, matched_from="alias")
-                )
-                break
-    if matches:
-        return _dedupe(matches)
-
-    # 5) Semantic-ish fallback — only when every literal pass has failed.
-    #    Tries Gemini embeddings first (when the key has access); falls
-    #    through to a lexical token-overlap scorer that runs in pure
-    #    Python with no network. Both yield a list of candidates the
-    #    orchestrator can confirm or ambiguate.
-    #
-    #    GUARD: only run for descriptive queries (≥ 2 meaningful tokens).
-    #    Single-token misses ("ny", "boss" that the user hasn't saved as an
-    #    alias) are typos or unknown aliases — guessing is worse than
-    #    saying "I don't know who that is".
-    meaningful = [
-        t for t in query_stripped.split() if t and t not in _STOP_TOKENS
-    ]
-    if len(meaningful) < 2:
-        return []
-
-    rag = _embedding_match(surface, contacts) or _lexical_match(surface, contacts)
-    return _dedupe(rag)
+        tokens = _fold(c.display_name).split()
+        if query_stripped and query_stripped in tokens:
+            matches.append(ResolvedRecipient(contact=c, matched_from="name"))
+        elif query and query in tokens:
+            matches.append(ResolvedRecipient(contact=c, matched_from="name"))
+    return _dedupe(matches)
 
 
 # ---------------------------------------------------------------------------

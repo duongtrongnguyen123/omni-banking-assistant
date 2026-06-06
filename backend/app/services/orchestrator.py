@@ -715,7 +715,7 @@ def _modify_transfer_draft(
         draft.category = cat if (cat != "other" and conf >= 0.5) else None
 
     if e.recipient_text:
-        candidates = resolve_recipient(e.recipient_text, contacts)
+        candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         if len(candidates) == 1:
             draft.recipient = candidates[0].contact
             draft.candidates = []
@@ -846,7 +846,7 @@ def _handle_recurring(
 
     e = nlu.entities
     if e.recipient_text:
-        candidates = resolve_recipient(e.recipient_text, contacts)
+        candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         wanted = {c.contact.id for c in candidates}
         if wanted:
             patterns = [p for p in patterns if p.contact_id in wanted]
@@ -932,7 +932,7 @@ def _handle_history(
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
     if e.recipient_text:
-        candidates = resolve_recipient(e.recipient_text, contacts)
+        candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         if len(candidates) == 1:
             contact_id = candidates[0].contact.id
             contact_name = candidates[0].contact.display_name
@@ -1138,7 +1138,7 @@ def _handle_schedule(user_id: str, nlu: NLUResult) -> OmniResponse:
             ),
         )
 
-    candidates = resolve_recipient(e.recipient_text, contacts)
+    candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
     if len(candidates) != 1:
         return OmniResponse(
             intent="schedule",
@@ -1632,7 +1632,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     e = nlu.entities
 
     candidates = (
-        resolve_recipient(e.recipient_text, contacts) if e.recipient_text else []
+        resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind) if e.recipient_text else []
     )
     if e.account_hint:
         candidates = filter_by_account_hint(candidates, e.account_hint)
