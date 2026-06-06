@@ -209,8 +209,13 @@ textarea:focus-visible,
   flex-shrink: 0;
   border-radius: 50%;
   overflow: hidden;
-  background: var(--navy);
+  background: var(--cream);
   display: grid; place-items: center;
+}
+.omni-avatar img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .user-pill {
@@ -2623,4 +2628,43 @@ textarea:focus-visible,
   border-radius: 6px; padding: 1px 6px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 11px; color: var(--navy);
+}
+
+/* -------- mobile / PWA full-screen (real phone) -------- */
+@media (max-width: 640px) {
+  html, body, #root { height: 100%; background: white; }
+
+  /* Drop the desktop two-column page; the phone becomes the whole screen. */
+  .page {
+    display: block;
+    grid-template-columns: none;
+    padding: 0;
+    gap: 0;
+    margin: 0;
+    max-width: none;
+    min-height: 100dvh;
+  }
+
+  /* Remove the fake phone frame — the device IS the frame now. */
+  .phone {
+    border-radius: 0;
+    box-shadow: none;
+    height: 100dvh;
+    min-height: 0;
+    max-height: none;
+    position: static;
+  }
+
+  /* The desktop info panel is hidden on phones. */
+  .sidebar { display: none; }
+
+  /* The OS already shows a status bar; hide the mock one and respect the notch. */
+  .phone__statusbar { display: none; }
+  .phone__header { padding-top: calc(12px + env(safe-area-inset-top)); }
+
+  /* Let the chat fill all remaining height (override the 900px cap). */
+  .phone__chat { max-height: none; }
+
+  /* Keep the input clear of the home-indicator / gesture bar. */
+  .phone__input { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 }

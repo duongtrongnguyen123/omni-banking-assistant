@@ -21,6 +21,8 @@ fakeredis>=2.20
 psycopg2-binary==2.9.9
 # Speech-to-text (main branch — backend/app/speech). CPU-only, lazy-load.
 faster-whisper>=1.2.0
+# Groq speech-to-text path uses the OpenAI-compatible audio API (custom base_url).
+openai>=1.84.0
 # QR generation for the "Nhận tiền" modal + camera-scan transfer
 # pre-fill. ``qrcode[pil]`` pulls Pillow (already present) and a tiny
 # pure-Python QR encoder — <100KB combined.

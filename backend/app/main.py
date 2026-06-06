@@ -1,9 +1,12 @@
 import logging
+import os
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .nlp import privacy as _privacy
@@ -212,3 +215,18 @@ def cache_health() -> dict:
         }
     except Exception as e:  # pragma: no cover — defensive
         return {"enabled": False, "error": str(e)}
+
+
+# Serve the built frontend (production / Docker). In local dev the Vite server
+# handles the UI, so this mount is skipped when dist/ is absent. Mounted last
+# so every /api, /ws, /health and /docs route takes precedence.
+_frontend_dist = Path(
+    os.getenv(
+        "FRONTEND_DIST",
+        str(Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"),
+    )
+)
+if _frontend_dist.is_dir():
+    app.mount(
+        "/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend"
+    )

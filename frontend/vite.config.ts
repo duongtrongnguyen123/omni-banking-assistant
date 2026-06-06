@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
+      host: true, // listen on all interfaces (LAN + tunnel)
+      allowedHosts: true, // accept any Host header (e.g. *.trycloudflare.com)
       proxy: {
         "/api": apiTarget,
         "/health": apiTarget,

@@ -18,3 +18,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </ErrorBoundary>
   </React.StrictMode>,
 );
+
+// Register the PWA service worker (only on secure contexts: https / localhost).
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* ignore — app still works without offline support */
+    });
+  });
+}

@@ -1,0 +1,17 @@
+{
+  "name": "Omni — Trợ lý ngân hàng AI",
+  "short_name": "Omni",
+  "description": "Trợ lý ngân hàng bằng giọng nói và văn bản.",
+  "lang": "vi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a1a4b",
+  "theme_color": "#1a1a4b",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
