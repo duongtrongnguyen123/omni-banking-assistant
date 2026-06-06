@@ -1,5 +1,8 @@
 import type {
   AtmHit,
+  AdminChatSessionDetail,
+  AdminChatSessionsResponse,
+  AdminTransactionsResponse,
   BiometricScanResult,
   BudgetRow,
   ChatSession,
@@ -104,6 +107,35 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function adminJsonFetch<T>(
+  path: string,
+  token: string,
+  init?: RequestInit,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (token.trim()) headers.Authorization = `Bearer ${token.trim()}`;
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers });
+  } catch {
+    throw new ApiError(0, VI_NETWORK_DOWN);
+  }
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.json()).detail ?? "";
+    } catch {
+      /* non-JSON body */
+    }
+    if (!detail) detail = res.statusText || VI_GENERIC_ERROR;
+    throw new ApiError(res.status, detail);
+  }
+  return res.json();
+}
+
 export interface RecordStopResponse {
   recording: boolean;
   turns: number;
@@ -134,6 +166,53 @@ export interface ChatResult {
 }
 
 export const api = {
+  adminChatSessions: (
+    token: string,
+    params: {
+      userId?: string;
+      q?: string;
+      intent?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.userId) qs.set("user_id", params.userId);
+    if (params.q) qs.set("q", params.q);
+    if (params.intent) qs.set("intent", params.intent);
+    qs.set("limit", String(params.limit ?? 100));
+    qs.set("offset", String(params.offset ?? 0));
+    return adminJsonFetch<AdminChatSessionsResponse>(
+      `/api/admin/chat/sessions?${qs.toString()}`,
+      token,
+    );
+  },
+  adminChatSessionDetail: (token: string, id: string) =>
+    adminJsonFetch<AdminChatSessionDetail>(
+      `/api/admin/chat/sessions/${id}`,
+      token,
+    ),
+  adminTransactions: (
+    token: string,
+    params: {
+      userId?: string;
+      q?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.userId) qs.set("user_id", params.userId);
+    if (params.q) qs.set("q", params.q);
+    if (params.status !== undefined) qs.set("status", params.status);
+    qs.set("limit", String(params.limit ?? 100));
+    qs.set("offset", String(params.offset ?? 0));
+    return adminJsonFetch<AdminTransactionsResponse>(
+      `/api/admin/transactions?${qs.toString()}`,
+      token,
+    );
+  },
   // Unlike the other helpers, /chat needs the `X-Chat-Session-Id`
   // response header (which conversation the backend filed this turn
   // under), so it does its own fetch instead of going through jsonFetch.
@@ -211,6 +290,7 @@ export const api = {
     otp: string,
     sourceAccountId?: string,
     biometricScan?: BiometricScanResult,
+    sessionId?: string | null,
   ) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/confirm`, {
       method: "POST",
@@ -218,6 +298,7 @@ export const api = {
         otp,
         source_account_id: sourceAccountId,
         biometric_scan: biometricScan,
+        session_id: sessionId ?? null,
       }),
     }),
   splitBill: (
@@ -256,14 +337,15 @@ export const api = {
     const data = (await res.json()) as { text: string };
     return data.text;
   },
-  cancel: (draftId: string) =>
+  cancel: (draftId: string, sessionId?: string | null) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/cancel`, {
       method: "POST",
+      body: JSON.stringify({ session_id: sessionId ?? null }),
     }),
-  select: (draftId: string, contactId: string) =>
+  select: (draftId: string, contactId: string, sessionId?: string | null) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/select`, {
       method: "POST",
-      body: JSON.stringify({ contact_id: contactId }),
+      body: JSON.stringify({ contact_id: contactId, session_id: sessionId ?? null }),
     }),
   confirmContact: (draftId: string) =>
     jsonFetch<OmniResponse>(`/api/contacts/${draftId}/confirm`, {

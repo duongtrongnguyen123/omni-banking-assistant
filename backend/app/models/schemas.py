@@ -30,6 +30,20 @@ Intent = Literal[
     # Handler returns the OmniResponse.atms field populated from the
     # mock seed in ``banking/atm.py``.
     "atm_finder",
+    # "STK của tôi là gì", "tài khoản của tôi" — inbound info: show the
+    # user's own accounts (bank, full STK, holder name) so they can
+    # share for someone else to transfer in. Read-only, no money flow.
+    "my_account",
+    # "Tạo QR nhận 500k", "cho tôi QR" — encode the user's primary
+    # account (+ optional amount + memo) as a VietQR-style payload and
+    # return the base64 PNG so the chat can render it inline.
+    "receive_qr",
+    # "tôi vừa nói gì", "lúc nãy tôi bảo là bao nhiêu", "đang chuyển
+    # cho ai", "tóm tắt giúp tôi". Surfaces the current active draft
+    # (or the most recent completed transaction) so the user doesn't
+    # have to remember what they typed two turns ago. User report:
+    # "2-3 câu hỏi nó quên context".
+    "recap",
     "smalltalk",
     "unknown",
 ]
@@ -89,6 +103,12 @@ class Schedule(BaseModel):
 
 class ExtractedEntities(BaseModel):
     recipient_text: Optional[str] = None
+    # LLM hint for resolver routing. When set, the resolver constrains
+    # its lookup to the matching table (contact_aliases vs display_name)
+    # — this kills the embedding-fallback noise that turned "bạn thân"
+    # into 84 garbage candidates. Rule fallback uses a relational-prefix
+    # heuristic when this is None.
+    recipient_kind: Optional[Literal["alias", "name"]] = None
     amount: Optional[int] = None
     amount_text: Optional[str] = None
     description: Optional[str] = None
@@ -181,6 +201,7 @@ class TransactionDraft(BaseModel):
     flags: list[SafetyFlag] = Field(default_factory=list)
     requires_step_up: bool = False
     awaiting_otp: bool = False
+    otp_attempts: int = 0
     # True when `amount` was filled in by the history predictor rather than
     # extracted from the user's utterance. The UI surfaces this as a chip so
     # the user knows it's a suggestion they can override.
@@ -329,6 +350,13 @@ class OmniResponse(BaseModel):
     # Populated by the ``atm_finder`` intent. Each entry has the ATM seed
     # fields plus ``distance_km`` when the user shared their location.
     atms: Optional[list[dict]] = None
+    # Populated by the ``my_account`` intent: the user's own accounts
+    # ({bank, masked, full_number, holder_name, primary}). Used for
+    # share-to-receive flows (someone else needs the STK to transfer in).
+    my_accounts: Optional[list[dict]] = None
+    # Populated by the ``receive_qr`` intent: VietQR-style payload + the
+    # rendered base64 PNG so the chat can display the QR inline.
+    receive_qr: Optional[dict] = None
     # Populated by the ``/help`` (and Vietnamese "trợ giúp") synthetic
     # intent. Each entry is a section dict ``{"title": str, "items":
     # list[{"label": str, "example": str}], "shortcut": Optional[str]}``.

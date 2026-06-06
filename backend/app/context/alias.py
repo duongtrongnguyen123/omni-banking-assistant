@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Optional
 
 from ..models.schemas import Contact, ResolvedRecipient
 
@@ -24,15 +25,32 @@ def _fold(s: str) -> str:
 
 
 # Family/relational prefixes that should be stripped to match name tokens.
-_RELATIONAL_PREFIXES = ("anh ", "chi ", "em ", "ban ", "co ", "chu ", "bac ", "ong ", "ba ")
+_RELATIONAL_PREFIXES = (
+    "anh ", "chi ", "em ", "ban ",
+    "co ", "chu ", "bac ", "ong ", "ba ",
+    # Additional kinship honorifics — pre-fix "chuyển dì Lan 200k" and
+    # "chuyển cậu Minh 200k" returned missing_recipient because the
+    # honorific stayed glued to the name and the resolver couldn't
+    # token-match "di lan" / "cau minh" against any display_name.
+    "di ",     # "dì Lan" (aunt — mother's side)
+    "cau ",    # "cậu Minh" (uncle — mother's side)
+    "thay ",   # "thầy <Name>" (teacher)
+)
 
 # Possessive / vocative tail tokens — "mẹ tôi" / "mẹ mình" /
-# "chị Lan ơi" / "anh Hùng nhé". None appear in any contact's display
-# name or alias list, so leaving them in defeats the exact-alias match
-# ("mẹ tôi" never hits the "mẹ" alias). Strip from the right.
+# "chị Lan ơi" / "anh Hùng nhé" / "bạn thân của tôi". None appear in
+# any contact's display name or alias list, so leaving them in
+# defeats the exact-alias match ("mẹ tôi" never hits the "mẹ" alias).
+# Strip from the right.
+#
+# "của" (possessive marker, "of") is a critical addition: pre-fix
+# "bạn thân của tôi" → strip only "toi" → "ban than cua" → no alias
+# match. Now "cua" is stripped too, and the chain pops down to
+# "ban than" which hits the alias. Same trap for "anh Tuấn của mình".
 _RELATIONAL_TAIL_TOKENS = {
     "toi", "minh", "em", "anh", "chi",
-    "oi", "nhe", "nha", "nhi",
+    "oi", "nhe", "nha", "nhi", "a",   # "mẹ ạ"
+    "cua",                             # possessive "của"
 }
 
 
@@ -52,98 +70,202 @@ def _strip_relational(folded: str) -> str:
     return " ".join(tokens)
 
 
+def _strip_tail_only(folded: str) -> str:
+    """Like ``_strip_relational`` but skips the prefix-strip step.
+
+    Critical for matching multi-word labels whose first token is a
+    relational word — e.g. "bạn thân của tôi" needs to land as
+    "ban than" (tail "cua toi" gone, prefix "ban " KEPT) to hit the
+    "Bạn thân" label on Vũ Quốc Bảo. The full strip used to chop "ban"
+    too and reduced the query to "than", which matched nothing.
+
+    Compound-noun guard: if the strip would collapse the surface to a
+    SINGLE token AND that token is itself a relational PREFIX word
+    (chu/anh/chi/em/ban/...), the original was almost certainly a
+    compound noun ("chủ nhà", "anh em", "chị em") and we should NOT
+    strip. Without this guard, ``_strip_tail_only("chu nha")`` returned
+    "chu" because "nha" is in the tail-token set (kept there for the
+    "mẹ nha" softener) — and "chu" then matched the "Chú" label on a
+    completely unrelated contact. User report: hỏi "chủ nhà" lại nhận
+    suggestion Phạm Văn Đạt (chú).
+    """
+    tokens = folded.split()
+    # Try the strip on a copy so we can revert if it produces a too-short
+    # compound-noun-looking result.
+    stripped = list(tokens)
+    while len(stripped) > 1 and stripped[-1] in _RELATIONAL_TAIL_TOKENS:
+        stripped.pop()
+    if (
+        len(stripped) == 1
+        and len(tokens) > 1
+        and (stripped[0] + " ") in _RELATIONAL_PREFIXES
+    ):
+        # Revert — original was a compound noun like "chủ nhà".
+        return " ".join(tokens)
+    tokens = stripped
+    return " ".join(tokens)
+
+
 def _last_token(folded_name: str) -> str:
     parts = folded_name.split()
     return parts[-1] if parts else folded_name
 
 
+_ALIAS_HEURISTIC_TOKENS = frozenset({
+    # Vietnamese kinship / role idioms — treated as alias kind when the
+    # LLM didn't classify. Tokens used STAND-ALONE OR with a single
+    # qualifier ("bạn thân", "anh hai"); a multi-word kinship-role
+    # phrase whose head token is here also routes to alias.
+    "me", "ba", "bo", "ny", "vo", "chong", "sep", "boss",
+    "ban", "anh", "chi", "em", "co", "chu", "bac", "ong", "ba",
+})
+
+
+def _looks_like_alias_kind(folded: str) -> bool:
+    """Heuristic for rule-fallback when LLM didn't tag recipient_kind.
+
+    True when the surface starts with a kinship/role token and is short
+    (≤ 3 tokens). Examples: 'bạn thân', 'anh hai', 'sếp', 'mẹ'. Rejects
+    'Nguyễn Văn Minh', 'Nam', 'Tuấn'.
+    """
+    tokens = folded.split()
+    if not tokens or len(tokens) > 3:
+        return False
+    return tokens[0] in _ALIAS_HEURISTIC_TOKENS
+
+
 def resolve_recipient(
-    surface: str, contacts: list[Contact]
+    surface: str,
+    contacts: list[Contact],
+    *,
+    kind: Optional[str] = None,
 ) -> list[ResolvedRecipient]:
+    """Resolve a recipient surface to candidate contacts.
+
+    ``kind`` (NEW) is the LLM's hint, one of "alias" | "name" | None:
+      - "alias": lookup ONLY in contact_aliases (exact fold match).
+      - "name":  lookup ONLY in display_name (exact + token-exact).
+      - None:    try alias first, then name. Drops the embedding
+                 fallback that was returning noise on cold queries
+                 like "bạn thân" or "grabfood".
+
+    The previous semantic-fallback returned arbitrary "similar" names
+    (5 garbage contacts on "cho Nam") — gone. Better to return 0 and
+    let the chat ask again than confidently pick the wrong person.
+    """
     if not surface:
         return []
     query = _fold(surface)
     query_stripped = _strip_relational(query)
+    # Tail-only variant — preserves relational PREFIXES so multi-word
+    # labels whose first token IS the relational word ("Bạn thân",
+    # "Bạn cấp 3", "Anh Hai") still match. Full strip would chop "bạn"
+    # off and leave only "than", which matches nothing.
+    query_tail = _strip_tail_only(query)
 
     matches: list[ResolvedRecipient] = []
 
-    # 0) Exact display-name match (highest precision short-circuit).
-    #    "Vũ Thị Hạnh" should resolve to that one contact even when no
-    #    alias exists for the full string. Without this, multi-token
-    #    full names fall through to RAG (step 5) and may surface a wide
-    #    set of semantically similar names — exactly the reported bug.
+    # When kind is explicitly "alias" (LLM-confirmed), DO NOT fall through
+    # to name lookups. User said "bạn thân" → if no alias matches, return
+    # []; the chat asks again rather than guessing a random name.
+    if kind == "alias":
+        return _lookup_in_aliases(query, query_stripped, query_tail, contacts)
+
+    if kind == "name":
+        return _lookup_in_names(query, query_stripped, contacts)
+
+    # kind is None — try alias-first, then name. No semantic fallback.
+    # The previous behaviour promoted alias-shaped surfaces ("cô Lan",
+    # "anh Minh") to a hard kind="alias" via _looks_like_alias_kind and
+    # blocked the name fall-through entirely. That made "cô Lan" return
+    # 0 even though stripping "cô" + token-matching "Lan" would have
+    # surfaced ambiguity between the two Lans in the user's book.
+    # Alias-first ordering still keeps "bạn thân" / "mẹ" routed correctly;
+    # the fall-through only kicks in when no alias matches, and name
+    # lookup is strict exact/token (no embedding noise).
+    matches = _lookup_in_aliases(query, query_stripped, query_tail, contacts)
+    if matches:
+        return matches
+    return _lookup_in_names(query, query_stripped, contacts)
+
+
+def _lookup_in_aliases(
+    query: str,
+    query_stripped: str,
+    query_tail: str,
+    contacts: list[Contact],
+) -> list[ResolvedRecipient]:
+    """Exact fold-match against any saved alias of any contact. Also
+    accepts the stripped form so "anh Tuấn" matches alias "Tuấn".
+
+    Also matches against ``contact.label`` (the kinship/relationship
+    chip displayed in the contacts UI: "Mẹ", "Bạn thân", "Sếp"...).
+    The seed data carries these on the contact row itself, not as
+    separate alias rows, so "bạn thân" was previously returning [].
+
+    Three query forms tried (in order, first match wins per contact):
+      • ``query``         — raw fold, no stripping
+      • ``query_stripped``— prefix + tail stripped ("anh Tuấn của tôi" → "Tuấn")
+      • ``query_tail``    — tail-stripped only ("bạn thân của tôi" → "ban than")
+    """
+    matches: list[ResolvedRecipient] = []
     for c in contacts:
-        if _fold(c.display_name) == query or _fold(c.display_name) == query_stripped:
+        matched = False
+        for alias in c.aliases:
+            folded = _fold(alias)
+            if folded == query or folded == query_stripped or folded == query_tail:
+                matches.append(
+                    ResolvedRecipient(
+                        contact=c, via_alias=alias, matched_from="alias",
+                    )
+                )
+                matched = True
+                break
+        if matched:
+            continue
+        # Fall through to label match — keeps the via_alias slot empty
+        # because the user typed a label, not a stored alias.
+        if c.label:
+            folded_label = _fold(c.label)
+            if (
+                folded_label == query
+                or folded_label == query_stripped
+                or folded_label == query_tail
+            ):
+                matches.append(
+                    ResolvedRecipient(
+                        contact=c, via_alias=c.label, matched_from="alias",
+                    )
+                )
+    return _dedupe(matches)
+
+
+def _lookup_in_names(
+    query: str, query_stripped: str, contacts: list[Contact]
+) -> list[ResolvedRecipient]:
+    """Match against display_name:
+      1. Full-name fold exact ("Nguyễn Văn Minh") → matched_from="exact"
+      2. Any TOKEN of display_name equals the query ("Minh" → multiple
+         contacts) → matched_from="name"
+    No prefix match, no embedding fallback — those returned noise.
+    """
+    matches: list[ResolvedRecipient] = []
+    # Stage 1: full-name exact
+    for c in contacts:
+        folded = _fold(c.display_name)
+        if folded == query or folded == query_stripped:
             matches.append(ResolvedRecipient(contact=c, matched_from="exact"))
     if matches:
         return _dedupe(matches)
 
-    # 1) Direct alias match (high precision)
+    # Stage 2: token-exact (any whole token of display_name == query)
     for c in contacts:
-        for alias in c.aliases:
-            if _fold(alias) == query or _fold(alias) == query_stripped:
-                matches.append(
-                    ResolvedRecipient(contact=c, via_alias=alias, matched_from="alias")
-                )
-                break
-    if matches:
-        return _dedupe(matches)
-
-    # 2) Last-name token equality on display name
-    #    e.g., "Minh" -> "Nguyễn Văn Minh" and "Trần Hoàng Minh"
-    for c in contacts:
-        folded_name = _fold(c.display_name)
-        if _last_token(folded_name) == query_stripped or query_stripped in folded_name.split():
-            matches.append(
-                ResolvedRecipient(contact=c, matched_from="name")
-            )
-    if matches:
-        return _dedupe(matches)
-
-    # 3) Token prefix match on display name (e.g. "Min" → "Minh")
-    #    Match must align to a word boundary so "anh" doesn't sneak into
-    #    "Hạnh" via raw substring.
-    for c in contacts:
-        for token in _fold(c.display_name).split():
-            if query_stripped and token.startswith(query_stripped):
-                matches.append(ResolvedRecipient(contact=c, matched_from="name"))
-                break
-    if matches:
-        return _dedupe(matches)
-
-    # 4) Whole-token match within an alias (e.g. "anh" matches alias
-    #    "anh tuấn" but not "hạnh" / "chị bích").
-    for c in contacts:
-        for alias in c.aliases:
-            if not query_stripped:
-                continue
-            alias_tokens = _fold(alias).split()
-            if query_stripped in alias_tokens:
-                matches.append(
-                    ResolvedRecipient(contact=c, via_alias=alias, matched_from="alias")
-                )
-                break
-    if matches:
-        return _dedupe(matches)
-
-    # 5) Semantic-ish fallback — only when every literal pass has failed.
-    #    Tries Gemini embeddings first (when the key has access); falls
-    #    through to a lexical token-overlap scorer that runs in pure
-    #    Python with no network. Both yield a list of candidates the
-    #    orchestrator can confirm or ambiguate.
-    #
-    #    GUARD: only run for descriptive queries (≥ 2 meaningful tokens).
-    #    Single-token misses ("ny", "boss" that the user hasn't saved as an
-    #    alias) are typos or unknown aliases — guessing is worse than
-    #    saying "I don't know who that is".
-    meaningful = [
-        t for t in query_stripped.split() if t and t not in _STOP_TOKENS
-    ]
-    if len(meaningful) < 2:
-        return []
-
-    rag = _embedding_match(surface, contacts) or _lexical_match(surface, contacts)
-    return _dedupe(rag)
+        tokens = _fold(c.display_name).split()
+        if query_stripped and query_stripped in tokens:
+            matches.append(ResolvedRecipient(contact=c, matched_from="name"))
+        elif query and query in tokens:
+            matches.append(ResolvedRecipient(contact=c, matched_from="name"))
+    return _dedupe(matches)
 
 
 # ---------------------------------------------------------------------------

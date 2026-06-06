@@ -133,9 +133,29 @@ def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
         return _goal_drafts.get(user_id)
 
 _CONFIRM_RE = re.compile(
-    # Plain confirmation tokens — must occur at message start.
-    r"^(?:xac nhan|xacnhan|ok|okay|oki|đồng ý|dong y|y|yes|confirm|duyệt|duyet|ừ|ừm|ư|um)\b"
+    # Plain confirmation tokens — must occur at message start. Expanded
+    # to include polite forms (dạ / vâng), informal acks (ờ / ờ ơ), and
+    # the slangy ok-variants judges actually type (okela / okie / oce).
+    r"^(?:xac nhan|xacnhan|ok|okay|oki|okie|okela|oce|okê|oke|"
+    r"đồng ý|dong y|y|yes|confirm|duyệt|duyet|"
+    r"ừ|ừm|ư|um|uh|ờ|ờm|"
+    r"dạ|da|vâng|vang|"
+    r"chuẩn|chuan|"
+    # Additional VN confirmations judges actually type:
+    # "tất nhiên" (of course), "chắc chắn" (definitely), bare "có"
+    # (yes). The bare "có" must be word-bounded so it doesn't match
+    # "có gì" / "có thể" (question/modal continuations).
+    r"tất nhiên|tat nhien|chắc chắn|chac chan)\b"
     r"|^xác nhận"
+    # Bare "có" alone — must not be followed by question / modal words
+    # ("có thể", "có gì", "có không", "có nên"). Bare "có" with
+    # optional punctuation is a confirm.
+    r"|^có(?!\s+(?:thể|the|gì|gi|nên|nen|không|khong|ko|sao|chuyện|chuyen|ai|cách|cach))\b"
+    # "đúng" / "phải" — "right/correct/yes" confirm, but NOT when
+    # followed by an action / question verb that would make the
+    # sentence a question. "đúng" / "phải làm gì" must NOT route to
+    # confirm.
+    r"|^(?:đúng|dung|phải|phai)(?!\s+(?:làm|lam|đi|di|về|ve|đến|den|nào|nao|gì|gi|không|khong|ko))\b"
     # "được" / "duoc" alone or with a continuation particle ("được rồi",
     # "được luôn", "được nha"). The plain word means "OK / fine" in
     # Vietnamese — judges use it constantly.
@@ -153,8 +173,29 @@ _CONFIRM_RE = re.compile(
 # the original list. ``khong`` already covered "không, …" via word-boundary;
 # the leading punctuation case ("không, huỷ đi") is matched too because
 # ``\b`` succeeds before the comma.
+#
+# CRITICAL guards (round 6): "không thay đổi gì cả" / "không có gì thay
+# đổi" mean "no change, proceed" — they were silently cancelling valid
+# draft confirms. "thôi cứ thế đi" / "thôi vậy đi" mean "just go with
+# it" — same trap. Negative lookahead blocks these phrases from the
+# cancel routing while keeping bare "không" / "thôi" as cancel.
 _CANCEL_RE = re.compile(
-    r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo|thôi|thoi|đừng|dung|khoan)\b",
+    r"^(?:"
+    r"huỷ|huy|cancel|hủy|no|stop|bỏ|bo|đừng|dung|khoan|"
+    # "không" — cancel UNLESS followed by "thay đổi" / "có gì" / "vấn đề" /
+    # "ổn" / "sao" / "phải" / "ai" / "việc gì" → those are reassurances,
+    # not cancellations. ALSO: "không, X" where X is anything that
+    # ISN'T itself a cancel word ("không, bố" / "không, 5tr cho mẹ") is
+    # a CORRECTION not a cancel — negative lookahead blocks the cancel
+    # match so the pivot routes via slot-fill. But "không, huỷ đi" /
+    # "không, bỏ" still cancel because the follow-up IS a cancel word.
+    r"không(?!\s*,\s*(?!huỷ|huy|hủy|cancel|bỏ|bo|đừng|dung|thôi|thoi|stop)\S)(?!\s+(?:thay\s+đổi|thay\s+doi|có\s+gì|co\s+gi|vấn\s+đề|van\s+de|ổn|on|sao|phải|phai|ai|việc\s+gì|viec\s+gi))|"
+    r"khong(?!\s*,\s*(?!huy|huỷ|hủy|cancel|bỏ|bo|đừng|dung|thôi|thoi|stop)\S)(?!\s+(?:thay\s+doi|co\s+gi|van\s+de|on|sao|phai|ai|viec\s+gi))|"
+    # "thôi" — cancel UNLESS followed by "cứ thế" / "vậy đi" / "ok" /
+    # "thế" → those mean "just go with it", not cancel.
+    r"thôi(?!\s+(?:cứ|cu|vậy|vay|thế|the|ok|được|duoc))|"
+    r"thoi(?!\s+(?:cu|vay|the|ok|duoc))"
+    r")\b",
     re.IGNORECASE,
 )
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
@@ -319,16 +360,49 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     return "this_month"
 
 
-def handle_message(
-    user_id: str, text: str, session_id: Optional[str] = None
-) -> OmniResponse:
+from collections import OrderedDict as _OrderedDict
+_USER_LOCKS_MAX = 2048
+_user_locks: "_OrderedDict[str, _th.Lock]" = _OrderedDict()
+_user_locks_lock = _th.Lock()
+
+
+def _user_lock(user_id: str) -> "_th.Lock":
+    """Per-user mutex for the chat turn — serialises read-modify-write of
+    the session draft so two rapid-fire requests from the same user
+    can't race. Round-9 stress reproduced wrong-recipient + wrong-amount
+    OTP prompts when /api/chat fired ~250ms apart: request A wrote a
+    draft, request B's NLU classify hit before A's draft write landed,
+    and B picked up a stale draft from a prior turn.
+
+    Backed by an ``OrderedDict`` LRU bounded at ``_USER_LOCKS_MAX`` so
+    the process doesn't accumulate one lock per unique user_id
+    forever. Eviction risk: a tx-in-flight user whose lock is evicted
+    would race the next turn — but the eviction policy LRU-touches the
+    user on every access, so any user with current activity stays in
+    the front. Only stale users get evicted.
+    """
+    with _user_locks_lock:
+        lock = _user_locks.get(user_id)
+        if lock is None:
+            lock = _th.Lock()
+            _user_locks[user_id] = lock
+            if len(_user_locks) > _USER_LOCKS_MAX:
+                _user_locks.popitem(last=False)
+        else:
+            # Touch — move to back so this user stays "fresh" for the LRU.
+            _user_locks.move_to_end(user_id)
+        return lock
+
+
+def handle_message(user_id: str, text: str) -> OmniResponse:
     overall_t0 = time.perf_counter()
     # Capture the intent label even when the inner call raises — Prometheus
     # otherwise loses count of error-path latency. ``"error"`` is the
     # sentinel used for both unexpected exceptions and missing intents.
     intent_label = "error"
     try:
-        resp = _handle_message_inner(user_id, text, session_id)
+        with _user_lock(user_id):
+            resp = _handle_message_inner(user_id, text)
         intent_label = resp.intent or "unknown"
     finally:
         # Best-effort metric recording. The try/except inside .inc()/.observe()
@@ -499,11 +573,84 @@ def _handle_message_inner(
     except Exception:
         pass
 
-    # Follow-up modify path: there's an active draft and the user is still
-    # talking about transfer — treat as an edit, not a brand-new transaction.
+    # CRITICAL OTP-LOCK guard. When the draft is awaiting OTP, the only
+    # legitimate text turns are: numeric OTP code, cancel ("huỷ"), or
+    # confirm-repeat ("xác nhận lại"). A round-9 stress reproduced an
+    # exploit: after "chuyển mẹ 50tr → ok" (awaiting_otp=True), typing
+    # "bố" silently swapped the recipient to Lê Văn Hùng while keeping
+    # awaiting_otp=True and the same draft_id — user's OTP went toward
+    # a transfer to bố instead of mẹ. Closes by refusing ANY modify-
+    # path mutation on an awaiting-OTP draft; the user is told to
+    # cancel and restart if they want a different recipient/amount.
     if (
         session.current_draft is not None
-        and nlu.intent == "transfer"
+        and session.current_draft.awaiting_otp
+        and _OTP_RE.match(text) is None
+        and not _is_confirm(text)
+        and not _is_cancel(text)
+    ):
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                "Giao dịch đang chờ xác minh OTP. Bạn nhập mã OTP để hoàn tất, "
+                "hoặc gõ \"huỷ\" để bắt đầu lại nếu muốn đổi người nhận / số tiền."
+            ),
+            draft=session.current_draft,
+        )
+
+    # Fresh-transfer guard: if the user types a NEW verb-led command
+    # AND provides BOTH the recipient and the amount, treat it as a
+    # truly fresh request and wipe the previous draft. Pre-fix, the
+    # wipe fired on any "chuyển …" prefix, so the user editing one
+    # slot mid-flow ("chuyển cho Y" while draft sits at (X, 1tr)) lost
+    # the other slot (amount evaporated to None) — the bug reported by
+    # the user as "cứ đổi người là quên mất số tiền".
+    #
+    # Single-slot updates now fall through to ``_looks_like_modification``
+    # below, which mutates the existing draft in place. The original
+    # bug this guard was added for (stale 2tr leaking after a finished
+    # turn) only manifests when the previous turn never confirmed nor
+    # cancelled — covered separately by the missing_recipient flag the
+    # safety layer raises on the modified draft.
+    e = nlu.entities
+    provides_both_slots = e.amount is not None and bool(e.recipient_text)
+    prev_draft_complete = (
+        session.current_draft is not None
+        and session.current_draft.recipient is not None
+        and session.current_draft.amount is not None
+    )
+    # Wipe on a fresh verb-led command in either of two cases:
+    #   1. The new message provides BOTH recipient and amount — truly
+    #      a brand-new request, anything carried over from the prior
+    #      draft would be a stale leak.
+    #   2. The previous draft was incomplete (missing recipient OR
+    #      missing amount). The user is restarting after an unfinished
+    #      slot-prompt — e.g. "chuyển 2tr" (no recipient) then "chuyển
+    #      tiền cho t". Inheriting the abandoned 2tr would surface as
+    #      "Bạn muốn chuyển 2tr cho t?" which the user never asked for.
+    #
+    # Otherwise (single-slot edit on a complete previous draft) fall
+    # through to the modify path — the user is swapping one slot and
+    # expects the other to carry over. That's the "đổi người là quên
+    # mất số tiền" scenario from user feedback.
+    if (
+        session.current_draft is not None
+        and _looks_like_fresh_transfer_command(text)
+        and (provides_both_slots or not prev_draft_complete)
+    ):
+        session.clear_draft()
+
+    # Follow-up modify path: there's an active draft and the user is
+    # editing one of the slots (amount / recipient / description).
+    # CRITICAL: don't gate on nlu.intent == "transfer" — judges saying
+    # "nội dung là tiền học cho em" against an existing draft get
+    # nlu.intent="unknown" because the description anchor is the only
+    # signal. Without this broadening they fell to the guess-correction
+    # page mid-flow. _looks_like_modification still gates so non-edit
+    # messages don't accidentally route here.
+    if (
+        session.current_draft is not None
+        and nlu.intent in ("transfer", "unknown", "smalltalk")
         and _looks_like_modification(nlu, session.current_draft)
     ):
         resp = _modify_transfer_draft(user_id, session.current_draft, nlu)
@@ -511,17 +658,22 @@ def _handle_message_inner(
         session.append("omni", resp.text)
         return resp
 
-    # Missing-slot fill: when the assistant just asked "Bạn muốn chuyển X
-    # cho ai?" and the user types a short bare name as the next turn
-    # ("Nam"), the rule classifier sees a single token / no verb / no
-    # digit → intent=unknown → user gets "Mình chưa rõ ý bạn". Slot-fill
-    # that: if there's an active draft missing the recipient AND the
-    # message looks like a bare name (short, no command keywords), feed
-    # it into _modify_transfer_draft with recipient_text=text so the
-    # resolver can take a shot.
+    # Missing-slot fill OR mid-draft recipient swap: when the assistant
+    # just asked "Bạn muốn chuyển X cho ai?" and the user types a short
+    # bare name as the next turn ("Nam"), the rule classifier sees a
+    # single token / no verb / no digit → intent=unknown → user gets
+    # "Mình chưa rõ ý bạn". Slot-fill that.
+    #
+    # Also fires when the draft DOES have a recipient already but the
+    # user types a different bare name — the resolver had matched the
+    # user's original surface to an unintended contact (e.g. user typed
+    # "abc" → matched seed "Công ty ABC" → confirm card shows ABC) and
+    # the user is now naming the real recipient. Without this branch,
+    # the bare "Nam" reply fell through to NLU and got "chưa rõ ý"
+    # despite an active draft sitting in session — visible
+    # "không giữ ngữ cảnh" UX bug.
     if (
         session.current_draft is not None
-        and session.current_draft.recipient is None
         and nlu.intent in ("unknown", "transfer", "smalltalk")
         and _looks_like_bare_recipient(text)
     ):
@@ -534,12 +686,43 @@ def _handle_message_inner(
         # contacts. _strip_relational handles family prefixes
         # (anh/chị/em/…); these are pure money-flow words.
         import re as _re
+        recipient_surface = text
+        # Strip leading interjections / fillers / hesitation markers in
+        # a loop until no more change — user pivots stack: "à mà bố" /
+        # "ờ nhầm bố" / "à không bố" all share this shape. Without the
+        # loop a single sub stops after the first match and the
+        # resolver sees "mà bố" → 0 → recipient erased on PR #24 swap.
+        # "không" / "khong" is a leading discourse particle here only —
+        # the bare "không" cancel case was already caught by _is_cancel
+        # in the continuation path above; if we reach the slot-fill
+        # branch with "không, X" / "à không X", "không" is a negation
+        # prefix to the correction ("no, [I meant] X"), not a cancel.
+        _LEADING_FILLER_RE = _re.compile(
+            r"^\s*(?:à|ờ|ơ|nhầm|nham|mà|ma|ờm|umm?|không|khong)\b[\s,.!]*",
+            _re.IGNORECASE,
+        )
+        for _ in range(5):  # bounded to avoid pathological inputs
+            new = _LEADING_FILLER_RE.sub("", recipient_surface).lstrip()
+            if new == recipient_surface:
+                break
+            recipient_surface = new
+        # Strip leading money-flow prepositions / verbs.
         recipient_surface = _re.sub(
-            r"^\s*(?:cho|tới|toi|đến|den|gửi|gui|sang|qua)\s+",
+            r"^\s*(?:cho|tới|toi|đến|den|gửi|gui|sang|qua|đổi\s+sang|doi\s+sang)\s+",
             "",
-            text,
+            recipient_surface,
             flags=_re.IGNORECASE,
-        ).strip()
+        )
+        # Strip trailing softener / commit particles. User says
+        # "bố thôi" / "bố nhé" / "bố ạ" / "bố chứ" — the trailing token
+        # is not part of the name. Same for "bố đi" / "bố nha".
+        recipient_surface = _re.sub(
+            r"\s+(?:thôi|thoi|nhé|nhe|nha|nhi|ạ|a|chứ|chu|đi|di|đó|do|ơi|oi)\s*[!.?]*\s*$",
+            "",
+            recipient_surface,
+            flags=_re.IGNORECASE,
+        )
+        recipient_surface = recipient_surface.strip(" ,.;-?!\"'“”‘’:")
         # If stripping took everything (user typed just "cho"), fall back
         # to the original — we'd rather show a clarification than silently
         # turn it into a name lookup of empty string.
@@ -644,6 +827,15 @@ def _dispatch_intent(
     if nlu.intent == "atm_finder":
         return _handle_atm_finder(user_id, nlu)
 
+    if nlu.intent == "my_account":
+        return _handle_my_account(user_id)
+
+    if nlu.intent == "receive_qr":
+        return _handle_receive_qr(user_id, nlu)
+
+    if nlu.intent == "recap":
+        return _handle_recap(user_id)
+
     if nlu.intent == "smalltalk":
         # Pick the fallback line by the type of smalltalk the user wrote
         # — judges who say "cảm ơn" deserve a "không có chi" not a
@@ -702,6 +894,38 @@ _BARE_RECIPIENT_COMMANDS = {
 }
 
 
+_FRESH_TRANSFER_VERB_RE = re.compile(
+    r"^\s*(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|"
+    r"thanh\s+toán|thanh\s+toan|send|transfer)\s+",
+    re.IGNORECASE,
+)
+_MODIFY_VERB_RE = re.compile(
+    # Words that signal "edit the current draft, don't start a new one".
+    # Includes: đổi/sửa/thành/sang for amount-or-recipient edits, and
+    # cộng/thêm/giảm/bớt/tăng for additive amount tweaks.
+    r"^\s*(?:đổi|doi|sửa|sua|thay\s+đổi|thay\s+doi|"
+    r"thành|thanh\b|sang\b|"
+    r"cộng|cong|thêm|them|giảm|giam|bớt|bot|tăng|tang)\s+",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_fresh_transfer_command(text: str) -> bool:
+    """Does the message start with a fresh verb-led transfer command?
+
+    Used to decide whether to wipe the previous draft's amount /
+    recipient before the modify path runs. "chuyển tiền cho t" /
+    "gửi 500k cho ai đó" / "trả 200k mẹ" are fresh — they shouldn't
+    inherit the previous draft's amount.
+
+    "đổi sang 5tr" / "cộng thêm 500k" are NOT fresh — those are
+    explicit edits on the existing draft.
+    """
+    if _MODIFY_VERB_RE.search(text):
+        return False
+    return bool(_FRESH_TRANSFER_VERB_RE.search(text))
+
+
 def _looks_like_bare_recipient(text: str) -> bool:
     """Heuristic: is the user's short reply a recipient name rather than
     a command? Used only when an active draft is waiting for a recipient.
@@ -709,9 +933,15 @@ def _looks_like_bare_recipient(text: str) -> bool:
     Conservative — we'd rather miss a recipient hint and ask again than
     treat "ok" or "huỷ" as someone's name. Rejects:
       - longer than 30 chars (commands stay short; long → free-text)
-      - contains a digit (probably an amount or OTP)
+      - matches an amount span ("100k", "2tr", "1tr5") — the user is
+        editing the amount, not naming the recipient
+      - all-digit short input (probably an OTP / amount)
       - matches a known command word after diacritic-fold
       - empty / whitespace-only
+
+    Bare digits inside a label ("bạn cấp 3", "lớp 12") are KEPT — the
+    pre-fix rejected the whole message because of the "3" and slot-fill
+    never fired for these labels.
     """
     import re as _re
     import unicodedata as _u
@@ -719,7 +949,19 @@ def _looks_like_bare_recipient(text: str) -> bool:
     s = text.strip()
     if not s or len(s) > 30:
         return False
-    if _re.search(r"\d", s):
+    # Amount-shape rejection — digit followed by VN money unit. Plain
+    # digits without unit (a label like "Khoá 5" / "bạn cấp 3") are
+    # NOT amounts and stay eligible as recipient surfaces.
+    if _re.search(
+        r"\d+\s*(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|"
+        r"tỷ|ty|tỉ|ti|đ|vnd|dong|đồng)\b",
+        s,
+        flags=_re.IGNORECASE,
+    ):
+        return False
+    # All-digit short input is almost certainly an OTP or a typed
+    # amount, not a name. Reject so it doesn't slot-fill.
+    if _re.fullmatch(r"\s*\d{1,6}\s*", s):
         return False
     folded = "".join(
         c for c in _u.normalize("NFKD", s.lower())
@@ -834,9 +1076,13 @@ def _modify_transfer_draft(
         cat, conf = categorize_description(e.description)
         draft.category = cat if (cat != "other" and conf >= 0.5) else None
 
+    # ``eval_candidates`` (resolved, >1) lets the safety engine raise
+    # ``ambiguous_recipient`` (with the disambig list) instead of a
+    # dead-end ``missing_recipient`` — from origin/main's slot-fill fix.
     recipient_changed = False
+    eval_candidates: list = []
     if e.recipient_text:
-        candidates = resolve_recipient(e.recipient_text, contacts)
+        candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         # Does the raw message actually name a recipient ("cho / tới / gửi /
         # đến <X>")? This separates a real recipient change from the rule
         # extractor hallucinating one out of filler/verbs during an
@@ -860,15 +1106,24 @@ def _modify_transfer_draft(
             )
             draft.recipient = new_recipient
             draft.candidates = []
-        elif named_explicitly:
-            # User explicitly named someone, but it's ambiguous (>1) or
-            # unknown (0). Surface that — don't keep the old recipient with
-            # the new amount (money-touching: "cho Bố" → "cho bạn thân").
+        elif len(candidates) > 1:
+            # Ambiguous — ALWAYS surface the candidate list (even a bare-name
+            # slot-fill "Minh" with no "cho" marker), so the safety engine
+            # raises ``ambiguous_recipient`` with the disambiguation choices
+            # instead of a dead-end "cho ai?". (origin/main slot-fill fix.)
             recipient_changed = True
             draft.recipient = None
             draft.candidates = [c.contact for c in candidates]
-        # else: no naming marker + not a clean match → treat as amount-only
-        # edit and PRESERVE the existing recipient.
+            eval_candidates = candidates
+        elif named_explicitly:
+            # User explicitly named someone (cho/gửi/…) but nobody resolved.
+            # Don't keep the old recipient with the new amount (money-touching:
+            # "cho Bố" → "cho bạn thân") — clear so the engine asks for clarity.
+            recipient_changed = True
+            draft.recipient = None
+            draft.candidates = []
+        # else: no naming marker + no clean match → likely an amount-only edit
+        # where the extractor hallucinated a name → PRESERVE existing recipient.
 
     # Remember the WHOLE transaction. Changing only the recipient must KEEP
     # the amount the user already set — "chuyển cho mẹ 1tr" → "à thôi chuyển
@@ -890,19 +1145,25 @@ def _modify_transfer_draft(
                 draft.amount_prediction_reason = prediction.get("rationale")
                 draft.amount_prediction_confidence = prediction.get("confidence")
 
-    return _finalize_transfer_draft(user_id, draft, txs, account)
+    return _finalize_transfer_draft(user_id, draft, txs, account, eval_candidates)
 
 
 def _finalize_transfer_draft(
-    user_id: str, draft: TransactionDraft, txs, account
+    user_id: str,
+    draft: TransactionDraft,
+    txs,
+    account,
+    eval_candidates: Optional[list] = None,
 ) -> OmniResponse:
     """Re-run safety on a mutated draft, refresh the mini-ledger, persist it
     and compose the reply. Shared by the rule-based modify path and the
     LLM-driven draft-action path so both go through the SAME deterministic
-    safety gate (anomaly / balance / step-up)."""
+    safety gate (anomaly / balance / step-up). ``eval_candidates`` (resolved
+    candidates when the recipient is ambiguous) lets the engine raise
+    ``ambiguous_recipient`` with the disambiguation list."""
     draft.flags = evaluate(
         amount=draft.amount,
-        recipient_candidates=[],
+        recipient_candidates=eval_candidates or [],
         recipient=draft.recipient,
         transactions=txs,
         account=account,
@@ -964,6 +1225,188 @@ def _handle_atm_finder(user_id: str, nlu: NLUResult) -> OmniResponse:
     return OmniResponse(intent="atm_finder", text=text, atms=preview)
 
 
+def _handle_my_account(user_id: str) -> OmniResponse:
+    """Show the user's own bank accounts so they can share for inbound
+    transfers. Read-only — no money movement, no draft."""
+    store = get_store()
+    user = store.get_user(user_id)
+    primary = next((a for a in user.accounts if a.primary), user.accounts[0] if user.accounts else None)
+    if primary is None:
+        return OmniResponse(
+            intent="my_account",
+            text="Bạn chưa có tài khoản nào trong Omni. Liên kết tài khoản trước nhé.",
+        )
+    accounts = [
+        {
+            "id": a.id,
+            "bank": a.bank,
+            "number": a.number,
+            "masked": f"****{a.number[-4:]}",
+            "holder_name": user.display_name,
+            "primary": a.primary,
+        }
+        for a in user.accounts
+    ]
+    # Compose a friendly text summary so screen-reader / replay paths
+    # still get the info even without the my_accounts card.
+    primary_line = (
+        f"Tài khoản chính của bạn: {primary.bank} · {primary.number} "
+        f"(chủ: {user.display_name})."
+    )
+    if len(user.accounts) > 1:
+        extra = ", ".join(
+            f"{a.bank} {a.number[-4:]}"
+            for a in user.accounts
+            if not a.primary
+        )
+        primary_line += f" Tài khoản khác: {extra}."
+    return OmniResponse(
+        intent="my_account",
+        text=primary_line,
+        my_accounts=accounts,
+    )
+
+
+def _handle_receive_qr(user_id: str, nlu: NLUResult) -> OmniResponse:
+    """Generate a VietQR-style payload for the user's primary account.
+
+    Optional amount / description from the NLU result get baked into the
+    QR so the sender's banking app pre-fills both fields after the scan.
+    """
+    from ..banking.qr import encode_payload, generate_payment_qr
+
+    store = get_store()
+    user = store.get_user(user_id)
+    primary = next((a for a in user.accounts if a.primary), user.accounts[0] if user.accounts else None)
+    if primary is None:
+        return OmniResponse(
+            intent="receive_qr",
+            text="Bạn chưa có tài khoản nào để tạo QR. Liên kết tài khoản trước nhé.",
+        )
+    e = nlu.entities
+    amount = e.amount
+    desc = (e.description or "").strip() or None
+    payload = encode_payload(
+        bank=primary.bank,
+        account_number=primary.number,
+        amount=amount,
+        message=desc,
+    )
+    png_b64 = generate_payment_qr(
+        bank=primary.bank,
+        account=primary.number,
+        amount=amount,
+        message=desc,
+    )
+    amount_line = (
+        f" số tiền {format_vnd(amount)}." if amount else "."
+    )
+    desc_line = f" Nội dung: {desc}." if desc else ""
+    text = (
+        f"Đây là QR nhận tiền của bạn — quét bằng app ngân hàng để chuyển vào "
+        f"{primary.bank} · {primary.number} (chủ {user.display_name}){amount_line}"
+        f"{desc_line}"
+    )
+    return OmniResponse(
+        intent="receive_qr",
+        text=text,
+        receive_qr={
+            "bank": primary.bank,
+            "account": primary.number,
+            "holder_name": user.display_name,
+            "amount": amount,
+            "description": desc,
+            "payload": payload,
+            "png_base64": png_b64,
+        },
+    )
+
+
+def _handle_recap(user_id: str) -> OmniResponse:
+    """Surface the user's CURRENT session state so questions like
+    "tôi vừa nói gì" / "lúc nãy số tiền bao nhiêu" / "đang chuyển cho
+    ai" stop falling through to the generic history fallback.
+
+    Priority:
+      1. An active TRANSFER draft → describe its slots verbatim (amount,
+         recipient, description if set).
+      2. An active SCHEDULE / CONTACT / BUDGET / GOAL draft → describe it.
+      3. The most recent COMPLETED transaction in the last 24h → summarise.
+      4. Nothing relevant → polite "không có giao dịch nào đang chờ".
+    """
+    session = session_for(user_id)
+    draft = session.current_draft
+    if draft is not None:
+        # Build a deterministic Vietnamese recap of the active draft.
+        parts: list[str] = ["Bạn đang chuẩn bị giao dịch:"]
+        if draft.amount is not None:
+            parts.append(f"• Số tiền: {format_vnd(draft.amount)}")
+        else:
+            parts.append("• Số tiền: chưa rõ")
+        if draft.recipient is not None:
+            parts.append(
+                f"• Người nhận: {draft.recipient.display_name} "
+                f"({draft.recipient.bank})"
+            )
+        elif draft.candidates:
+            names = ", ".join(c.display_name for c in draft.candidates[:3])
+            parts.append(f"• Người nhận: chọn 1 trong {names}")
+        else:
+            parts.append("• Người nhận: chưa rõ")
+        if draft.description:
+            parts.append(f"• Nội dung: {draft.description}")
+        if draft.awaiting_otp:
+            parts.append("• Trạng thái: đang chờ OTP")
+        text = "\n".join(parts)
+        return OmniResponse(intent="recap", text=text, draft=draft)
+
+    sched = session.current_schedule_draft
+    if sched is not None:
+        text = (
+            f"Bạn đang đặt lịch chuyển {format_vnd(sched.amount)} cho "
+            f"{sched.recipient.display_name} — {sched.cron_label}."
+        )
+        return OmniResponse(intent="recap", text=text, schedule_draft=sched)
+
+    contact = session.current_contact_draft
+    if contact is not None:
+        return OmniResponse(
+            intent="recap",
+            text=(
+                f"Bạn đang lưu danh bạ: {contact.display_name} · "
+                f"{contact.bank} · STK {contact.account_number}."
+            ),
+            contact_draft=contact,
+        )
+
+    # No active draft — show the most recent completed transfer (last 24h).
+    txs = get_store().transactions_of(user_id, status="completed")
+    if txs:
+        last = max(txs, key=lambda t: t.created_at)
+        from datetime import timedelta as _td
+
+        if now() - last.created_at <= _td(hours=24):
+            contact_obj = get_store().get_contact(last.contact_id)
+            who = contact_obj.display_name if contact_obj else "—"
+            return OmniResponse(
+                intent="recap",
+                text=(
+                    f"Giao dịch gần nhất: đã chuyển {format_vnd(last.amount)} "
+                    f"cho {who} lúc "
+                    f"{last.created_at.strftime('%H:%M %d/%m')}. "
+                    f"Bạn cần làm gì tiếp?"
+                ),
+            )
+
+    return OmniResponse(
+        intent="recap",
+        text=(
+            "Hiện chưa có giao dịch nào đang chờ. "
+            "Bạn gõ 'chuyển cho mẹ 2 triệu' để bắt đầu nhé."
+        ),
+    )
+
+
 def _handle_balance(
     user_id: str, user_text: str = "", history_msgs: Optional[list[dict]] = None
 ) -> OmniResponse:
@@ -1011,7 +1454,7 @@ def _handle_recurring(
 
     e = nlu.entities
     if e.recipient_text:
-        candidates = resolve_recipient(e.recipient_text, contacts)
+        candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         wanted = {c.contact.id for c in candidates}
         if wanted:
             patterns = [p for p in patterns if p.contact_id in wanted]
@@ -1097,7 +1540,7 @@ def _handle_history(
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
     if e.recipient_text:
-        candidates = resolve_recipient(e.recipient_text, contacts)
+        candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         if len(candidates) == 1:
             contact_id = candidates[0].contact.id
             contact_name = candidates[0].contact.display_name
@@ -1303,7 +1746,7 @@ def _handle_schedule(user_id: str, nlu: NLUResult) -> OmniResponse:
             ),
         )
 
-    candidates = resolve_recipient(e.recipient_text, contacts)
+    candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
     if len(candidates) != 1:
         return OmniResponse(
             intent="schedule",
@@ -1848,7 +2291,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     e = nlu.entities
 
     candidates = (
-        resolve_recipient(e.recipient_text, contacts) if e.recipient_text else []
+        resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind) if e.recipient_text else []
     )
     if e.account_hint:
         candidates = filter_by_account_hint(candidates, e.account_hint)
@@ -1888,16 +2331,33 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             if chosen is None and not candidates:
                 chosen = store.get_contact(referenced_tx.contact_id)
 
-    # Smart amount SUGGESTION: when the user named a recipient but no
-    # amount, look at their history and OFFER the most likely figure — but
-    # do NOT apply it to ``amount``. ``amount`` stays None so ``evaluate``
-    # still raises ``missing_amount`` and the reply asks "bao nhiêu". The
-    # figure rides along as ``suggested_amount`` → the UI shows a tappable
-    # chip and only the user's tap commits it. (Previously this auto-filled
-    # the amount, which read as the assistant deciding a sum the user never
-    # stated — the product owner asked for offer-don't-decide.)
+    # Sanity check on user-supplied amount. Zero and negatives are
+    # nonsense in a transfer context. Critically, DON'T let the
+    # predictor below "fix" them — silently swapping a user's "0đ" or
+    # "-5tr" for a median-from-history while the user typed an
+    # explicit (if absurd) number is the worst UX the stress test
+    # found (predictor wrote 750k over user-typed 100M). Clear the
+    # amount AND flag it as user-invalid so the predictor branch skips
+    # and the safety engine raises ``missing_amount`` for clarification.
+    user_invalid_amount = False
+    if amount is not None and amount <= 0:
+        amount = None
+        user_invalid_amount = True
+    # The amount-parser regexes don't include a sign, so "-5tr" parses
+    # to 5_000_000 with no marker. Detect a leading minus in the raw
+    # message and reject that too.
+    if amount is not None and re.search(r"-\s*\d", nlu.raw_text):
+        amount = None
+        user_invalid_amount = True
+
+    # Smart amount SUGGESTION: when the user named a recipient but no amount,
+    # OFFER the most likely figure via ``suggested_amount`` (a tappable chip)
+    # — but do NOT apply it to ``amount`` (stays None → ``evaluate`` raises
+    # ``missing_amount`` → asks "bao nhiêu"; only the user's tap commits it).
+    # Offer-don't-decide. ``user_invalid_amount`` skips the offer for a
+    # nonsense typed amount (0 / negative) so the user is told it's invalid.
     prediction: Optional[dict] = None
-    if amount is None and chosen is not None:
+    if amount is None and not user_invalid_amount and chosen is not None:
         prediction = predict_amount(user_id, chosen.id)
 
     # Auto-categorise BEFORE evaluate() so the safety layer can check
@@ -2649,6 +3109,19 @@ def confirm_draft(
     # code stops immediately instead of making the user complete a face scan.
     if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is not None:
         if not otp.strip() or otp.strip() != "123456":
+            draft.otp_attempts += 1
+            session.set_draft(draft)
+            if draft.otp_attempts >= 5:
+                session.clear_draft()
+                text = "Xác minh OTP thất bại. Bạn đã nhập sai OTP quá 5 lần, giao dịch đã được huỷ để bảo vệ tài khoản."
+                session.append("user", "Xác minh OTP")
+                session.append("omni", text)
+                try:
+                    from .audit_log import record_otp
+                    record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+                except Exception:  # pragma: no cover
+                    pass
+                return OmniResponse(intent="transfer", text=text)
             text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
             session.append("user", "Xác minh OTP")
             session.append("omni", text)
@@ -2664,6 +3137,7 @@ def confirm_draft(
         except Exception:  # pragma: no cover
             pass
         draft.auth_completed.append("otp")
+        draft.otp_attempts = 0
         session.set_draft(draft)
 
     # --- Biometric (8D face scan) ---
@@ -2708,6 +3182,19 @@ def confirm_draft(
         and otp
         and otp.strip() != "123456"
     ):
+        draft.otp_attempts += 1
+        session.set_draft(draft)
+        if draft.otp_attempts >= 5:
+            session.clear_draft()
+            text = "Xác minh OTP thất bại. Bạn đã nhập sai OTP quá 5 lần, giao dịch đã được huỷ để bảo vệ tài khoản."
+            session.append("user", "Xác minh OTP")
+            session.append("omni", text)
+            try:
+                from .audit_log import record_otp
+                record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+            except Exception:  # pragma: no cover
+                pass
+            return OmniResponse(intent="transfer", text=text)
         text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
         session.append("user", "Xác minh OTP")
         session.append("omni", text)
@@ -2727,6 +3214,7 @@ def confirm_draft(
         except Exception:  # pragma: no cover
             pass
         draft.auth_completed.append("otp")
+        draft.otp_attempts = 0
 
     # --- Any required method still outstanding? ---
     missing_auth = [m for m in draft.auth_required if m not in draft.auth_completed]

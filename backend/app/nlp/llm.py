@@ -30,6 +30,42 @@ from .redactor import redact
 log = logging.getLogger("omni.nlu.llm")
 
 
+# Lazy reorder: when a provider returns 429, push it to the END of the
+# pool for ``_DEPRIORITY_BACKOFF_SECONDS``. The next ``_enabled_providers()``
+# build will partition active-first then backoff-last so the next chat
+# turn doesn't pay the latency of walking every dead key before reaching
+# a live one. Effect on the user: when 37 Groq keys are all daily-limited,
+# the SECOND request hits Gemini in ~50ms instead of ~1.5s of 429 walks.
+import threading as _thr_lazy
+_PROVIDER_PRIORITY_LOCK = _thr_lazy.Lock()
+_DEPRIORITIZED_UNTIL: dict[str, float] = {}
+_DEPRIORITY_BACKOFF_SECONDS = 5 * 60  # try the deprioritized provider again after 5 min
+
+
+def _mark_provider_rate_limited(name: str) -> None:
+    """Push a provider to the end of the pool for ~5 min."""
+    with _PROVIDER_PRIORITY_LOCK:
+        _DEPRIORITIZED_UNTIL[name] = time.time() + _DEPRIORITY_BACKOFF_SECONDS
+
+
+def _is_deprioritized(name: str, now: Optional[float] = None) -> bool:
+    """Is this provider currently in the backoff bucket?
+
+    Auto-clears stale entries whose backoff window has expired so the
+    dict doesn't grow forever and the provider rejoins the active pool
+    naturally on the next call.
+    """
+    until = _DEPRIORITIZED_UNTIL.get(name)
+    if until is None:
+        return False
+    cur = now if now is not None else time.time()
+    if cur >= until:
+        with _PROVIDER_PRIORITY_LOCK:
+            _DEPRIORITIZED_UNTIL.pop(name, None)
+        return False
+    return True
+
+
 @dataclass
 class _Provider:
     name: str
@@ -124,6 +160,21 @@ def _enabled_providers() -> list[_Provider]:
                 s.groq_model,
             )
         )
+    # Anthropic / Claude — sits AFTER Groq (Groq is the fastest free
+    # provider in the pool) and BEFORE Gemini. Uses Anthropic's
+    # OpenAI-compatible endpoint so the existing ``_openai_compat`` call
+    # path works without changes. Same numbered-pool collector so users
+    # can spread quota across multiple keys.
+    anthropic_keys = _collect_keys("ANTHROPIC_API_KEY", s.anthropic_api_key)
+    for i, key in enumerate(anthropic_keys):
+        out.append(
+            _Provider(
+                f"anthropic#{i + 1}" if len(anthropic_keys) > 1 else "anthropic",
+                "https://api.anthropic.com/v1/chat/completions",
+                key,
+                s.anthropic_model,
+            )
+        )
     gemini_keys = _collect_keys("GEMINI_API_KEY", s.gemini_api_key)
     for i, key in enumerate(gemini_keys):
         out.append(
@@ -135,9 +186,25 @@ def _enabled_providers() -> list[_Provider]:
             )
         )
     if len(out) > 2:
-        log.info("LLM provider pool: %d entries (Groq %d, Gemini %d)",
-                 len(out), len(groq_keys), len(gemini_keys))
-    return out
+        log.info(
+            "LLM provider pool: %d entries (Groq %d, Anthropic %d, Gemini %d)",
+            len(out), len(groq_keys), len(anthropic_keys), len(gemini_keys),
+        )
+    # Lazy reorder — providers that recently 429'd go to the END so the
+    # chat path doesn't pay their latency walking dead keys before
+    # reaching a live one. Within each bucket the original priority is
+    # preserved (Groq beats Anthropic beats Gemini among non-rate-limited
+    # entries; among rate-limited entries the same order — but they all
+    # come AFTER active providers).
+    now = time.time()
+    active: list[_Provider] = []
+    backoff: list[_Provider] = []
+    for p in out:
+        if _is_deprioritized(p.name, now):
+            backoff.append(p)
+        else:
+            active.append(p)
+    return active + backoff
 
 
 # ---------------------------------------------------------------------------
@@ -149,10 +216,24 @@ Return STRICT JSON only, no prose.
 
 Schema:
 {
-  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|atm_finder|smalltalk|unknown",
+  "intent": "transfer|balance|history|schedule|recurring|reminder|add_contact|insights|set_budget|set_goal|budget_status|goal_status|atm_finder|my_account|receive_qr|recap|smalltalk|unknown",
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
+    "recipient_kind": "alias"|"name"|null,
+    //   "alias" — relational / pet-name (mẹ, bố, ny, vợ, anh hai, bạn thân,
+    //             sếp, cô Lan, chú Tú) — looked up in contact_aliases table
+    //   "name"  — real Vietnamese given/family name (Nam, Minh, Hoa,
+    //             "Nguyễn Văn Minh", "anh Tuấn", "Lê Mai") — looked up in
+    //             display_name column
+    //   null    — no recipient mentioned, OR the LLM is uncertain. Resolver
+    //             then tries alias-table first, name-column second.
+    //   Rule of thumb: if the surface is a *kinship/role word* it's alias;
+    //   if it's a *proper-noun-like Vietnamese name* it's name. Tokens like
+    //   "anh"/"chị"/"em" alone are NOT alias — they're relational prefixes
+    //   that attach to a name. "anh Tuấn" → kind="name", "Tuấn" is the
+    //   name; "anh hai" → kind="alias" (idiom for elder brother / close
+    //   friend, not a name).
     "amount": integer|null,            // VND, integer (no separators)
     "amount_text": string|null,        // raw span e.g., "5 triệu"
     "description": string|null,        // e.g., "Tiền sinh hoạt"
@@ -182,6 +263,30 @@ Rules:
   emit recipient_text=null.
 - "ATM gần nhất / cây ATM / tìm ATM <bank>" → atm_finder; put the bank
   name (if mentioned) in entities.atm_bank.
+- INBOUND-SIDE intents (no money flow, read-only):
+  • "STK của tôi / TK của mình / số tài khoản của tôi" → my_account.
+  • "Tạo QR nhận tiền / cho tôi QR / mã QR" → receive_qr. If the user
+    states an amount or memo it gets baked into the QR payload.
+- RECAP intent: the user wants to know the state of the CURRENT chat
+  session — what slots are filled, what they just said, what they are
+  in the middle of. Cover ANY phrasing semantically equivalent to
+  "remind me what I'm doing right now" — rule-based keyword lists
+  cannot exhaust this surface, so YOU must classify creatively. Hit
+  recap when the user asks:
+    • What they said / typed earlier ("lúc nãy tôi nói gì", "vừa rồi
+      bảo bao nhiêu", "ơ vừa nói cái gì nhỉ", "tôi vừa làm gì")
+    • The current draft's slots ("đang chuyển bao nhiêu cho ai",
+      "mình đang làm giao dịch nào", "số tiền vừa rồi là bao nhiêu")
+    • Generic recap commands ("tóm tắt", "recap", "nhắc lại",
+      "show what's pending", "what's in progress")
+  Critically: history is for PAST COMPLETED transactions ("tháng trước
+  tôi tiêu bao nhiêu"). Recap is for the LIVE draft / session state.
+  When in doubt, prefer recap whenever the phrasing references an
+  IMMEDIATELY PREVIOUS user utterance ("lúc nãy" / "vừa rồi" / "đang").
+- INSIGHTS intent: analytics about spending patterns (bất thường,
+  khả nghi, so với tháng trước, so sánh chi tiêu).
+- set_budget / budget_status: budget creation vs status query.
+- set_goal  / goal_status:   savings-goal creation vs status query.
 - FOLLOW-UPS: when the current message looks like a continuation
   ("còn tháng trước?", "đổi sang Minh", "mà thôi đổi sang X", "cái nào nhiều
    nhất?", "vậy còn ...?"), INHERIT unmentioned fields from the previous turn
@@ -190,16 +295,121 @@ Rules:
 
 Examples:
 INPUT: "Gửi cho mẹ 5 triệu như tháng trước"
-{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","amount":5000000,"amount_text":"5 triệu","temporal_reference":"như tháng trước"}}
+{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":5000000,"amount_text":"5 triệu","temporal_reference":"như tháng trước"}}
 
 INPUT: "Chuyển cho Minh 500k"
-{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Minh","amount":500000,"amount_text":"500k"}}
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Minh","recipient_kind":"name","amount":500000,"amount_text":"500k"}}
+
+INPUT: "Chuyển bạn thân 2tr"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bạn thân","recipient_kind":"alias","amount":2000000,"amount_text":"2tr"}}
+
+INPUT: "chuyển cho anh Tuấn 1tr5"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"anh Tuấn","recipient_kind":"name","amount":1500000,"amount_text":"1tr5"}}
+
+INPUT: "Gửi Nguyễn Văn Minh 500 nghìn"
+{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"Nguyễn Văn Minh","recipient_kind":"name","amount":500000,"amount_text":"500 nghìn"}}
+
+INPUT: "chuyển ny 200k"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"ny","recipient_kind":"alias","amount":200000,"amount_text":"200k"}}
+
+# Backward word order — amount comes BEFORE the recipient. The amount
+# can sit between "chuyển/gửi" and the recipient; the recipient is the
+# trailing kinship/name token. Extract BOTH.
+INPUT: "chuyển 5tr Nam"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Nam","recipient_kind":"name","amount":5000000,"amount_text":"5tr"}}
+
+INPUT: "5tr cho bạn thân"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bạn thân","recipient_kind":"alias","amount":5000000,"amount_text":"5tr"}}
+
+INPUT: "gửi 300k sếp"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"sếp","recipient_kind":"alias","amount":300000,"amount_text":"300k"}}
+
+INPUT: "chuyển 2 triệu cho mẹ"
+{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2000000,"amount_text":"2 triệu"}}
+
+# Single given-name surfaces — these are NAMES, not aliases. The
+# resolver will ask the user to disambiguate when multiple contacts
+# share the token instead of silently picking one. Critically, do NOT
+# tag bare given names ("Hùng", "Đức", "Minh", "Nam") as kind="alias"
+# even though they're short — alias is for KINSHIP / ROLE words.
+INPUT: "chuyển cho Hùng 1tr"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Hùng","recipient_kind":"name","amount":1000000,"amount_text":"1tr"}}
+
+INPUT: "gửi Đức 500k"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Đức","recipient_kind":"name","amount":500000,"amount_text":"500k"}}
+
+INPUT: "chuyển 5tr"
+{"intent":"transfer","confidence":0.85,"entities":{"amount":5000000,"amount_text":"5tr"}}
+
+INPUT: "chuyển cho mẹ"
+{"intent":"transfer","confidence":0.85,"entities":{"recipient_text":"mẹ","recipient_kind":"alias"}}
+
+# Negation / hypothetical / modal — these messages mention transfer
+# vocabulary but the user is NOT issuing a transfer command. Classify
+# as "unknown" so the orchestrator doesn't open a money-touching draft.
+# CRITICAL: "thử chuyển mẹ 1k" used to land as a real 1.000đ transfer.
+INPUT: "đừng chuyển mẹ 2tr"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "không muốn chuyển mẹ nữa"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "giả sử chuyển mẹ 5tr"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "thử chuyển mẹ 1k xem được không"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "nếu chuyển mẹ 2tr thì còn dư không?"
+{"intent":"unknown","confidence":0.85,"entities":{}}
 
 INPUT: "Tháng này mình gửi mẹ bao nhiêu rồi?"
 {"intent":"history","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
 
 INPUT: "Tháng này mình tiêu bao nhiêu rồi?"
 {"intent":"history","confidence":0.9,"entities":{}}
+
+# Recap (live draft state) — these reference the CURRENT session, not
+# past transactions. Critical to distinguish from history.
+INPUT: "lúc nãy tôi bảo bao nhiêu"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "số tiền lúc nãy tôi nói là bao nhiêu"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "tôi vừa nói gì"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "ơ vừa nói cái gì nhỉ"
+{"intent":"recap","confidence":0.85,"entities":{}}
+
+INPUT: "đang chuyển bao nhiêu cho ai"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "mình đang làm giao dịch nào ấy nhỉ"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "tóm tắt giúp tôi"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "nhắc lại đi"
+{"intent":"recap","confidence":0.85,"entities":{}}
+
+INPUT: "giao dịch hiện tại của tôi là gì"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+# Inbound — my_account / receive_qr
+INPUT: "STK của tôi là gì"
+{"intent":"my_account","confidence":0.95,"entities":{}}
+
+INPUT: "cho tôi xem số tài khoản của mình"
+{"intent":"my_account","confidence":0.9,"entities":{}}
+
+INPUT: "tạo QR nhận 500k"
+{"intent":"receive_qr","confidence":0.95,"entities":{"amount":500000,"amount_text":"500k"}}
+
+INPUT: "cho tôi mã QR để nhận tiền"
+{"intent":"receive_qr","confidence":0.9,"entities":{}}
 
 INPUT: "Số dư còn bao nhiêu?"
 {"intent":"balance","confidence":0.95,"entities":{}}
@@ -527,6 +737,142 @@ def llm_phrase(
 
 
 # ---------------------------------------------------------------------------
+# Category classification — LLM fallback for the rule-based categorizer
+# ---------------------------------------------------------------------------
+
+_CATEGORIZE_SYSTEM = """Bạn là bộ phân loại danh mục chi tiêu cho ngân hàng \
+tiếng Việt. Nhận mô tả giao dịch (1-30 từ), trả về JSON với danh mục \
+trong danh sách dưới đây.
+
+DANH MỤC HỢP LỆ (chỉ trả về 1 trong các code này — KHÔNG được tự đặt code mới):
+- food         → Ăn uống (nhà hàng, cafe, đồ ăn, trà sữa, ăn trưa/tối/sáng)
+- transport    → Đi lại (xăng, Grab, taxi, vé tàu xe, sửa xe)
+- groceries    → Tạp hoá / chợ / siêu thị (Bách Hoá Xanh, Co.opmart, đi chợ)
+- shopping     → Mua sắm (quần áo, mỹ phẩm, Zara, Shopee, hàng tiêu dùng)
+- entertainment→ Giải trí (phim, karaoke, Netflix, concert, game)
+- health       → Sức khoẻ (bệnh viện, thuốc, gym, yoga, khám bệnh, PT)
+- rent         → Tiền nhà / tiền trọ / đặt cọc thuê
+- utilities    → Tiện ích (điện, nước, internet, điện thoại, gas)
+- gifts        → Quà tặng (mừng cưới, lì xì, quà sinh nhật, phong bì)
+- savings      → Tiết kiệm / đầu tư (gửi tiết kiệm, chứng khoán, crypto, vàng)
+- family       → Gia đình (gửi bố mẹ, em út, sinh hoạt gia đình, hiếu)
+- friends      → Bạn bè (chia tiền, trả nợ bạn, góp tiền sinh nhật)
+- work         → Công việc (công tác phí, team building, freelance, hoa hồng)
+- other        → Không thuộc các nhóm trên
+
+ĐẦU RA: chỉ trả JSON đúng format. Không markdown, không giải thích.
+{"category": "<code>", "confidence": <0..1>}
+
+confidence:
+- 0.9-1.0: chắc chắn rõ ràng (có từ khoá đặc trưng)
+- 0.6-0.9: hợp lý nhưng có thể nhập nhằng
+- 0.3-0.6: đoán dựa context, không rõ
+- <0.3: thực sự không phân loại được → category="other"
+
+Ví dụ:
+INPUT: "phở Lý Quốc Sư"
+{"category":"food","confidence":1.0}
+
+INPUT: "đặt Shopee son môi"
+{"category":"shopping","confidence":1.0}
+
+INPUT: "chia tiền sách kỹ thuật"
+{"category":"friends","confidence":0.7}
+
+INPUT: "đi spa cuối tuần"
+{"category":"entertainment","confidence":0.7}
+
+INPUT: "đóng quỹ lớp con"
+{"category":"family","confidence":0.7}
+
+INPUT: "phí gym tháng"
+{"category":"health","confidence":0.9}
+
+INPUT: "tiền mặt"
+{"category":"other","confidence":0.3}
+
+INPUT: "test"
+{"category":"other","confidence":0.0}"""
+
+
+# Tiny LRU cache so identical descriptions reuse the LLM result. Banking
+# notes repeat heavily (same "tiền điện" / "cafe sáng") so this saves the
+# bulk of LLM-classification cost.
+_CATEGORIZE_CACHE: dict[str, tuple[str, float]] = {}
+_CATEGORIZE_CACHE_MAX = 1024
+
+
+def llm_categorize(description: str) -> Optional[tuple[str, float]]:
+    """Ask the LLM to classify a transaction description.
+
+    Used as a fallback when the rule-based categoriser returns
+    ``other`` or a low-confidence score. Returns ``(category, confidence)``
+    or ``None`` if all providers are down / disabled.
+
+    Validates the LLM output against the canonical ``CATEGORIES`` tuple so
+    a hallucinated label can't leak into draft.category. On any
+    deserialization or validation failure, returns None so the caller
+    falls back to its rule-based answer.
+    """
+    if not description or not description.strip():
+        return None
+
+    cached = _CATEGORIZE_CACHE.get(description)
+    if cached is not None:
+        return cached
+
+    providers = _enabled_providers()
+    if not providers and privacy.get_mode() == "local-only":
+        privacy.record_llm_call(
+            provider="(none)",
+            mode="local-only",
+            original_size=len(description),
+            redacted_size=0,
+            redaction_count=0,
+            suppressed=True,
+            note="llm_categorize suppressed by local-only mode",
+        )
+        return None
+
+    # Lazy import to avoid circular dep between nlp/llm.py and ml/categorizer.py.
+    from ..ml.categorizer import CATEGORIES as _CANONICAL
+
+    for p in providers:
+        data = _openai_compat(
+            provider=p,
+            system_prompt=_CATEGORIZE_SYSTEM,
+            history=None,
+            user_message=description,
+            temperature=0,
+            response_format={"type": "json_object"},
+            max_tokens=80,
+        )
+        if data is None:
+            continue
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        cat = obj.get("category")
+        conf_raw = obj.get("confidence", 0.7)
+        # Validate against the canonical category set — reject hallucinations.
+        if not isinstance(cat, str) or cat not in _CANONICAL:
+            continue
+        try:
+            conf = float(conf_raw)
+        except (TypeError, ValueError):
+            continue
+        conf = max(0.0, min(1.0, conf))
+        result = (cat, conf)
+        # Naive cache eviction: drop the oldest entry when full.
+        if len(_CATEGORIZE_CACHE) >= _CATEGORIZE_CACHE_MAX:
+            _CATEGORIZE_CACHE.pop(next(iter(_CATEGORIZE_CACHE)))
+        _CATEGORIZE_CACHE[description] = result
+        return result
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Generic OpenAI-compatible call
 # ---------------------------------------------------------------------------
 
@@ -641,6 +987,9 @@ def _openai_compat(
             log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
             if e.code == 429:
                 status = "429"
+                # Push this provider to the back of the pool for ~5 min.
+                # Next chat turn skips it on the fast path.
+                _mark_provider_rate_limited(provider.name)
             elif 400 <= e.code < 500:
                 status = "http_4xx"
             else:

@@ -11,6 +11,8 @@ import { ScheduleDraftCard } from "./ScheduleDraftCard";
 import { BudgetDraftCard, GoalDraftCard } from "./BudgetDraftCard";
 import { RecurringList } from "./RecurringList";
 import { AtmCard } from "./AtmCard";
+import { MyAccountCard } from "./MyAccountCard";
+import { ReceiveQrCard } from "./ReceiveQrCard";
 import { HelpCard } from "./HelpCard";
 import { speak } from "../lib/tts";
 
@@ -46,6 +48,7 @@ interface Props {
    *  on any actionable→inactionable transition (verifier audit:
    *  cancel should never look like "Đã chuyển X · Y"). */
   cancelledDraftIds?: Set<string>;
+  confirmedDraftIds?: Set<string>;
   /** Drafts whose confirm/cancel request is currently in flight.
    *  TransactionCard locks both buttons + shows a spinner so the user
    *  can't fire a cancel that races a confirm. */
@@ -70,6 +73,7 @@ export const Message = ({
   busy,
   actionableDraftIds,
   cancelledDraftIds,
+  confirmedDraftIds,
   inFlightDraftIds,
   actionableScheduleDraftIds,
   ttsEnabled,
@@ -160,9 +164,14 @@ export const Message = ({
             inFlight={inFlightDraftIds?.has(r.draft.id) ?? false}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
             cancelled={cancelledDraftIds?.has(r.draft.id) ?? false}
+            completed={confirmedDraftIds?.has(r.draft.id) ?? false}
           />
         )}
         {r?.atms && r.atms.length > 0 && <AtmCard atms={r.atms} />}
+        {r?.my_accounts && r.my_accounts.length > 0 && (
+          <MyAccountCard accounts={r.my_accounts} />
+        )}
+        {r?.receive_qr && <ReceiveQrCard qr={r.receive_qr} />}
         {r?.history && <HistoryCard history={r.history} />}
         {r?.balance && <BalanceCard balance={r.balance} />}
         {r?.schedule && <ScheduleCard schedule={r.schedule} />}

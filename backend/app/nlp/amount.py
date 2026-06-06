@@ -19,6 +19,20 @@ _UNITS = {
     "triệu": 1_000_000,
     "trieu": 1_000_000,
     "tr": 1_000_000,
+    # VN slang for triệu (million) — judges use these on phone-typed
+    # messages: "2 củ" = 2 triệu, "5 chai" = 5 triệu, "1.5m" = 1.5M.
+    # Pre-fix the parser returned None → amount predictor silently
+    # overrode with median. "vé" / "lít" not added — too ambiguous
+    # (tickets / liquid volume).
+    "củ": 1_000_000,
+    "cu": 1_000_000,
+    "chai": 1_000_000,
+    # "m" for million — common on phone typing ("1.5m", "5m"). The
+    # negative-lookahead guard ``(?![A-Za-zÀ-ỹ])`` on the unit position
+    # in ``_PRIMARY_RE`` keeps "4 mình" / "4 mặt" from matching since
+    # the next char is a Vietnamese letter; only "4m" / "4 m" /
+    # "1.5m" reach this branch.
+    "m": 1_000_000,
     "trăm nghìn": 100_000,  # "5 trăm nghìn" = 500K
     "tram nghin": 100_000,
     "trăm ngàn": 100_000,
@@ -50,7 +64,16 @@ _NUM = r"(\d+(?:[.,]\d+)?)"
 # end-of-string still match, so "1tr5" and "5tr500" keep working.
 _PRIMARY_RE = re.compile(
     rf"{_NUM}\s*(?P<unit>{_UNIT_ALT})(?![A-Za-zÀ-ỹĂăÂâĐđÊêÔôƠơƯư])\s*"
-    rf"(?:(?P<rest>\d+)\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
+    # CRITICAL guard (round 6 S5): "100k 2 lần cho mẹ" used to swallow
+    # the trailing "2" as a sub-unit concatenation and produce 100.002đ
+    # — money-loss-class wrong-amount. The rest group now refuses to
+    # match when the digits are followed by a non-amount Vietnamese
+    # word (lần / tháng / ngày / giờ / phút / tuần / năm / người), so
+    # "5tr500" and "100k500" still work but "100k 2 lần" stops at the
+    # 100k and the "2 lần" stays out of the amount.
+    rf"(?:(?P<rest>\d+)"
+    r"(?!\s+(?:lần|lan|tháng|thang|ngày|ngay|giờ|gio|phút|phut|giây|giay|tuần|tuan|năm|nam|người|nguoi|lượt|luot))"
+    rf"\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
     re.IGNORECASE,
 )
 
@@ -189,6 +212,32 @@ def parse_amount(text: str) -> tuple[Optional[int], Optional[str]]:
     m = re.search(r"(\d{4,})\s*(?:đ|vnd|d)\b", t)
     if m:
         return int(m.group(1)), m.group(0)
+
+    # 5. Single digit + đ — covers explicit "0đ" / "5đ". Kept narrow
+    # so it doesn't swallow account hints (which use ≥3 digit prefixes
+    # and the ``stk`` cue) or year mentions.
+    m = re.search(r"\b(\d)\s*đ\b", t)
+    if m:
+        return int(m.group(1)), m.group(0)
+
+    # 6. Plain bare integer ≥1000 inside an explicit transfer clause.
+    # Catches "chuyển 100000000 cho mẹ" — the user typed the full VND
+    # amount without a unit suffix. Without this branch the parser
+    # returned None and the amount predictor silently overwrote the
+    # user's explicit 100M with the recipient's median (~750k).
+    # Restricted to a transfer-verb context so phone numbers, account
+    # numbers and dates can't be mis-parsed as amounts. The
+    # ``stk``/``so tai khoan`` guard prevents account hints from being
+    # read as amounts (entities.py has its own _ACCOUNT_HINT_RE).
+    if not re.search(r"\b(?:stk|số\s+tài\s+khoản|so\s+tai\s+khoan|account)\b", t):
+        m = re.search(
+            r"(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
+            r"(?:cho|tới|toi|đến|den|sang|qua\s+)?"
+            r"[^\d]*?(\d{4,12})\b(?!\s*(?:người|nguoi|lần|lan|giờ|gio|phút|phut|giây|giay))",
+            t,
+        )
+        if m:
+            return int(m.group(1)), m.group(0)
 
     return None, None
 

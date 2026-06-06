@@ -288,9 +288,30 @@ export interface OmniResponse {
   recurring_patterns: RecurringPattern[] | null;
   budget_statuses?: BudgetStatus[] | null;
   atms?: AtmHit[] | null;
+  my_accounts?: MyAccount[] | null;
+  receive_qr?: ReceiveQrPayload | null;
   help_sections?: HelpSectionPayload[] | null;
   needs_disambiguation: boolean;
   telemetry?: TelemetryPayload | null;
+}
+
+export interface MyAccount {
+  id: string;
+  bank: string;
+  number: string;
+  masked: string;
+  holder_name: string;
+  primary: boolean;
+}
+
+export interface ReceiveQrPayload {
+  bank: string;
+  account: string;
+  holder_name: string;
+  amount: number | null;
+  description: string | null;
+  payload: string;
+  png_base64: string;
 }
 
 export interface HelpSectionPayload {
@@ -365,7 +386,54 @@ export interface StoredChatMessage {
   role: "user" | "omni";
   content: string;
   intent: string | null;
+  response?: OmniResponse | null;
   created_at: string;
+}
+
+export interface AdminChatSession extends ChatSession {
+  user_id: string;
+  intents: string[];
+}
+
+export interface AdminChatSessionsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  sessions: AdminChatSession[];
+}
+
+export interface AdminChatMessage extends StoredChatMessage {
+  user_id: string;
+}
+
+export interface AdminChatSessionDetail {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: AdminChatMessage[];
+}
+
+export interface AdminTransaction {
+  id: string;
+  user_id: string;
+  contact_id: string | null;
+  recipient_name: string | null;
+  recipient_bank: string | null;
+  recipient_account_masked: string | null;
+  amount: number;
+  description: string;
+  category: string;
+  status: string;
+  created_at: string;
+}
+
+export interface AdminTransactionsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  transactions: AdminTransaction[];
 }
 
 export interface RecipientSuggestion {

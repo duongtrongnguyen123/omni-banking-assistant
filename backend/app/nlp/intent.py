@@ -45,6 +45,61 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "atm bidv", "atm mb", "atm vpb", "atm acb", "atm agribank",
         "atm sacom", "atm stb",
     ]),
+    # receive_qr — "tạo QR / cho tôi QR / share QR nhận tiền". Goes
+    # ABOVE my_account so "QR tài khoản của tôi" routes here (QR is
+    # the actionable surface; the my_account intent below is for the
+    # bare "STK của tôi" lookup).
+    ("receive_qr", [
+        "tao qr", "tạo qr", "ma qr", "mã qr",
+        "cho qr", "share qr", "gửi qr", "gui qr",
+        "qr nhan tien", "qr nhận tiền",
+        "qr de nhan", "qr để nhận",
+        "qr cua toi", "qr của tôi",
+        "qr tk", "qr tài khoản",
+        "vietqr",
+    ]),
+    # my_account — "STK của tôi", "số tài khoản của tôi". Read-only
+    # inbound info so someone else can transfer in.
+    #
+    # CRITICAL guard: phrasings like "tài khoản của tôi" / "thông tin
+    # tài khoản" are intentionally NOT here — they're already routed
+    # to ``balance`` (which surfaces STK alongside balance). Only the
+    # explicit STK / số tài khoản / TK lookups belong here so judges
+    # who want JUST the account number get a focused response.
+    ("my_account", [
+        "stk cua toi", "stk của tôi",
+        "stk cua minh", "stk của mình",
+        "so tai khoan cua toi", "số tài khoản của tôi",
+        "so tai khoan cua minh", "số tài khoản của mình",
+        "tk cua toi", "tk của tôi", "tk cua minh", "tk của mình",
+        "stk toi la gi", "stk tôi là gì",
+        "stk minh la gi", "stk mình là gì",
+        "stk de nhan", "stk để nhận",
+        "stk nhan tien", "stk nhận tiền",
+    ]),
+    # recap — "tôi vừa nói gì", "lúc nãy tôi bảo bao nhiêu", "đang
+    # chuyển bao nhiêu cho ai", "tóm tắt", "recap". Surfaces the active
+    # draft instead of falling to history (which returned past tx and
+    # missed the actual question the user asked). Pinned ABOVE history
+    # so "lúc nãy ... bao nhiêu" doesn't get caught by history's
+    # temporal regex.
+    ("recap", [
+        "vua noi gi", "vừa nói gì",
+        "vua bao gi", "vừa bảo gì",
+        "luc nay toi noi", "lúc nãy tôi nói",
+        "luc nay toi bao", "lúc nãy tôi bảo",
+        "luc nay bao nhieu", "lúc nãy bao nhiêu",
+        "vua roi toi noi", "vừa rồi tôi nói",
+        "dang chuyen bao nhieu", "đang chuyển bao nhiêu",
+        "dang chuyen cho ai", "đang chuyển cho ai",
+        "minh dang chuyen", "mình đang chuyển",
+        "toi vua lam gi", "tôi vừa làm gì",
+        "minh vua lam gi", "mình vừa làm gì",
+        "tom tat", "tóm tắt",
+        "recap",
+        "nhac lai", "nhắc lại",
+        "giao dich hien tai", "giao dịch hiện tại",
+    ]),
     # insights (proactive analytics) — before history so "tieu nhieu hon
     # thang truoc" routes here, not to plain history.
     ("insights", [
@@ -60,10 +115,30 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "dang ky dich vu", "subscription", "thue bao hang thang",
         "co the cat giam", "khoan nao thua",
         "phan tich chi tieu", "phan tich tieu",
+        # Casual "anything weird / interesting?" — common opening
+        # judge probe. Pre-fix fell to "unknown" → guess-correction
+        # page. Insights handler already surfaces anomalies + MoM, so
+        # routing these there gives a sensible answer.
+        "co gi la",                # "có gì lạ không"
+        "thay gi la",              # "thấy gì lạ không"
+        "co gi dang chu y",        # "có gì đáng chú ý không"
+        "dang chu y",              # standalone
+        "tieu hop ly",             # "tiêu hợp lý chưa"
+        "check spending",          # English code-switch
+        "spending pattern",        # English
     ]),
     # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
     # hang thang" are queries about existing patterns, not commands to make
     # a new one. Schedule keeps its imperative cues.
+    #
+    # Also includes schedule-management verbs (tạm dừng / huỷ / dừng / xem
+    # lịch). Pre-fix, "tạm dừng lịch chuyển mẹ" contained "chuyen" and the
+    # Tier-1 transfer keyword later in the list would match, opening a
+    # transfer draft (with predicted ~500k amount) for the user who
+    # actually wanted to PAUSE a recurring schedule. Critical safety bug
+    # — one click away from sending money to mẹ. Routing to the recurring
+    # (read) handler shows the user their schedules so they can act
+    # safely instead of getting a transfer card.
     ("recurring", [
         "khoan dinh ky", "cac khoan dinh ky", "khoan tu dong",
         "khoan nao tu dong", "khoan nao dinh ky", "khoan nao tra deu",
@@ -73,6 +148,29 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "liet ke lich", "xem lich tu dong", "lich tu dong",
         "liet ke khoan", "liet ke cac khoan",  # "liệt kê các khoản trả tự động"
         "khoan dinh ky cua toi", "khoan dinh ky cua minh",
+        # Schedule-management — see comment above.
+        "tam dung lich", "tam ngung lich",
+        "huy lich",      # "huỷ lịch", "huỷ lịch chuyển mẹ"
+        "dung lich",     # "dừng lịch"
+        "ngung lich",
+        "xem lich chuyen", "xem cac lich", "danh sach lich",
+        "lich chuyen cua",
+        # READ-side schedule list — judges asking "show me my
+        # schedules". Pre-fix, "lịch chuyển tiền của mình" matched the
+        # Tier-1 transfer keyword "chuyen" and opened a transfer draft
+        # → one-click money send (same risk class as "tạm dừng lịch
+        # chuyển mẹ" closed by PR #19). Recurring fires before
+        # transfer, so these win.
+        "lich chuyen tien",        # "lịch chuyển tiền của mình"
+        "cac lich",                # "các lịch của mình"
+        "lich cua minh",           # "lịch của mình"
+        "lich cua toi",            # "lịch của tôi"
+        "co lich nao",             # "có lịch nào đang chạy"
+        "lich nao dang",           # "lịch nào đang chạy"
+        "lich sap toi",            # "lịch sắp tới"
+        "lich sap den",            # "lịch sắp đến"
+        "lich nao sap",            # "lịch nào sắp đến / sắp tới"
+        "lich tu dong cua",        # "lịch tự động của mình"
     ]),
     ("schedule", [
         "dat lich", "len lich", "lap lich",
@@ -108,6 +206,11 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "tai khoan cua toi",        # "tài khoản của tôi"
         "cac tai khoan",            # "các tài khoản"
         "tong tai san",             # "tổng tài sản"
+        "kiem tra tai khoan",       # "kiểm tra tài khoản (đi)"
+        "thong tin tai khoan",      # "thông tin tài khoản"
+        "check balance",            # English fallback judges sometimes use
+        "check so du",              # "check số dư" — code-switching
+        "show balance",
     ]),
     ("history", [
         "lich su", "thong ke", "sao ke", "bao cao chi tieu",
@@ -165,6 +268,19 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         # safe — they don't appear inside transfer or history commands.
         "chao em", "chao anh", "chao chi", "chao co ", "chao chu ",
         "chao bac", "chao moi nguoi", "chao ban",
+        # "How are you?" — canonical opening smalltalk that pre-fix
+        # fell to "unknown" because no keyword matched.
+        "khoe khong", "khỏe không", "co khoe khong", "có khoẻ không",
+        "the nao roi", "thế nào rồi",
+        # Help-shaped smalltalk that's NOT a transfer / data query —
+        # "Omni có thể giúp gì", "Omni làm được gì". Routed to
+        # smalltalk so the static help block fires (handler picks the
+        # help reply for these).
+        "co the giup gi", "có thể giúp gì", "lam duoc gi", "làm được gì",
+        "biet gi ve", "biết gì về",
+        # Authorship / about — "Ai làm ra Omni?", "Omni của ai?"
+        "ai lam ra", "ai làm ra", "ai tao ra", "ai tạo ra",
+        "do ai phat trien", "do ai phát triển",
     ]),
 ]
 
@@ -213,6 +329,54 @@ _MED: list[tuple[Intent, list[str]]] = [
 _SMALLTALK_HI_RE = re.compile(
     r"\b(?:hi|hey|bye)\b"
     r"|^\s*ch[àa]o\s*[!?.]?\s*$",   # bare "chào" / "chao" only
+    re.IGNORECASE,
+)
+
+# Category-shaped retrospective queries. Catches "ăn uống tháng này" /
+# "mua sắm tuần trước" / "cafe tháng này" / "tiêu ăn uống bao nhiêu" —
+# all clear history-with-category queries where the category is the
+# subject and a temporal/aggregation cue follows. Without this they
+# fall to "unknown" because no Tier-1/2 keyword fires.
+#
+# Word list deliberately small + high-precision; categories that share
+# tokens with intents ("tiền nhà" inside "tiền" etc.) are excluded
+# unless paired with the time anchor.
+_CATEGORY_HISTORY_RE = re.compile(
+    r"\b(?:"
+    r"ăn\s+uống|an\s+uong"
+    r"|ăn\s+sáng|ăn\s+trưa|ăn\s+tối|an\s+sang|an\s+trua|an\s+toi"
+    r"|mua\s+sắm|mua\s+sam"
+    r"|giải\s+trí|giai\s+tri"
+    r"|cafe|cà\s+phê|ca\s+phe|trà\s+sữa|tra\s+sua"
+    r"|shopping"
+    r"|xăng|xang|grab|taxi"
+    r"|tiền\s+điện|tien\s+dien|tiền\s+nước|tien\s+nuoc|điện\s+nước|dien\s+nuoc"
+    r"|tiền\s+nhà|tien\s+nha"
+    r"|tiền\s+học|tien\s+hoc|học\s+phí|hoc\s+phi"
+    r")\b"
+    # Anchored to either a leading "tiêu/chi" verb OR a trailing
+    # temporal / aggregation / amount-range cue. This keeps "tiền nhà
+    # tôi vừa trả" (a transfer reference) out of history while still
+    # catching the retrospective forms judges actually type.
+    r"(?:"
+    r"\s+(?:tháng|thang|tuần|tuan|năm|nam|hôm|hom|ngày|ngay|bao\s+nhi|gần\s+đây|gan\s+day)"
+    r"|.*\b(?:bao\s+nhi|tổng|tong|trung\s+bình|trung\s+binh)\b"
+    # Amount-range filters — "ăn uống dưới 200k" / "shopping trên 1tr" /
+    # "cà phê từ 50k đến 200k". These are history filter queries, not
+    # transfer commands. Pre-fix the Tier-3 bare-digit fallback ate
+    # them as transfer + missing_recipient.
+    r"|\s+(?:dưới|duoi|trên|tren|nhỏ\s+hơn|nho\s+hon|lớn\s+hơn|lon\s+hon|từ|tu)\b"
+    r")",
+    re.IGNORECASE,
+)
+# Also catches the leading "tiêu/chi <category>" form without time
+# cue: "tiêu ăn uống", "chi giải trí".
+_CATEGORY_LEAD_RE = re.compile(
+    r"^(?:tiêu|chi|tieu)\s+"
+    r"(?:ăn\s+uống|an\s+uong|mua\s+sắm|mua\s+sam|giải\s+trí|giai\s+tri"
+    r"|cafe|cà\s+phê|ca\s+phe|shopping|xăng|xang|grab|taxi"
+    r"|tiền\s+điện|tien\s+dien|tiền\s+nước|tien\s+nuoc"
+    r"|tiền\s+nhà|tien\s+nha)",
     re.IGNORECASE,
 )
 
@@ -273,9 +437,95 @@ _ATM_FINDER_RE = re.compile(
 )
 
 
+# When a Tier-1 smalltalk keyword fires inside a longer message that ALSO
+# carries an imperative ("Chào Omni, chuyển mẹ 2tr nhé" / "Hello chuyển
+# bố 500k"), the greeting must not pre-empt the command — the user thinks
+# they queued a transfer and walks away. This guard detects clear
+# command-verb / data-query cues; when present, the Tier-1 smalltalk
+# match is suppressed and the loop falls through to transfer/history/etc.
+_COMMAND_VERB_RE = re.compile(
+    r"\b(?:chuyen|gui|tra|nap|thanh\s+toan|"
+    r"so\s+du|balance|"
+    r"dat\s+lich|len\s+lich|lich\s+su|giao\s+dich|"
+    r"atm|chi\s+nhanh|"
+    r"ngan\s+sach|tiet\s+kiem)\b",
+    re.IGNORECASE,
+)
+
+
+# Negation / hypothetical / modal guards. Messages like "đừng chuyển mẹ
+# 2tr" / "giả sử chuyển mẹ 5tr" / "thử chuyển mẹ 1k xem được không"
+# still substring-match the Tier-1 ``chuyen`` transfer keyword, open a
+# one-click confirmable draft, and "thử ... 1k" becomes a real 1.000đ
+# transfer (round-6 S1+S2+S3). Detect these markers BEFORE Tier-1
+# dispatch and short-circuit to "unknown" so the chat asks for clarity
+# instead of staging money.
+_NEGATION_OR_HYPOTHETICAL_RE = re.compile(
+    r"\b(?:"
+    # Negation: "đừng chuyển" / "không muốn chuyển" / "không chuyển nữa"
+    r"đừng\s+(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap)"
+    r"|dung\s+(?:chuyen|gui|tra|nap)"
+    r"|không\s+(?:muốn|muon|nên|nen|cần|can|định|dinh)\s+(?:chuyển|chuyen|gửi|gui)"
+    r"|khong\s+(?:muon|nen|can|dinh)\s+(?:chuyen|gui)"
+    r"|không\s+(?:chuyển|chuyen|gửi|gui)\s+(?:nữa|nua)"
+    r"|khong\s+(?:chuyen|gui)\s+nua"
+    r"|hủy\s+ý\s+định|huy\s+y\s+dinh"
+    # Hypothetical / irrealis: "giả sử ..." / "nếu chuyển ..." /
+    # "thử chuyển ... xem"
+    r"|giả\s+sử|gia\s+su"
+    r"|nếu\s+(?:chuyển|chuyen|gửi|gui)"
+    r"|neu\s+(?:chuyen|gui)"
+    r"|thử\s+(?:chuyển|chuyen|gửi|gui)"
+    r"|thu\s+(?:chuyen|gui)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_TERSE_SHORTCUTS: dict[str, "Intent"] = {
+    # User feedback: judges type 1-2 word commands on the phone. Pin the
+    # most common shortcuts so they always route to the right intent
+    # regardless of Tier-1 substring noise. Must be exact-match against
+    # the folded + stripped input — bare "qr" inside "QR mẹ" doesn't fire.
+    "qr": "receive_qr",
+    "qr code": "receive_qr",
+    "stk": "my_account",
+    "tk": "my_account",
+    "lich su": "history",
+    "lịch sử": "history",
+    "so du": "balance",
+    "số dư": "balance",
+    "atm": "atm_finder",
+    "ngan sach": "budget_status",
+    "ngân sách": "budget_status",
+    "muc tieu": "goal_status",
+    "mục tiêu": "goal_status",
+    "dinh ky": "recurring",
+    "định kỳ": "recurring",
+}
+
+
 def classify(text: str) -> tuple[Intent, float]:
     folded = _ascii_fold(text)
     folded = re.sub(r"\s+", " ", folded)
+
+    # Terse single-word shortcuts — judge feedback "QR" / "STK" / "lịch
+    # sử" / "số dư" alone should route directly without depending on
+    # Tier-1 substring rules.
+    stripped = folded.strip(" ?.!,:;")
+    if stripped in _TERSE_SHORTCUTS:
+        return _TERSE_SHORTCUTS[stripped], 0.95
+    # Also match the original (non-folded) form for VN-diacritic shortcuts.
+    stripped_orig = text.strip(" ?.!,:;").lower()
+    if stripped_orig in _TERSE_SHORTCUTS:
+        return _TERSE_SHORTCUTS[stripped_orig], 0.95
+
+    # Negation / hypothetical / modal guard — before any Tier-1 match.
+    # Stops "đừng chuyển mẹ 2tr" / "giả sử chuyển mẹ 5tr" / "thử chuyển
+    # mẹ 1k xem được không" from opening a real transfer draft. See
+    # _NEGATION_OR_HYPOTHETICAL_RE above.
+    if _NEGATION_OR_HYPOTHETICAL_RE.search(text):
+        return "unknown", 0.85
 
     # Bare "lưu <person> STK <digits>" — informal add-contact pattern that
     # the Tier-1 keyword list can't capture without false-positiving on
@@ -291,10 +541,27 @@ def classify(text: str) -> tuple[Intent, float]:
     if _ATM_FINDER_RE.search(folded):
         return "atm_finder", 0.9
 
+    # Category-shaped retrospective queries — "ăn uống tháng này" /
+    # "mua sắm tuần trước" / "tiêu giải trí bao nhiêu". Must run before
+    # Tier-1 so the "tiêu" / "chi" inside transfer keywords don't
+    # eat the routing, and before Tier-2 "bao nhieu" → history default
+    # (which produces a generic month aggregate without the category
+    # filter the user actually asked for).
+    if _CATEGORY_HISTORY_RE.search(text) or _CATEGORY_LEAD_RE.search(text):
+        return "history", 0.75
+
     # Tier 1 — first match wins, no scoring needed.
+    # Exception: when smalltalk matches inside a longer message that
+    # also carries a command verb ("Chào Omni, chuyển mẹ 2tr"), defer
+    # to the imperative — see _COMMAND_VERB_RE above. Breaking the
+    # inner kw loop lets the outer intent loop move on to the next
+    # intent (transfer below smalltalk in _HIGH).
+    has_command_verb = bool(_COMMAND_VERB_RE.search(folded))
     for intent, kws in _HIGH:
         for kw in kws:
             if kw in folded:
+                if intent == "smalltalk" and has_command_verb:
+                    break
                 return intent, 0.85
 
     # Tier 2 — first match wins again, but scoring kept for telemetry.

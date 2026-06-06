@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role        TEXT NOT NULL,          -- 'user' | 'omni'
     content     TEXT NOT NULL,
     intent      TEXT,                   -- resolved intent for omni turns
+    response_json TEXT,                 -- full OmniResponse payload for replay
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_chat_messages_session

@@ -112,23 +112,39 @@ def evaluate(
 
     # If we have a chosen recipient + amount, run anomaly + balance checks.
     if recipient and amount:
+        # Count the user's prior completed transactions to this recipient
+        # — used to decide whether the "new recipient" framing is honest.
+        # Pre-fix the message branch keyed off ``recipient.frequent``
+        # alone, so a contact with 5 historical tx (but not flagged
+        # frequent in the seed) got "Người nhận chưa từng giao dịch"
+        # alongside a stats panel that simultaneously showed "5 giao
+        # dịch · median 150k" — contradictory.
+        prior_count = sum(
+            1
+            for t in transactions
+            if t.contact_id == recipient.id and t.amount > 0
+        )
+
         # Any large transfer needs step-up auth. New recipients get a more
         # specific warning below, but known contacts still need biometric for
         # bank-grade high-value transfers.
         if amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
+            # "Đã từng giao dịch" = at least 3 prior tx OR frequent flag.
+            # Below that, the contact is genuinely cold (or just-added).
+            known_recipient = recipient.frequent or prior_count >= 3
             flags.append(
                 SafetyFlag(
                     code=(
-                        "new_recipient_large_amount"
-                        if not recipient.frequent
-                        else "large_amount"
+                        "large_amount"
+                        if known_recipient
+                        else "new_recipient_large_amount"
                     ),
                     severity="warn",
                     message=(
                         "Số tiền trên 10.000.000đ — mình sẽ yêu cầu xác thực "
                         "sinh trắc học thêm trước khi thực hiện."
                     )
-                    if recipient.frequent
+                    if known_recipient
                     else (
                         "Người nhận chưa từng giao dịch và số tiền lớn — "
                         "mình sẽ yêu cầu xác thực thêm để bảo vệ bạn."

@@ -51,6 +51,7 @@ def test_reopen_session_returns_both_sides_in_order(client):
     # user turn first, omni reply second.
     assert roles[:2] == ["user", "omni"]
     assert body["messages"][0]["content"] == "xin chào"
+    assert body["messages"][1]["response"]["intent"] == body["messages"][1]["intent"]
 
 
 def test_explicit_session_id_groups_turns(client):
@@ -73,3 +74,44 @@ def test_delete_session_removes_it(client):
 
 def test_get_unknown_session_is_404(client):
     assert client.get("/api/chat/sessions/does-not-exist").status_code == 404
+
+
+def test_admin_can_review_chat_logs_across_users(client, monkeypatch):
+    monkeypatch.delenv("OMNI_ADMIN_TOKEN", raising=False)
+    r1 = client.post(
+        "/api/chat",
+        json={"message": "kiểm tra số dư"},
+        headers={"x-user-id": "admin_log_user_a"},
+    )
+    r2 = client.post(
+        "/api/chat",
+        json={"message": "chuyển 2 triệu cho Minh"},
+        headers={"x-user-id": "admin_log_user_b"},
+    )
+    sid_a = r1.headers["X-Chat-Session-Id"]
+    sid_b = r2.headers["X-Chat-Session-Id"]
+
+    listing = client.get("/api/admin/chat/sessions").json()
+    ids = {s["id"] for s in listing["sessions"]}
+    assert sid_a in ids
+    assert sid_b in ids
+
+    filtered = client.get(
+        "/api/admin/chat/sessions?user_id=admin_log_user_a"
+    ).json()
+    assert all(s["user_id"] == "admin_log_user_a" for s in filtered["sessions"])
+    assert any(s["id"] == sid_a for s in filtered["sessions"])
+    assert all(s["id"] != sid_b for s in filtered["sessions"])
+
+    detail = client.get(f"/api/admin/chat/sessions/{sid_a}").json()
+    assert detail["user_id"] == "admin_log_user_a"
+    assert [m["role"] for m in detail["messages"][:2]] == ["user", "omni"]
+    assert detail["messages"][1]["response"]["text"] == detail["messages"][1]["content"]
+
+
+def test_admin_can_review_transaction_ledger(client, monkeypatch):
+    monkeypatch.delenv("OMNI_ADMIN_TOKEN", raising=False)
+    body = client.get("/api/admin/transactions?user_id=u_an&limit=5").json()
+    assert "transactions" in body
+    assert body["limit"] == 5
+    assert all(tx["user_id"] == "u_an" for tx in body["transactions"])

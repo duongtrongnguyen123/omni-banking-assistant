@@ -14,9 +14,11 @@ from __future__ import annotations
 import os
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
+from ..db import chat_log
+from ..db.connection import get_connection
 from ..nlp import privacy
 
 
@@ -106,6 +108,64 @@ class LLMAuditResponse(BaseModel):
     entries: list[LLMAuditEntry]
 
 
+class AdminChatSession(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int
+    preview: Optional[str] = ""
+    intents: list[str] = []
+
+
+class AdminChatSessionsResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    sessions: list[AdminChatSession]
+
+
+class AdminChatMessage(BaseModel):
+    id: str
+    user_id: str
+    role: str
+    content: str
+    intent: Optional[str] = None
+    response: Optional[dict] = None
+    created_at: str
+
+
+class AdminChatSessionDetail(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    messages: list[AdminChatMessage]
+
+
+class AdminTransactionRow(BaseModel):
+    id: str
+    user_id: str
+    contact_id: Optional[str] = None
+    recipient_name: Optional[str] = None
+    recipient_bank: Optional[str] = None
+    recipient_account_masked: Optional[str] = None
+    amount: int
+    description: str
+    category: str
+    status: str
+    created_at: str
+
+
+class AdminTransactionsResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    transactions: list[AdminTransactionRow]
+
+
 @router.get("/llm-audit", response_model=LLMAuditResponse)
 def get_llm_audit(limit: int = 100) -> LLMAuditResponse:
     entries = privacy.recent_audit(limit=limit)
@@ -114,6 +174,116 @@ def get_llm_audit(limit: int = 100) -> LLMAuditResponse:
         capacity=100,
         count=len(entries),
         entries=[LLMAuditEntry(**e) for e in entries],
+    )
+
+
+@router.get("/chat/sessions", response_model=AdminChatSessionsResponse)
+def admin_chat_sessions(
+    user_id: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, max_length=120),
+    intent: Optional[str] = Query(default=None, max_length=40),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> AdminChatSessionsResponse:
+    """Read-only conversation archive for support/admin review."""
+    sessions = chat_log.admin_list_sessions(
+        user_id=user_id,
+        q=q,
+        intent=intent,
+        limit=limit,
+        offset=offset,
+    )
+    total = chat_log.admin_count_sessions(user_id=user_id, q=q, intent=intent)
+    return AdminChatSessionsResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        sessions=[AdminChatSession(**s) for s in sessions],
+    )
+
+
+@router.get("/chat/sessions/{session_id}", response_model=AdminChatSessionDetail)
+def admin_chat_session_detail(session_id: str) -> AdminChatSessionDetail:
+    session = chat_log.admin_get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc trò chuyện")
+    messages = chat_log.admin_get_messages(session_id) or []
+    return AdminChatSessionDetail(
+        **session,
+        messages=[AdminChatMessage(**m) for m in messages],
+    )
+
+
+def _admin_transaction_where(
+    *,
+    user_id: Optional[str],
+    q: Optional[str],
+    status: Optional[str],
+) -> tuple[str, list[object]]:
+    where: list[str] = []
+    params: list[object] = []
+    if user_id:
+        where.append("t.owner_id = ?")
+        params.append(user_id)
+    if status:
+        where.append("t.status = ?")
+        params.append(status)
+    if q:
+        like = f"%{q.strip()}%"
+        where.append(
+            """
+            (
+                t.description LIKE ?
+                OR c.display_name LIKE ?
+                OR c.bank LIKE ?
+                OR c.account_masked LIKE ?
+            )
+            """
+        )
+        params.extend([like, like, like, like])
+    return (f"WHERE {' AND '.join(where)}" if where else ""), params
+
+
+@router.get("/transactions", response_model=AdminTransactionsResponse)
+def admin_transactions(
+    user_id: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, max_length=120),
+    status: Optional[str] = Query(default="completed", max_length=40),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> AdminTransactionsResponse:
+    """Read-only ledger of transfers executed through Omni."""
+    conn = get_connection()
+    where_sql, params = _admin_transaction_where(user_id=user_id, q=q, status=status)
+    total_row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS n
+        FROM transactions t
+        LEFT JOIN contacts c ON c.id = t.contact_id
+        {where_sql}
+        """,
+        params,
+    ).fetchone()
+    rows = conn.execute(
+        f"""
+        SELECT t.id, t.owner_id AS user_id, t.contact_id, t.amount,
+               t.description, t.category, t.status, t.created_at,
+               c.display_name AS recipient_name,
+               c.bank AS recipient_bank,
+               c.account_masked AS recipient_account_masked
+        FROM transactions t
+        LEFT JOIN contacts c ON c.id = t.contact_id
+        {where_sql}
+        ORDER BY t.created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, limit, offset),
+    ).fetchall()
+    return AdminTransactionsResponse(
+        total=int(total_row["n"] if total_row else 0),
+        limit=limit,
+        offset=offset,
+        transactions=[AdminTransactionRow(**dict(r)) for r in rows],
     )
 
 

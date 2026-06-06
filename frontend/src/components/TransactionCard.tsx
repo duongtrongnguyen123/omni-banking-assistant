@@ -130,6 +130,8 @@ interface Props {
    *  that otherwise renders on the actionable→inactionable transition.
    *  Falls to the neutral "Giao dịch này đã đóng." status. */
   cancelled?: boolean;
+  /** Historical confirmed draft restored from durable chat log. */
+  completed?: boolean;
 }
 
 export const TransactionCard = ({
@@ -143,6 +145,7 @@ export const TransactionCard = ({
   inFlight = false,
   actionable = true,
   cancelled = false,
+  completed = false,
 }: Props) => {
   const [editingAmount, setEditingAmount] = useState(false);
   const [pendingAmount, setPendingAmount] = useState("");
@@ -229,7 +232,7 @@ export const TransactionCard = ({
     : undefined;
 
   // Compact receipt rendered after the 4s celebration auto-collapses.
-  if (collapsed && r && draft.amount != null) {
+  if ((collapsed || (completed && !actionable)) && r && draft.amount != null) {
     const time = confirmedAt.toLocaleTimeString("vi-VN", {
       hour: "2-digit",
       minute: "2-digit",

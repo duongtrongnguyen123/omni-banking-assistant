@@ -1,4 +1,5 @@
 import type { ChatSession } from "../types";
+import { repairVietnameseText } from "../lib/repairVietnamese";
 
 interface ChatHistoryProps {
   open: boolean;
@@ -93,6 +94,9 @@ export function ChatHistory({
             </div>
           )}
           {sessions.map((s) => (
+            (() => {
+              const title = repairVietnameseText(s.title) || "Cuộc trò chuyện mới";
+              return (
             <div
               key={s.id}
               className={`chat-history__item ${
@@ -103,10 +107,10 @@ export function ChatHistory({
                 type="button"
                 className="chat-history__item-main"
                 onClick={() => onSelect(s.id)}
-                title={s.title || "Cuộc trò chuyện mới"}
+                title={title}
               >
                 <span className="chat-history__item-title">
-                  {s.title || "Cuộc trò chuyện mới"}
+                  {title}
                 </span>
                 <span className="chat-history__item-meta">
                   {relativeTime(s.updated_at)}
@@ -117,7 +121,7 @@ export function ChatHistory({
                 type="button"
                 className="chat-history__item-del"
                 onClick={() => onDelete(s.id)}
-                aria-label={`Xoá cuộc trò chuyện ${s.title || ""}`}
+                aria-label={`Xoá cuộc trò chuyện ${title}`}
                 title="Xoá"
               >
                 <svg
@@ -134,6 +138,8 @@ export function ChatHistory({
                 </svg>
               </button>
             </div>
+              );
+            })()
           ))}
         </div>
       </aside>

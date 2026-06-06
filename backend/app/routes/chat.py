@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -22,31 +23,29 @@ from ..services.orchestrator import (
     start_split_bill,
 )
 from ._ratelimit import enforce_user_rate_limit
-from .deps import current_session, current_user
+from .deps import current_user
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+_LAST_SESSION_BY_USER: dict[str, str] = {}
+"""Per-user record of the chat-conversation id last seen on /api/chat.
 
-def _archive_action(
-    session_id: str | None, user_id: str, user_text: str, resp: OmniResponse
-) -> None:
-    """Persist a draft-action turn (confirm / cancel / select) into the
-    durable conversation archive so it becomes part of the NLU context
-    window on later turns — e.g. so "mình vừa chuyển bao nhiêu?" works
-    even after a reload. Best-effort: archival must never break the flow.
+The orchestrator's ``session_for(user_id)`` is keyed by user only, so
+its in-memory ``current_draft`` would otherwise persist across
+*conversation* boundaries — opening a fresh chat in the left drawer
+and asking "chuyển tiền cho bố" would inherit the abandoned amount
+from the prior conversation's draft (user report: "tự gán số tiền
+đang lưu ở trong bộ nhớ"). When the active session_id changes we
+clear the draft so each conversation starts with a clean slot."""
 
-    Only meaningful, terminal outcomes are logged (the caller decides);
-    intermediate prompts like "nhập OTP" are skipped to keep the context
-    window clean. No-op when the client didn't send a conversation id."""
-    if not session_id:
-        return
-    try:
-        chat_log.append_message(session_id, user_id, "user", user_text)
-        chat_log.append_message(
-            session_id, user_id, "omni", resp.text, intent=resp.intent
-        )
-    except Exception:  # noqa: BLE001 — archival is non-critical
-        pass
+
+def _enter_chat_session(user_id: str, session_id: str) -> None:
+    """Clear the orchestrator's in-memory draft when switching chats.
+    Called both from /api/chat (every turn) and the new-session route
+    so any path that adopts a new conversation gets a fresh draft."""
+    if _LAST_SESSION_BY_USER.get(user_id) != session_id:
+        session_for(user_id).clear_draft()
+        _LAST_SESSION_BY_USER[user_id] = session_id
 
 
 class ChatRequest(BaseModel):
@@ -64,6 +63,7 @@ class RenameSessionRequest(BaseModel):
 
 class SelectCandidateRequest(BaseModel):
     contact_id: str
+    session_id: str | None = None
 
 
 class BiometricPose(BaseModel):
@@ -109,6 +109,11 @@ class ConfirmTransactionRequest(BaseModel):
     source_account_id: str | None = None
     biometric_verified: bool = False
     biometric_scan: BiometricScanResult | None = None
+    session_id: str | None = None
+
+
+class ActionSessionRequest(BaseModel):
+    session_id: str | None = None
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -122,12 +127,31 @@ def chat(
     # Resolve (or open) the durable conversation this turn lands in, and
     # tell the client which one it was so a freshly-opened conversation
     # gets adopted by the UI.
-    session_id = chat_log.resolve_session(user_id, req.session_id)
+    #
+    # CRITICAL UX guard: when the client doesn't send a session_id
+    # (very first message, header dropped by proxy, raw curl), reuse
+    # the last-seen session for this user instead of minting a NEW one
+    # every turn. Without this reuse, ``resolve_session(None)`` returns
+    # a fresh session_id each turn → ``_enter_chat_session`` sees the
+    # change → wipes the draft → user reports "context không giữ giữa
+    # các turn" / "tự đặt 2tr ở turn mới rồi quên người". Sticky reuse
+    # keeps the user inside the same conversation until they explicitly
+    # send a different session_id (e.g. by clicking another chat in the
+    # sidebar).
+    if req.session_id is None:
+        reuse = _LAST_SESSION_BY_USER.get(user_id)
+        if reuse and chat_log.get_session(reuse, user_id) is not None:
+            session_id = reuse
+        else:
+            session_id = chat_log.resolve_session(user_id, None)
+    else:
+        session_id = chat_log.resolve_session(user_id, req.session_id)
     response.headers["X-Chat-Session-Id"] = session_id
+    _enter_chat_session(user_id, session_id)
     if dev:
         begin_telemetry()
     try:
-        resp = handle_message(user_id, req.message, session_id=session_id)
+        resp = handle_message(user_id, req.message)
     finally:
         if dev:
             end_telemetry()
@@ -136,11 +160,52 @@ def chat(
     try:
         chat_log.append_message(session_id, user_id, "user", req.message)
         chat_log.append_message(
-            session_id, user_id, "omni", resp.text, intent=resp.intent
+            session_id,
+            user_id,
+            "omni",
+            resp.text,
+            intent=resp.intent,
+            response=resp.model_dump(mode="json"),
         )
     except Exception:  # noqa: BLE001 — archival is non-critical
         pass
     return resp
+
+
+def _persist_action_turn(
+    *,
+    user_id: str,
+    session_id: str | None,
+    user_text: str,
+    resp: OmniResponse,
+) -> None:
+    if not session_id:
+        return
+    sid = chat_log.resolve_session(user_id, session_id)
+    try:
+        chat_log.append_message(sid, user_id, "user", user_text)
+        chat_log.append_message(
+            sid,
+            user_id,
+            "omni",
+            resp.text,
+            intent=resp.intent,
+            response=resp.model_dump(mode="json"),
+        )
+    except Exception:  # noqa: BLE001 — archival must never break banking flow
+        pass
+
+
+def _otp_log_label(req: ConfirmTransactionRequest | None, resp: OmniResponse) -> str:
+    if req and req.biometric_scan:
+        return "Xác minh sinh trắc học"
+    if req and req.otp is not None:
+        text = (resp.text or "").lower()
+        if "otp thất bại" in text or "quá 5 lần" in text:
+            return "Xác minh OTP thất bại"
+        if resp.intent == "transfer" and resp.draft is None:
+            return "Xác minh OTP thành công"
+    return "Xác minh OTP"
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +222,12 @@ def list_chat_sessions(user_id: str = Depends(current_user)) -> list[dict]:
 @router.post("/chat/sessions")
 def create_chat_session(user_id: str = Depends(current_user)) -> dict:
     """Open a fresh conversation and return its row."""
-    return chat_log.create_session(user_id)
+    row = chat_log.create_session(user_id)
+    # Clear any in-flight draft so the new conversation doesn't inherit
+    # the previous one's amount/recipient through the orchestrator's
+    # per-user session cache.
+    _enter_chat_session(user_id, row["id"])
+    return row
 
 
 @router.get("/chat/sessions/{session_id}")
@@ -191,14 +261,34 @@ def delete_chat_session(
     return {"ok": True}
 
 
-_CONFIRMED_DRAFT_RESPONSES: dict[str, OmniResponse] = {}
+from collections import OrderedDict as _OD
+_CONFIRMED_DRAFTS_MAX = 4096
+_CONFIRMED_DRAFT_RESPONSES: "_OD[str, OmniResponse]" = _OD()
+_CONFIRMED_DRAFT_LOCK = threading.Lock()
 """Idempotency cache: ``{user_id}:{draft_id}`` → first successful response.
 
 Prevents double-fire from double-clicks / network retries on the
-confirm button. Bounded by the natural draft lifetime — each draft_id
-is consumed once then never reused (orchestrator clears the session
-draft after confirm), so the cache stays small in practice. A wider
-LRU bound is in TODO but not load-bearing for the demo."""
+confirm button. Each draft_id is consumed once then never reused
+(orchestrator clears the session draft after confirm), but a process
+that lives for weeks across thousands of users would still accumulate
+entries. ``OrderedDict`` + bounded eviction caps it at the most recent
+4096 confirmed drafts; the lock makes the eviction thread-safe so
+concurrent confirms can't corrupt the dict ordering."""
+
+
+def _confirmed_get(key: str) -> "OmniResponse | None":
+    with _CONFIRMED_DRAFT_LOCK:
+        resp = _CONFIRMED_DRAFT_RESPONSES.get(key)
+        if resp is not None:
+            _CONFIRMED_DRAFT_RESPONSES.move_to_end(key)
+        return resp
+
+
+def _confirmed_set(key: str, resp: "OmniResponse") -> None:
+    with _CONFIRMED_DRAFT_LOCK:
+        _CONFIRMED_DRAFT_RESPONSES[key] = resp
+        if len(_CONFIRMED_DRAFT_RESPONSES) > _CONFIRMED_DRAFTS_MAX:
+            _CONFIRMED_DRAFT_RESPONSES.popitem(last=False)
 
 _INFLIGHT_CONFIRMS: set[str] = set()
 """Draft cache keys whose confirm handler is currently executing.
@@ -221,14 +311,19 @@ def confirm(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     # Idempotency: if this user already successfully confirmed this draft,
     # replay the cached response instead of re-executing the transfer.
     # Stops the demo-classic "user double-clicked → two debits" failure.
     cache_key = f"{user_id}:{draft_id}"
-    cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
+    cached = _confirmed_get(cache_key)
     if cached is not None:
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text=_otp_log_label(req, cached),
+            resp=cached,
+        )
         return cached
 
     # Biometric face-scan auth: risky transfers require OTP + an 8D face
@@ -250,39 +345,59 @@ def confirm(
         _INFLIGHT_CONFIRMS.discard(cache_key)
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
+    _persist_action_turn(
+        user_id=user_id,
+        session_id=req.session_id if req else None,
+        user_text=_otp_log_label(req, resp),
+        resp=resp,
+    )
     # Only cache fully-confirmed transfers — OTP prompts / re-confirm
     # branches still need to be replayable for new input. Heuristic:
     # cache when the response carries no draft (transfer landed) or
     # the draft has no ``awaiting_otp`` flag.
     if resp.draft is None or not getattr(resp.draft, "awaiting_otp", False):
-        _CONFIRMED_DRAFT_RESPONSES[cache_key] = resp
-    # Archive only the terminal outcome (transfer landed → no draft left),
-    # not the intermediate "nhập OTP" / re-confirm prompts.
-    if resp.draft is None:
-        _archive_action(session_id, user_id, "Xác nhận giao dịch", resp)
+        _confirmed_set(cache_key, resp)
     return resp
 
 
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
 def cancel(
     draft_id: str,
+    req: ActionSessionRequest | None = None,
     user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     cache_key = f"{user_id}:{draft_id}"
     # Confirm is mid-execute — refuse to clear the session under it.
     if cache_key in _INFLIGHT_CONFIRMS:
-        return OmniResponse(
+        resp = OmniResponse(
             intent="transfer",
             text="Giao dịch đang được xử lý, không thể huỷ ở bước này.",
         )
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text="Huỷ",
+            resp=resp,
+        )
+        return resp
     # Confirm already finished — replay the idempotent confirm response
     # instead of pretending the cancel succeeded.
-    cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
+    cached = _confirmed_get(cache_key)
     if cached is not None:
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text="Huỷ",
+            resp=cached,
+        )
         return cached
     resp = cancel_draft(user_id, draft_id)
-    _archive_action(session_id, user_id, "Huỷ giao dịch", resp)
+    _persist_action_turn(
+        user_id=user_id,
+        session_id=req.session_id if req else None,
+        user_text="Huỷ",
+        resp=resp,
+    )
     return resp
 
 
@@ -315,42 +430,43 @@ def select(
     draft_id: str,
     req: SelectCandidateRequest,
     user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     resp = select_candidate(user_id, draft_id, req.contact_id)
     if resp.intent == "unknown":
-        return OmniResponse(
+        fallback = OmniResponse(
             intent="transfer",
             text=(
                 "Phiên giao dịch vừa được làm mới. Bạn nhập lại câu chuyển tiền giúp mình nhé."
             ),
         )
-    _archive_action(session_id, user_id, "Chọn người nhận", resp)
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id,
+            user_text="Chọn người nhận",
+            resp=fallback,
+        )
+        return fallback
+    recipient_name = resp.draft.recipient.display_name if resp.draft and resp.draft.recipient else "người nhận"
+    _persist_action_turn(
+        user_id=user_id,
+        session_id=req.session_id,
+        user_text=f"Chọn {recipient_name}",
+        resp=resp,
+    )
     return resp
 
 
 @router.post("/contacts/{draft_id}/confirm", response_model=OmniResponse)
-def confirm_contact(
-    draft_id: str,
-    user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
-) -> OmniResponse:
+def confirm_contact(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     resp = confirm_contact_draft(user_id, draft_id)
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
-    _archive_action(session_id, user_id, "Lưu danh bạ", resp)
     return resp
 
 
 @router.post("/contacts/{draft_id}/cancel", response_model=OmniResponse)
-def cancel_contact(
-    draft_id: str,
-    user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
-) -> OmniResponse:
-    resp = cancel_contact_draft(user_id, draft_id)
-    _archive_action(session_id, user_id, "Huỷ lưu danh bạ", resp)
-    return resp
+def cancel_contact(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+    return cancel_contact_draft(user_id, draft_id)
 
 
 @router.post("/schedules/{draft_id}/confirm", response_model=OmniResponse)
@@ -358,7 +474,6 @@ def confirm_schedule(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     resp = confirm_schedule_draft(
         user_id,
@@ -368,22 +483,12 @@ def confirm_schedule(
     )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
-    # Archive only the terminal outcome (schedule created → no draft left),
-    # skipping the intermediate "nhập OTP" prompt.
-    if resp.schedule_draft is None:
-        _archive_action(session_id, user_id, "Xác nhận lịch định kỳ", resp)
     return resp
 
 
 @router.post("/schedules/{draft_id}/cancel", response_model=OmniResponse)
-def cancel_schedule(
-    draft_id: str,
-    user_id: str = Depends(current_user),
-    session_id: str | None = Depends(current_session),
-) -> OmniResponse:
-    resp = cancel_schedule_draft(user_id, draft_id)
-    _archive_action(session_id, user_id, "Huỷ đặt lịch", resp)
-    return resp
+def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+    return cancel_schedule_draft(user_id, draft_id)
 
 
 @router.post("/session/reset")

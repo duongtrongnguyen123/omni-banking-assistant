@@ -875,6 +875,414 @@ textarea:focus-visible,
   gap: 8px;
 }
 
+.admin-log-page {
+  min-height: 100vh;
+  padding: 28px;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(139, 166, 244, 0.18), transparent 26%),
+    linear-gradient(180deg, #f7f8ff 0%, #eef1fb 100%);
+}
+
+.admin-log-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1280px;
+  margin: 0 auto 20px;
+}
+
+.admin-log-kicker {
+  margin: 0 0 6px;
+  color: var(--user);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-log-header h1 {
+  margin: 0;
+  font-size: 34px;
+}
+
+.admin-log-header p {
+  margin: 8px 0 0;
+  max-width: 660px;
+  color: var(--muted);
+}
+
+.admin-log-home {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: white;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.admin-log-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(130px, 0.7fr) minmax(130px, 0.7fr) minmax(220px, 1.4fr) auto;
+  gap: 12px;
+  max-width: 1280px;
+  margin: 0 auto 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 16px 40px -30px rgba(15, 17, 58, 0.4);
+}
+
+.admin-log-filters label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-log-filters input {
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: white;
+  font: inherit;
+}
+
+.admin-log-filters button {
+  align-self: end;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: var(--user);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-log-filters button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.admin-log-error {
+  max-width: 1280px;
+  margin: 0 auto 14px;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #b91c1c;
+  background: #fff1f2;
+  font-weight: 800;
+}
+
+.admin-log-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.admin-log-list,
+.admin-log-detail {
+  min-height: 620px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 20px 60px -34px rgba(15, 17, 58, 0.48);
+}
+
+.admin-log-list {
+  overflow: auto;
+  padding: 10px;
+}
+
+.admin-log-list__summary {
+  padding: 6px 6px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-log-session {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.admin-log-session:hover,
+.admin-log-session.is-active {
+  border-color: rgba(47, 109, 246, 0.28);
+  background: #f5f7ff;
+}
+
+.admin-log-session__title {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-log-session__meta,
+.admin-log-session__preview {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-log-session__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.admin-log-session__tags em {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: #dbeafe;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.admin-log-detail {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-log-detail__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-log-detail__head p,
+.admin-log-detail__head h2 {
+  margin: 0;
+}
+
+.admin-log-detail__head p,
+.admin-log-detail__head time {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-log-detail__head h2 {
+  margin-top: 4px;
+  font-size: 22px;
+}
+
+.admin-log-messages {
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px 24px;
+}
+
+.admin-log-message {
+  max-width: 860px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.admin-log-message--user {
+  margin-left: auto;
+  border-color: rgba(47, 109, 246, 0.26);
+  background: #f7f9ff;
+}
+
+.admin-log-message__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-log-message__meta span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #047857;
+  background: #d1fae5;
+  font-weight: 900;
+}
+
+.admin-log-message__body {
+  color: var(--ink);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.admin-log-replay .msg {
+  margin: 0;
+}
+
+.admin-log-replay .msg__stack {
+  max-width: 760px;
+}
+
+.admin-log-replay .tx-receipt,
+.admin-log-replay .tx-card,
+.admin-log-replay .tx-success {
+  max-width: 560px;
+}
+
+.admin-log-replay .tx-card--done {
+  opacity: 1;
+}
+
+.admin-log-empty {
+  padding: 22px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.admin-ledger {
+  max-width: 1280px;
+  margin: 18px auto 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 60px -34px rgba(15, 17, 58, 0.48);
+}
+
+.admin-ledger__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.admin-ledger__head h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.admin-ledger__head button {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: var(--user);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-ledger__head button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.admin-ledger__hint {
+  max-width: 760px;
+  margin: 8px 0 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.admin-ledger__summary {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-ledger__table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.admin-ledger__table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  background: white;
+}
+
+.admin-ledger__table th,
+.admin-ledger__table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-ledger__table th {
+  color: var(--muted);
+  background: #f7f8ff;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.admin-ledger__table td {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.admin-ledger__table td span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .admin-log-page {
+    padding: 18px;
+  }
+
+  .admin-log-header,
+  .admin-log-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-log-header {
+    display: grid;
+  }
+
+  .admin-log-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-log-list,
+  .admin-log-detail {
+    min-height: 360px;
+  }
+
+  .admin-ledger__head {
+    display: grid;
+  }
+}
+
 .bio-inline {
   display: flex;
   align-items: center;
@@ -2843,4 +3251,197 @@ textarea:focus-visible,
 
   /* Keep the input clear of the home-indicator / gesture bar. */
   .phone__input { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+}
+
+/* ---- My Account card ---- */
+.my-account-card {
+  background: white;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  max-width: 360px;
+}
+.my-account-card__header {
+  font-size: 13px; font-weight: 700;
+  color: var(--ink, #111);
+  margin-bottom: 8px;
+}
+.my-account-card__row {
+  padding: 8px 0;
+  border-top: 1px solid var(--line, #eee);
+}
+.my-account-card__row:first-of-type { border-top: none; padding-top: 0; }
+.my-account-card__bank {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600;
+  color: var(--ink, #111);
+}
+.my-account-card__badge {
+  font-size: 10.5px; font-weight: 700;
+  background: var(--accent-bg, #eef2ff);
+  color: var(--accent, #4f46e5);
+  padding: 1px 6px; border-radius: 999px;
+}
+.my-account-card__number {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 4px;
+}
+.my-account-card__number code {
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 14px; font-weight: 600;
+  color: var(--ink, #111);
+  background: var(--bg-soft, #f5f5f7);
+  padding: 3px 8px; border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+.my-account-card__copy {
+  font-size: 11.5px; font-weight: 600;
+  color: var(--accent, #4f46e5);
+  background: transparent; border: 1px solid var(--accent, #4f46e5);
+  padding: 3px 8px; border-radius: 6px;
+  cursor: pointer;
+}
+.my-account-card__copy:hover { background: var(--accent-bg, #eef2ff); }
+.my-account-card__holder {
+  font-size: 11.5px; color: var(--muted, #666);
+  margin-top: 3px;
+}
+
+/* ---- QR receive card ---- */
+.qr-card {
+  background: white;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  max-width: 360px;
+}
+.qr-card__header {
+  font-size: 13px; font-weight: 700;
+  color: var(--ink, #111);
+  margin-bottom: 10px;
+}
+.qr-card__body {
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.qr-card__image {
+  width: 130px; height: 130px;
+  border: 1px solid var(--line, #eee);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.qr-card__meta {
+  flex: 1;
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+}
+.qr-card__bank {
+  font-size: 13px; font-weight: 600; color: var(--ink, #111);
+}
+.qr-card__account {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.qr-card__account code {
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 13px; font-weight: 600;
+  color: var(--ink, #111);
+  background: var(--bg-soft, #f5f5f7);
+  padding: 3px 6px; border-radius: 6px;
+  letter-spacing: 0.5px;
+  word-break: break-all;
+}
+.qr-card__copy {
+  font-size: 11px; font-weight: 600;
+  color: var(--accent, #4f46e5);
+  background: transparent; border: 1px solid var(--accent, #4f46e5);
+  padding: 2px 6px; border-radius: 6px;
+  cursor: pointer; align-self: flex-start;
+}
+.qr-card__copy:hover { background: var(--accent-bg, #eef2ff); }
+.qr-card__holder, .qr-card__memo {
+  font-size: 11.5px; color: var(--muted, #666);
+}
+.qr-card__amount {
+  font-size: 12.5px; color: var(--ink, #111);
+}
+.qr-card__amount strong { color: var(--accent, #4f46e5); }
+.qr-card__hint {
+  font-size: 11px; color: var(--muted, #888);
+  margin-top: 8px; text-align: center;
+  border-top: 1px solid var(--line, #eee);
+  padding-top: 8px;
+}
+
+/* ---- alignment fixes (user report: số dư / danh bạ thụt vào, không xuống dòng) ---- */
+
+/* Balance — make the total + per-account amounts robust against long numbers */
+.bal-card__total {
+  white-space: nowrap;
+}
+.bal-card__accounts li {
+  /* allow the left (bank + masked STK) to shrink with ellipsis instead of
+     forcing the right amount off the card. ``min-width: 0`` on the left
+     enables flex children to actually shrink past their content. */
+  min-width: 0;
+  align-items: flex-start;
+}
+.bal-card__accounts li > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.bal-account__bank {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+}
+.bal-account__num {
+  white-space: nowrap;
+}
+.bal-account__amount {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 124px;       /* fit "1.962.000.000đ" at the current font size */
+}
+
+/* History rows — same pattern: amount + date on the right shouldn't wrap */
+.hist-list__item {
+  gap: 10px;
+  min-width: 0;
+}
+.hist-list__item > div:first-child {
+  min-width: 0; flex: 1 1 auto; overflow: hidden;
+}
+.hist-list__name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-list__desc {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-list__amount { white-space: nowrap; flex-shrink: 0; }
+.hist-list__date  { white-space: nowrap; flex-shrink: 0; }
+
+/* Contact picker — long names / labels were causing the row to look
+   indented because the chip column pushed the main text away. Lock the
+   main column to shrink with ellipsis. */
+.picker__main { min-width: 0; }
+.picker__name {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.picker__meta {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Disambiguation candidate row in chat — long contact + bank name combos
+   wrapped mid-word and looked indented. Lock to ellipsis. */
+.candidate-row { min-width: 0; }
+.candidate-row > div { min-width: 0; }
+.candidate-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.candidate-bank {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

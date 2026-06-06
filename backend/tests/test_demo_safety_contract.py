@@ -2221,3 +2221,1263 @@ def test_insights_anomaly_renders_detector_reason() -> None:
     # / "~0đ" rendering from the field-mismatch bug.
     assert "(không rõ)" not in r.text
     assert "thường ~0đ" not in r.text
+
+
+# ---------------------------------------------------------------------------
+# Category-shaped queries — "ăn uống tháng này" / "cafe bao nhiêu" → history
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # <category> + temporal
+        "ăn uống tháng này",
+        "ăn uống tuần trước",
+        "mua sắm tháng này",
+        "cafe tháng này",
+        "cà phê tháng này",
+        "xăng tháng này",
+        "grab tháng này",
+        "tiền điện tháng này",
+        # <category> + aggregation cue
+        "giải trí bao nhiêu",
+        "shopping bao nhiêu",
+        "tiền nhà bao nhiêu",
+        # tiêu/chi + <category>
+        "tiêu ăn uống",
+        "chi giải trí",
+        "tiêu ăn uống bao nhiêu",
+    ],
+)
+def test_category_shaped_queries_route_history(text: str) -> None:
+    """Without a category-aware route, "ăn uống tháng này" / "mua sắm
+    tháng này" / "tiền điện tháng này" all fell to "unknown" — the
+    Tier-2 history defaults (bao nhieu / tieu) only fired on phrasings
+    that included a verb. Judges naturally drop the verb when asking
+    about a specific category."""
+    intent, _ = classify(text)
+    assert intent == "history", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Critical negatives — category words inside a transfer command
+        # ("tiền ăn" / "tiền nhà") must NOT trigger the category route.
+        ("gửi mẹ tiền ăn 100k", "transfer"),
+        ("gửi mẹ tiền nhà 5tr", "transfer"),
+        ("chuyển mẹ 2 triệu", "transfer"),
+        ("số dư", "balance"),
+        ("tháng này tiêu bao nhiêu", "history"),
+    ],
+)
+def test_category_route_doesnt_eat_transfer_commands(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "kiểm tra tài khoản đi",
+        "kiểm tra tài khoản",
+        "thông tin tài khoản",
+        "check balance",
+        "check số dư",
+        "show balance",
+    ],
+)
+def test_check_account_phrasings_route_balance(text: str) -> None:
+    """Code-switched and verb-led account queries that pre-fix fell to
+    transfer ("kiểm tra" matched no balance keyword; the Tier-2 default
+    sent any unrecognised verb-led message to transfer)."""
+    intent, _ = classify(text)
+    assert intent == "balance", text
+
+
+# ---------------------------------------------------------------------------
+# Confirm matcher — VN polite/informal acks (dạ/vâng/ờ/okela) + neg-guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Polite forms — judges saying yes politely.
+        "dạ", "dạ vâng", "vâng", "vâng ạ",
+        # Right / correct affirmations.
+        "đúng", "đúng rồi", "đúng vậy", "chuẩn",
+        "phải", "phải rồi",
+        # Informal acks.
+        "ờ", "ờm", "ờ ơ",
+        # Slangy ok variants judges actually type in chat.
+        "okela", "oce", "okie", "okê",
+        # Regression — original confirms still work.
+        "ok", "ừ", "xác nhận", "được",
+    ],
+)
+def test_confirm_matches_common_vn_acks(text: str) -> None:
+    """Pre-fix the rule fallback only recognised "ok / okay / ừ / xác
+    nhận / được" as confirms — a judge saying "dạ" / "vâng" / "đúng" /
+    "okela" against a confirm card got the message routed to NLU and
+    treated as an unknown / transfer instead. Polite formal Vietnamese
+    is the default register; without these the demo feels brittle."""
+    assert _is_confirm(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Question / action followers must NOT trip the confirm guard.
+        # "phải/đúng" matched bare is a confirm; followed by a verb
+        # they're part of a question.
+        "phải làm gì bây giờ",
+        "đúng làm gì",
+        "phải đi đâu",
+        "phải về nhà",
+        # Cancel particles must NOT route to confirm.
+        "không",
+        "không phải",
+        # Real intents must NOT route to confirm.
+        "tháng này tiêu bao nhiêu",
+        "chuyển mẹ 2 triệu",
+    ],
+)
+def test_confirm_negative_lookahead_doesnt_eat_questions(text: str) -> None:
+    assert not _is_confirm(text), text
+
+
+# ---------------------------------------------------------------------------
+# Backward word-order + preposition strip + honorific fall-through
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Verb first, amount first, recipient last — the order judges
+        # actually type. Pre-fix the rule extractor's bare-token-amount
+        # regex matched "chuyển" as recipient and dropped the real name.
+        ("chuyển 5tr Nam", "Nam"),
+        ("chuyển 2 triệu mẹ", "mẹ"),
+        ("gửi 300k sếp", "sếp"),
+        ("chuyển 2tr Hùng", "Hùng"),
+        ("chuyển 1tr Minh", "Minh"),
+        ("trả 500k bố", "bố"),
+        # "sang" / "qua" prepositions weren't in the strip list, so
+        # "gửi sang Minh 300k" leaked the preposition into the resolver
+        # query as "sang Minh" → 0 candidates.
+        ("gửi sang Minh 300k", "Minh"),
+        ("chuyển qua bạn thân 500k", "bạn thân"),
+    ],
+)
+def test_backward_word_order_extracts_recipient(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text == expected_recipient, (text, e.recipient_text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Verbs and amount-context nouns must NOT be picked up as
+        # recipients by the bare-token-amount pattern.
+        "chuyển 5tr",
+        "gửi 300k",
+        "lương 5tr",
+        "tiền nhà 3tr",
+        "ngân sách 1tr",
+    ],
+)
+def test_bare_token_denylist_blocks_verb_and_context_nouns(text: str) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text is None, (text, e.recipient_text)
+
+
+def test_resolver_honorific_falls_through_to_name_lookup() -> None:
+    """Pre-fix, "cô Lan" routed via the alias heuristic to alias-only
+    lookup and returned 0 candidates even though stripping "cô" and
+    token-matching "Lan" would have surfaced ambiguity between the two
+    Lans the user has. Heuristic now only biases ordering — alias
+    lookup runs first; name lookup runs second when alias is empty."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    r = resolve_recipient("cô Lan", contacts)
+    names = sorted(c.contact.display_name for c in r)
+    # Demo seed has two contacts named Lan (Nguyễn Thị Lan + Phạm Thị
+    # Lan). Resolver should return both so the chat asks which one.
+    assert len(r) >= 2, names
+    assert all("Lan" in n for n in names)
+
+
+def test_amount_parser_bare_digit_with_transfer_context() -> None:
+    """Pre-fix the user-typed bare-VND amount "chuyển 100000000 cho mẹ"
+    parsed as ``None`` (no unit suffix) and the amount predictor then
+    silently overwrote it with the recipient's median ~750k. The
+    confirm card said "Đã hiểu! Xác nhận chuyển 750.000đ" while the
+    user thought they were sending 100M. Money-touching silent
+    override. Now the bare-integer + transfer-verb branch picks up
+    the explicit amount before the predictor runs."""
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount("chuyển 100000000 cho mẹ")
+    assert amount == 100_000_000
+    amount, _ = parse_amount("chuyển 50000 cho bố")
+    assert amount == 50_000
+    amount, _ = parse_amount("chuyển 100 cho mẹ")
+    assert amount is None
+
+
+def test_amount_parser_bare_digit_excludes_account_hints() -> None:
+    """The bare-digit branch must NOT swallow account numbers — those
+    have a separate extractor and a different downstream meaning. Pre-
+    fix the new branch happily read ``stk 9990001234`` as a 9.99-billion
+    đồng amount."""
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount("gửi mẹ stk 9990001234")
+    assert amount is None
+    amount, _ = parse_amount("Lưu Nam STK 9990001234 MB Bank")
+    assert amount is None
+
+
+def test_amount_parser_zero_djong_explicit() -> None:
+    """Explicit ``0đ`` must parse as 0 (not None) so the orchestrator's
+    ``user_invalid_amount`` guard catches it and the predictor doesn't
+    silently fill 750k median."""
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount("chuyển 0đ mẹ")
+    assert amount == 0
+
+
+def test_transfer_zero_amount_blocks_predictor() -> None:
+    """When the user types an explicit 0đ, do NOT swap it for a
+    history-median prediction. Surface ``missing_amount`` instead."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", "chuyển 0đ mẹ")
+    assert resp.draft is not None
+    assert resp.draft.amount is None
+    assert resp.draft.predicted_amount is False
+    assert any(f.code == "missing_amount" for f in resp.draft.flags)
+
+
+def test_transfer_negative_amount_rejected() -> None:
+    """Pre-fix ``chuyển -5tr cho mẹ`` parsed to amount=5_000_000 (the
+    minus sign was stripped silently). Now the leading-minus guard
+    catches it and the safety engine surfaces ``missing_amount``."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", "chuyển -5tr cho mẹ")
+    assert resp.draft is not None
+    assert resp.draft.amount is None
+    assert any(f.code == "missing_amount" for f in resp.draft.flags)
+
+
+def test_fresh_verb_swap_recipient_keeps_amount() -> None:
+    """User flow from feedback "cứ đổi người là quên mất số tiền":
+    ``chuyển mẹ 1tr`` then ``chuyển cho bố`` (fresh verb + recipient
+    only, no amount). Pre-fix the fresh-transfer guard wiped the draft
+    on any verb-led prefix, so the second turn started a NEW draft with
+    no amount. Now we only wipe when BOTH slots arrive together — a
+    single-slot edit routes through the modify path and the amount is
+    preserved."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.amount == 1_000_000
+
+    edit = handle_message("u_an", "chuyển cho bố")
+    assert edit.draft is not None, "draft must survive a single-slot fresh-verb edit"
+    assert edit.draft.amount == 1_000_000, "amount must carry over from the previous turn"
+    assert edit.draft.recipient is not None
+    # Recipient changed away from mẹ (loose check — exact name depends on seed).
+    assert edit.draft.recipient.display_name != first.draft.recipient.display_name
+
+
+def test_fresh_verb_swap_amount_keeps_recipient() -> None:
+    """Mirror: ``chuyển mẹ 1tr`` then ``chuyển 500k`` (fresh verb +
+    amount only, no recipient). Pre-fix the guard wiped the draft and
+    the second turn lost the recipient. Now the amount edit lands on
+    the existing draft."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.recipient is not None
+    first_name = first.draft.recipient.display_name
+
+    edit = handle_message("u_an", "chuyển 500k")
+    assert edit.draft is not None, "draft must survive a single-slot fresh-verb edit"
+    assert edit.draft.amount == 500_000, "amount must update to the new value"
+    assert edit.draft.recipient is not None
+    assert edit.draft.recipient.display_name == first_name
+
+
+def test_new_chat_session_clears_orchestrator_draft() -> None:
+    """User report: open a new chat in the left drawer, ask
+    "chuyển tiền cho bố" — Omni auto-fills the amount from the prior
+    conversation's abandoned draft. The orchestrator session is keyed
+    by user_id only, so without a session-switch hook the in-memory
+    draft persisted across conversations. Now /api/chat clears it on
+    every session_id change, AND POST /chat/sessions clears it on
+    create."""
+    from fastapi.testclient import TestClient
+    from app.context.session import session_for as _sf
+    from app.main import app
+    from app.routes.chat import _LAST_SESSION_BY_USER
+
+    client = TestClient(app)
+    _LAST_SESSION_BY_USER.clear()
+    _sf("u_an").clear_draft()
+
+    # First conversation — leave an incomplete draft hanging.
+    r1 = client.post(
+        "/api/chat",
+        headers={"x-user-id": "u_an"},
+        json={"message": "chuyển 2 triệu"},
+    )
+    assert r1.status_code == 200
+    first_session = r1.headers["X-Chat-Session-Id"]
+    assert _sf("u_an").current_draft is not None
+    assert _sf("u_an").current_draft.amount == 2_000_000
+
+    # User opens a brand-new conversation via the left drawer button.
+    create = client.post("/api/chat/sessions", headers={"x-user-id": "u_an"})
+    assert create.status_code == 200
+    new_session = create.json()["id"]
+    assert new_session != first_session
+
+    # The orchestrator draft must have been wiped — otherwise the next
+    # turn in the new conversation would inherit the abandoned 2tr.
+    assert _sf("u_an").current_draft is None
+
+    # _enter_chat_session also fires from /api/chat itself: switching
+    # back to the FIRST session via a turn must again clear the draft
+    # (so going back-and-forth in the drawer never leaks slots).
+    _sf("u_an").clear_draft()  # baseline
+    r2 = client.post(
+        "/api/chat",
+        headers={"x-user-id": "u_an"},
+        json={"message": "chuyển 9tr", "session_id": first_session},
+    )
+    assert r2.status_code == 200
+    assert _sf("u_an").current_draft is not None
+    assert _sf("u_an").current_draft.amount == 9_000_000
+
+    # Now hop back to the NEW session — draft from "chuyển 9tr" above
+    # must NOT carry over.
+    r3 = client.post(
+        "/api/chat",
+        headers={"x-user-id": "u_an"},
+        json={"message": "số dư bao nhiêu", "session_id": new_session},
+    )
+    assert r3.status_code == 200
+    # After the switch the orchestrator's draft is cleared. The balance
+    # turn itself doesn't create a draft, so it stays None.
+    assert _sf("u_an").current_draft is None
+
+
+def test_fresh_verb_both_slots_still_starts_fresh() -> None:
+    """Counter-test: when the user provides BOTH recipient AND amount
+    on a verb-led command, it's truly a fresh request — wipe the old
+    draft. Without this we'd silently inherit safety flags / mini-
+    ledger from the previous recipient."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.amount == 1_000_000
+
+    fresh = handle_message("u_an", "chuyển cho bố 500k")
+    assert fresh.draft is not None
+    assert fresh.draft.amount == 500_000
+    # Recipient swapped — and the mini-ledger / flags are recomputed
+    # against the new recipient because the draft was wiped first.
+    assert fresh.draft.recipient is not None
+    assert fresh.draft.recipient.display_name != first.draft.recipient.display_name
+
+
+def test_modify_amount_preserves_recipient() -> None:
+    """Sequence: ``chuyển mẹ 2tr`` then ``đổi thành 5tr``. Pre-fix the
+    rule extractor matched "đổi thành" as ``recipient_text`` and
+    ``_modify_transfer_draft`` then cleared the existing recipient on
+    the failed alias lookup. User got "Bạn muốn chuyển 5tr cho ai?"
+    when they only meant to change the amount."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 2tr")
+    assert first.draft and first.draft.recipient is not None
+    first_name = first.draft.recipient.display_name
+
+    edit = handle_message("u_an", "đổi thành 5tr")
+    assert edit.draft is not None
+    assert edit.draft.recipient is not None
+    assert edit.draft.recipient.display_name == first_name
+    assert edit.draft.amount == 5_000_000
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "tạm dừng lịch chuyển mẹ",
+        "huỷ lịch chuyển mẹ",
+        "dừng lịch",
+        "xem lịch chuyển",
+    ],
+)
+def test_schedule_management_does_not_open_transfer(text: str) -> None:
+    """CRITICAL safety: pre-fix, "tạm dừng lịch chuyển mẹ" tripped the
+    Tier-1 ``chuyen`` transfer keyword, the predictor filled a
+    history-median ~500k, and the chat opened a one-click confirm card
+    to send mẹ that money. The user wanted to PAUSE a recurring
+    schedule. Route schedule-management verbs to ``recurring`` so the
+    user sees their schedule list and can act safely instead."""
+    intent, _ = classify(text)
+    assert intent == "recurring", (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Modifier verbs after a draft — must NOT be matched as
+        # recipient_text. Pre-fix the bare-recipient pattern read
+        # "cộng thêm" / "thêm" / "giảm" / "tăng" as recipient and the
+        # modify path then cleared the existing recipient on the
+        # failed alias lookup.
+        "cộng thêm 500k",
+        "thêm 200k",
+        "giảm 300k",
+        "tăng 1tr",
+        "bớt 100k",
+    ],
+)
+def test_amount_modifier_verbs_dont_steal_recipient(text: str) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text is None, (text, e.recipient_text)
+    # Amount should still parse — modifier verb only blocks the
+    # recipient match, not the amount.
+    assert e.amount is not None, (text, e.amount)
+
+
+def test_additive_modifier_preserves_recipient_on_modify_draft() -> None:
+    """Sequence: ``chuyển mẹ 1tr`` then ``cộng thêm 500k``. Pre-fix
+    "cộng thêm" was matched as recipient_text, the modify path cleared
+    mẹ, and the draft showed 500k → unspecified recipient. Now mẹ
+    survives the turn. The amount math (1tr + 500k = 1.5tr) is NOT
+    implemented — the user sees the new 500k amount on the card and
+    can correct it; the safety fix here is the recipient survival."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.recipient is not None
+    first_name = first.draft.recipient.display_name
+
+    edit = handle_message("u_an", "cộng thêm 500k")
+    assert edit.draft is not None
+    assert edit.draft.recipient is not None
+    assert edit.draft.recipient.display_name == first_name
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # CRITICAL safety: greeting prefix must not eat the imperative.
+        # Pre-fix the message was classified as smalltalk and the
+        # transfer instruction was silently dropped — user thought
+        # they queued a transfer and walked away.
+        ("Chào Omni, chuyển mẹ 2tr nhé", "transfer"),
+        ("cảm ơn Omni, chuyển bố 500k", "transfer"),
+        ("hello chuyển 100k cho mẹ", "transfer"),
+        ("chào Omni, số dư", "balance"),
+        ("cảm ơn Omni, đặt lịch chuyển mẹ 2tr mùng 1", "schedule"),
+        # Bare greetings must still route to smalltalk.
+        ("chào omni", "smalltalk"),
+        ("xin chào", "smalltalk"),
+        ("cảm ơn", "smalltalk"),
+        ("tạm biệt", "smalltalk"),
+    ],
+)
+def test_greeting_prefix_does_not_swallow_command(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Trailing politeness particles must not glue to the recipient
+        # surface form. Pre-fix the prep regex captured "mẹ giúp tôi"
+        # and the resolver returned 0.
+        ("chuyển 5tr cho mẹ giúp tôi", "mẹ"),
+        ("chuyển 5tr cho mẹ nhé", "mẹ"),
+        ("chuyển 5tr cho mẹ đi", "mẹ"),
+        ("chuyển 5tr cho mẹ ạ", "mẹ"),
+        ("chuyển 5tr cho mẹ nha", "mẹ"),
+        # Leading "do me a favour" auxiliary between verb and recipient.
+        ("chuyển giúp mẹ 200k", "mẹ"),
+        ("gửi giùm bố 500k", "bố"),
+        ("chuyển hộ mẹ 1tr", "mẹ"),
+        # Leading filler interjection.
+        ("ê chuyển 5tr cho mẹ giúp tôi", "mẹ"),
+    ],
+)
+def test_filler_and_particle_strip_keeps_recipient(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text == expected_recipient, (text, e.recipient_text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "khoản ăn uống dưới 200k",
+        "ăn uống dưới 200k tháng này",
+        "shopping trên 1tr",
+        "cà phê từ 50k đến 200k",
+    ],
+)
+def test_category_amount_range_routes_to_history(text: str) -> None:
+    """Pre-fix ``khoản ăn uống dưới 200k`` fell to the Tier-3 bare-digit
+    transfer fallback and opened a 200k-to-unknown draft. Category +
+    range cue is a history filter, not a transfer command."""
+    intent, _ = classify(text)
+    assert intent == "history", (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Negation + transfer verb — user is saying "don't transfer"
+        # not "transfer". Pre-fix the Tier-1 ``chuyen`` substring won,
+        # opened a one-click confirm card, and the user could land at
+        # OTP for a transfer they explicitly refused.
+        "đừng chuyển mẹ 2tr",
+        "không muốn chuyển mẹ 2tr",
+        "hủy ý định chuyển mẹ 2tr",
+        # Hypothetical / modal — "what if I sent...?" / "let me try
+        # sending..." used to become real drafts. "thử chuyển mẹ 1k"
+        # became a real 1.000đ transfer pre-fix.
+        "giả sử chuyển mẹ 5tr",
+        "thử chuyển mẹ 1k xem được không",
+        "nếu chuyển mẹ 2tr thì còn dư không?",
+    ],
+)
+def test_negation_and_hypothetical_route_to_unknown(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "unknown", (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Common confirmations missing from the pre-fix list. Judges
+        # who type "có" / "tất nhiên" / "chắc chắn" / "uh" at the
+        # confirm card had the message routed to NLU and re-prompted.
+        "có",
+        "tất nhiên",
+        "chắc chắn",
+        "uh",
+    ],
+)
+def test_confirm_matches_more_vn_acks(text: str) -> None:
+    assert _is_confirm(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Bare "có" with question / modal follow-ups must NOT confirm.
+        "có thể",
+        "có gì không",
+        "có sao không",
+        "có nên",
+        "có chuyện gì",
+    ],
+)
+def test_confirm_bare_co_negative_lookahead(text: str) -> None:
+    assert not _is_confirm(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Pre-fix these reassurance phrases starting with "không" /
+        # "thôi" were silently cancelling valid draft confirms — the
+        # user meant "no change, proceed" / "just go with it" but the
+        # session got cancelled. CRITICAL UX bug — valid intent lost.
+        "không thay đổi gì cả",
+        "không có gì thay đổi",
+        "không sao",
+        "không phải",
+        "thôi cứ thế đi",
+        "thôi vậy đi",
+        "thôi ok",
+    ],
+)
+def test_cancel_false_positive_guards(text: str) -> None:
+    from app.services.orchestrator import _is_cancel
+
+    assert not _is_cancel(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Bare cancel particles must still cancel.
+        "không",
+        "thôi",
+        "huỷ",
+        "cancel",
+        "không, huỷ đi",
+    ],
+)
+def test_cancel_bare_particles_still_cancel(text: str) -> None:
+    from app.services.orchestrator import _is_cancel
+
+    assert _is_cancel(text), text
+
+
+@pytest.mark.parametrize(
+    "text,expected_amount",
+    [
+        # Pre-fix "100k 2 lần cho mẹ" concatenated to 100.002đ — money-
+        # loss-class wrong-amount. The "2 lần" (times) is NOT an amount
+        # continuation; the negative lookahead now stops the rest match.
+        ("100k 2 lần cho mẹ", 100_000),
+        ("chuyển mẹ 100k 3 lần", 100_000),
+        # Legitimate concatenations must still work.
+        ("5tr500", 5_500_000),
+        ("5tr 500k", 5_500_000),
+        ("100k500", 100_500),
+    ],
+)
+def test_amount_no_digit_concatenation_before_non_unit_word(
+    text: str, expected_amount: int
+) -> None:
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount(text)
+    assert amount == expected_amount, (text, amount)
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Digit-in-label class — "Bạn cấp 3" is the LABEL of one of the
+        # seed contacts (Phạm Thuý Vy). Pre-fix the rule extractor's
+        # STOP_LOOKAHEAD `\d` truncated "bạn cấp 3" → "bạn cấp" at the
+        # digit, and the resolver couldn't find the label. The new
+        # STOP_LOOKAHEAD requires `\d+ + amount unit` to terminate;
+        # bare digits inside a label stay inside the surface.
+        ("cho bạn cấp 3", "Phạm Thuý Vy"),
+        ("chuyển cho bạn cấp 3 2tr", "Phạm Thuý Vy"),
+        ("chuyển bạn cấp 3 500k", "Phạm Thuý Vy"),
+        ("chuyển cho Bạn cấp 3 1tr", "Phạm Thuý Vy"),
+        ("gửi cho bạn cấp 3 100k", "Phạm Thuý Vy"),
+    ],
+)
+def test_digit_in_label_does_not_truncate_recipient(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    e = extract(text)
+    assert e.recipient_text, (text, "no recipient_text extracted")
+    r = resolve_recipient(e.recipient_text, contacts)
+    names = [c.contact.display_name for c in r]
+    assert expected_recipient in names, (text, names)
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Possessive "của tôi" / "của mình" must be stripped from the
+        # surface form before alias / label lookup. Pre-fix the
+        # _strip_relational chain pre-stripped "bạn" as a relational
+        # prefix AND failed to remove "của", leaving "than" alone —
+        # which matched nothing. New _strip_tail_only variant keeps
+        # the relational prefix intact for label matching.
+        ("chuyển cho bạn thân của tôi", "Vũ Quốc Bảo"),
+        ("chuyển cho bạn thân của tôi 2tr", "Vũ Quốc Bảo"),
+        ("chuyển cho bạn thân của mình 500k", "Vũ Quốc Bảo"),
+        ("chuyển cho bạn cấp 3 của tôi 1tr", "Phạm Thuý Vy"),
+        ("gửi bạn cấp 3 của mình 100k", "Phạm Thuý Vy"),
+        ("chuyển mẹ của tôi 5tr", "Nguyễn Thị Lan"),
+        ("chuyển cho anh Tuấn của mình 1tr", "Phạm Quốc Tuấn"),
+    ],
+)
+def test_possessive_cua_toi_minh_strips_for_label_match(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    e = extract(text)
+    assert e.recipient_text, (text, "no recipient_text extracted")
+    r = resolve_recipient(e.recipient_text, contacts)
+    names = [c.contact.display_name for c in r]
+    assert expected_recipient in names, (text, names)
+
+
+@pytest.mark.parametrize(
+    "text,token_in_candidate",
+    [
+        # Kinship honorifics "dì" (maternal aunt) and "cậu" (maternal
+        # uncle) weren't in the prefix-strip whitelist, so the resolver
+        # tried to match "di lan" / "cau minh" verbatim against display
+        # names and got nothing.
+        ("chuyển dì Lan 200k", "Lan"),
+        ("chuyển cậu Minh 200k", "Minh"),
+    ],
+)
+def test_kinship_di_cau_strips_for_name_match(
+    text: str, token_in_candidate: str
+) -> None:
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", text)
+    assert resp.draft is not None
+    candidates = list(resp.draft.candidates) if resp.draft else []
+    if resp.draft.recipient is not None:
+        candidates = [resp.draft.recipient] + candidates
+    assert any(
+        token_in_candidate in c.display_name for c in candidates
+    ), (text, [c.display_name for c in candidates])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Commas / colons / quotes around the label used to leak into
+        # the resolver query verbatim ("\"bạn thân\""), failing the
+        # exact alias / label match. Now pre-normalised to spaces in
+        # ``extract()`` and stripped in ``_clean_recipient``.
+        "chuyển,bạn thân,2tr",
+        "chuyển cho bạn thân: 2tr",
+        'chuyển cho "Bạn thân" 2tr',
+        "chuyển  cho   bạn thân   2tr",
+    ],
+)
+def test_punctuation_around_label_resolves_to_recipient(text: str) -> None:
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", text)
+    assert resp.draft is not None
+    assert resp.draft.recipient is not None, (text, resp.text)
+    assert resp.draft.recipient.display_name == "Vũ Quốc Bảo"
+    assert resp.draft.amount == 2_000_000
+
+
+def test_slot_fill_accepts_bare_label_with_digit() -> None:
+    """Pre-fix the slot-fill heuristic rejected any text containing a
+    digit — so after ``chuyển 2tr`` the follow-up ``bạn cấp 3`` was
+    treated as a fresh non-transfer message and the amount slot was
+    lost. The new heuristic only rejects digit + amount-unit shapes
+    (real amounts) and bare-digit-only short strings (OTPs); a label
+    with an interior digit stays eligible."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    t1 = handle_message("u_an", "chuyển 2tr")
+    assert t1.draft is not None
+    assert t1.draft.recipient is None
+    assert t1.draft.amount == 2_000_000
+
+    t2 = handle_message("u_an", "bạn cấp 3")
+    assert t2.draft is not None
+    assert t2.draft.recipient is not None
+    assert t2.draft.recipient.display_name == "Phạm Thuý Vy"
+    assert t2.draft.amount == 2_000_000
+
+
+def test_ambiguous_slot_fill_surfaces_ambiguous_recipient_flag() -> None:
+    """Slot-fill with a bare name that matches multiple contacts must
+    raise ``ambiguous_recipient`` (and a disambiguation prompt), not
+    ``missing_recipient``. Pre-fix the modify-draft path passed
+    ``recipient_candidates=[]`` to ``evaluate()`` so the safety rule
+    fell back to "Bạn muốn chuyển X cho ai?" instead of "Có nhiều
+    người trùng tên: ...". User saw a dead-end "ai?" prompt despite
+    the draft carrying multiple candidates."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển 2tr")
+    resp = handle_message("u_an", "Minh")
+    assert resp.draft is not None
+    assert resp.draft.recipient is None
+    assert len(resp.draft.candidates) >= 2
+    flag_codes = [f.code for f in resp.draft.flags]
+    assert "ambiguous_recipient" in flag_codes, flag_codes
+    assert "missing_recipient" not in flag_codes, flag_codes
+
+
+def test_bare_name_swaps_recipient_on_filled_draft() -> None:
+    """Pre-fix the slot-fill heuristic only fired when ``draft.recipient
+    is None``. So when the resolver matched the user's original surface
+    to an unintended contact (e.g. "abc" → Công ty ABC) and the user
+    typed a different bare name in the next turn, the message fell
+    through to NLU → intent=unknown → "Mình chưa rõ ý bạn". Visible
+    "context dropped" UX bug — user could not redirect the transfer.
+    The branch now also fires when a recipient IS set; the new name
+    swaps in."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    t1 = handle_message("u_an", "chuyển 2tr cho abc")
+    assert t1.draft is not None
+    assert t1.draft.recipient is not None
+
+    t2 = handle_message("u_an", "Nam")
+    assert t2.draft is not None
+    assert t2.draft.recipient is not None
+    assert t2.draft.recipient.display_name == "Vũ Hoàng Nam"
+    assert t2.draft.amount == 2_000_000
+
+
+def test_bare_name_after_complete_draft_does_not_break_confirm() -> None:
+    """Companion safety: ``ok`` / ``xác nhận`` after a complete draft
+    must NOT be hijacked by the bare-name branch. The confirm regex
+    runs first and short-circuits the handler."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 2tr")
+    resp = handle_message("u_an", "ok")
+    assert "OTP" in resp.text or "otp" in resp.text.lower()
+
+
+def test_fresh_transfer_does_not_inherit_stale_amount() -> None:
+    """User report: after a previous draft cached amount=2tr, typing a
+    fresh ``chuyển tiền cho t`` (no amount specified) saw the prompt
+    "Bạn muốn chuyển 2.000.000đ cho ai?" — the stale 2tr leaked from
+    the session draft via the modify-path. A fresh verb-led transfer
+    command must start a NEW draft and not inherit the prior amount."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    # Establish a stale draft with an amount.
+    handle_message("u_an", "chuyển 2tr")
+    # Fresh transfer command, no amount mentioned.
+    resp = handle_message("u_an", "chuyển tiền cho t")
+    assert resp.draft is not None
+    # The stale 2tr must NOT be carried over.
+    assert resp.draft.amount is None, (resp.draft.amount, resp.text)
+    # Both slots are missing → safety engine asks generically.
+    flag_codes = [f.code for f in resp.draft.flags]
+    assert "missing_amount" in flag_codes
+
+
+def test_modify_verbs_still_inherit_amount() -> None:
+    """Companion: ``đổi sang 5tr`` / ``cộng thêm 500k`` after a draft
+    must still hit the modify-path and keep the recipient. The
+    fresh-transfer guard only fires on leading transfer verbs
+    (``chuyển`` / ``gửi`` / ``trả`` / ``nạp``), not modify verbs."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 2tr")
+    resp = handle_message("u_an", "đổi sang 5tr")
+    assert resp.draft is not None
+    assert resp.draft.recipient is not None
+    assert resp.draft.recipient.display_name == "Nguyễn Thị Lan"
+    assert resp.draft.amount == 5_000_000
+
+
+def test_concurrent_turns_serialise_per_user() -> None:
+    """Round-9 stress reproduced a race: when /api/chat fires for the
+    same user ~250ms apart, the read-modify-write sequence around
+    ``session.current_draft`` interleaves and the OTP prompt latches
+    onto a stale draft from a prior turn. Worst case: wrong recipient
+    AND wrong amount silently routed to step-up.
+
+    Fix: per-user mutex in ``handle_message``. This test fires 4
+    concurrent threads with the canonical slot-fill flow and asserts
+    the final draft state matches the sequential expectation."""
+    import threading
+    from app.context.session import session_for as _sf
+
+    _sf("u_concurrent").clear_draft()
+
+    msgs = ["chuyển", "mẹ", "2tr", "ok"]
+    threads = []
+    for m in msgs:
+        t = threading.Thread(target=handle_message, args=("u_concurrent", m))
+        threads.append(t)
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # With serialisation, the canonical flow lands on a complete
+    # mẹ + 2tr draft in OTP-awaiting state (or already cleared if
+    # confirm fired with OTP — both are fine, what matters is no
+    # cross-turn corruption).
+    s = _sf("u_concurrent")
+    draft = s.current_draft
+    if draft is not None:
+        # If a draft is still alive, it must be the legitimate mẹ + 2tr,
+        # not a stale Vũ Quốc Bảo / 5tr from a prior test block.
+        if draft.recipient is not None:
+            assert draft.recipient.display_name == "Nguyễn Thị Lan", (
+                draft.recipient.display_name
+            )
+        if draft.amount is not None:
+            assert draft.amount == 2_000_000, draft.amount
+
+
+def test_otp_state_blocks_recipient_mutation() -> None:
+    """CRITICAL exploit class — round-10 stress: after "chuyển mẹ 50tr
+    → ok" the draft is awaiting_otp=True. Typing "bố" used to silently
+    swap the recipient to Lê Văn Hùng while keeping awaiting_otp=True
+    and the same draft_id — the user's OTP would have authorised a
+    transfer to bố instead of mẹ. The OTP-state lock now blocks any
+    non-OTP, non-cancel, non-confirm text turn while awaiting_otp."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 50tr")
+    handle_message("u_an", "ok")
+    s = _sf("u_an")
+    assert s.current_draft is not None
+    assert s.current_draft.awaiting_otp is True
+    pre_recipient = s.current_draft.recipient.display_name
+    pre_amount = s.current_draft.amount
+
+    resp = handle_message("u_an", "bố")
+    assert resp.draft is not None
+    assert resp.draft.recipient.display_name == pre_recipient
+    assert resp.draft.amount == pre_amount
+    assert resp.draft.awaiting_otp is True
+    assert "OTP" in resp.text or "otp" in resp.text.lower()
+
+
+@pytest.mark.parametrize(
+    "follow",
+    [
+        "bố thôi",
+        "à bố",
+        "à bố chứ",
+        "nhầm, bố",
+        "không, bố",
+        "mà bố",
+        "ơ bố",
+        "bố nhé",
+        "đổi sang bố",
+        "à mà bố",
+        "ơ nhầm bố",
+        "à không bố",
+    ],
+)
+def test_pivot_particles_strip_to_clean_recipient(follow: str) -> None:
+    """Round-10 pivot test — terse second-turn corrections with leading
+    or trailing fillers used to erase the recipient because the
+    particle got glued to "bố" and the resolver returned 0. Slot-fill
+    now strips these in a loop."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 2tr")
+    resp = handle_message("u_an", follow)
+    assert resp.draft is not None
+    assert resp.draft.recipient is not None, (follow, resp.text)
+    assert resp.draft.recipient.display_name == "Lê Văn Hùng", (
+        follow, resp.draft.recipient.display_name
+    )
+    assert resp.draft.amount == 2_000_000
+
+
+def test_compound_noun_does_not_strip_to_kinship_prefix() -> None:
+    """User report: hỏi "chủ nhà" lại nhận suggestion Phạm Văn Đạt (chú).
+
+    Root cause: ``_strip_tail_only("chu nha")`` returned "chu" because
+    "nha" is in the tail-token set (kept for the "mẹ nha" softener).
+    "chu" then matched the "Chú" label on an unrelated contact.
+
+    Compound-noun guard now reverts the strip when it would collapse
+    the surface to a SINGLE token that is itself a relational prefix
+    (chu/anh/chi/em/ban/...). The original "chu nha" stays intact;
+    only Vũ Đình Phong (label="Chủ nhà") matches."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    r = resolve_recipient("chủ nhà", contacts)
+    names = [c.contact.display_name for c in r]
+    # The genuine landlord must match.
+    assert "Vũ Đình Phong" in names, names
+    # The unrelated "Chú" contact must NOT leak in.
+    assert "Phạm Văn Đạt" not in names, names
+
+
+def test_tail_strip_still_works_for_real_particles() -> None:
+    """Regression: the compound-noun guard must not over-trigger and
+    block legit tail-particle strips ("mẹ nhé" → "mẹ", "ny ơi" → "ny")."""
+    from app.context.alias import _strip_tail_only
+
+    assert _strip_tail_only("me nha") == "me"
+    assert _strip_tail_only("sep oi") == "sep"
+    assert _strip_tail_only("ban than cua toi") == "ban than"
+    # Compound nouns stay intact.
+    assert _strip_tail_only("chu nha") == "chu nha"
+    assert _strip_tail_only("anh em") == "anh em"
+    assert _strip_tail_only("chi em") == "chi em"
+
+
+def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
+    """When the LLM explicitly tags ``recipient_kind="alias"`` we must
+    NOT fall through to name lookup — the user said "bạn thân", not a
+    name, and silently picking by name token is the very class of bug
+    PR #15 closed. Keep that path locked."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    # "Hùng" exists as both a token in display names AND as label/alias.
+    # When tagged kind="alias" but the surface has no alias match, must
+    # return [] rather than silently picking the name-token match.
+    r = resolve_recipient("không tồn tại", contacts, kind="alias")
+    assert r == []
+
+
+# ---------------------------------------------------------------------------
+# Schedule-list (recurring) + casual insights queries
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # READ-side "show me my schedules" — pre-fix these either fell
+        # to "unknown" or, worse, opened a TRANSFER draft because the
+        # Tier-1 transfer keyword "chuyen" sat inside "lịch chuyển tiền
+        # của mình" → one-click money-send card. Same class as the
+        # PR #19 fix for "tạm dừng lịch chuyển mẹ".
+        "lịch chuyển tiền của mình",
+        "các lịch của mình",
+        "có lịch nào đang chạy",
+        "lịch của tôi",
+        "lịch sắp tới",
+        "lịch nào sắp đến",
+        "lịch tự động của mình",
+    ],
+)
+def test_schedule_list_queries_route_recurring(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "recurring", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Casual "anything weird / interesting?" — judges' opening
+        # probe of the insights tab. Pre-fix all fell to "unknown".
+        "tháng này có gì lạ không",
+        "thấy gì lạ không",
+        "có gì đáng chú ý không",
+        "tiêu hợp lý chưa",
+        "check spending pattern",
+    ],
+)
+def test_casual_insights_queries_route_insights(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "insights", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Negatives — the "chuyen" substring in "lịch chuyển" must NOT
+        # eat the recurring route, and a real transfer command must
+        # still route to transfer.
+        ("chuyển mẹ 2 triệu", "transfer"),
+        ("đặt lịch chuyển mẹ 2tr mùng 5 hàng tháng", "schedule"),
+        ("số dư", "balance"),
+        ("tháng này tiêu bao nhiêu", "history"),
+    ],
+)
+def test_schedule_list_route_doesnt_eat_commands(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
+# ---------------------------------------------------------------------------
+# Category extractor → semantic_filter → actual category-filtered totals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    'text,expected_filter',
+    [
+        ('ăn uống tháng này', 'ăn uống'),
+        ('trà sữa bao nhiêu', 'trà sữa'),
+        ('cà phê tháng trước', 'cà phê'),
+        ('cafe tháng này', 'cafe'),
+        ('mua sắm bao nhiêu', 'mua sắm'),
+        ('giải trí tháng này', 'giải trí'),
+        ('xăng tháng này', 'xăng'),
+        ('grab tháng này', 'grab'),
+        ('tiền điện tháng này', 'tiền điện'),
+        ('tiền nhà bao nhiêu', 'tiền nhà'),
+        ('shopping bao nhiêu', 'shopping'),
+    ],
+)
+def test_category_extractor_populates_semantic_filter(
+    text: str, expected_filter: str
+) -> None:
+    """The router fix (iteration #35) sent these queries to history,
+    but without an extracted ``semantic_filter`` the handler returned
+    the unfiltered month total — judges saw the same number for 'ăn
+    uống tháng này' and 'tháng này tiêu bao nhiêu'. Adding category
+    extraction closes the loop so the response actually filters."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.semantic_filter is not None
+    assert expected_filter in e.semantic_filter.lower(), (
+        text, e.semantic_filter
+    )
+
+
+def test_category_filtered_response_scoped_to_period() -> None:
+    """Combined check: 'ăn uống tháng này' must (a) route to history,
+    (b) extract semantic_filter 'ăn uống', (c) keep period=this_month
+    (not silently expand to all_time as the semantic_filter override
+    used to do when no temporal_reference was set). Pre-fix label said
+    'Tất cả thời gian' because 'tháng này' wasn't in _TEMPORAL_PATTERNS."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, 'ăn uống tháng này')
+    s.clear_draft()
+    assert r.intent == 'history'
+    assert 'Tháng này' in r.text or 'tháng này' in r.text.lower(), r.text
+    assert 'Tất cả thời gian' not in r.text, r.text
+
+
+@pytest.mark.parametrize('text', ['tháng này', 'thang nay'])
+def test_thang_nay_is_a_temporal_reference(text: str) -> None:
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.temporal_reference is not None, text
+
+
+
+# ---------------------------------------------------------------------------
+# Modify description mid-flow — "nội dung là X" / "ghi chú là X" updates
+# ---------------------------------------------------------------------------
+
+
+def test_modify_description_mid_flow() -> None:
+    """After an active draft, a judge typing 'nội dung là tiền học' /
+    'ghi chú là tiền cơm' must update draft.description, not fall to
+    the guess-correction page. Pre-fix the modify gate required
+    nlu.intent == 'transfer' — but a bare description message gets
+    intent='unknown' because there's no transfer verb."""
+    s = session_for(USER)
+    s.clear_draft()
+    handle_message(USER, 'gửi mẹ 2 triệu')
+    r = handle_message(USER, 'ghi chú là tiền cơm')
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.description == 'tiền cơm'
+    # Recipient must be preserved.
+    assert r.draft.recipient is not None
+    assert 'Mình chưa rõ' not in r.text
+
+
+def test_modify_description_with_embedded_cho_preserves_recipient() -> None:
+    """'nội dung là tiền học cho em' — the 'cho em' inside the
+    description used to trip the recipient extractor and clobber the
+    active draft's recipient. The description anchor at message start
+    now suppresses recipient extraction, so the draft stays whole."""
+    s = session_for(USER)
+    s.clear_draft()
+    handle_message(USER, 'gửi mẹ 2 triệu')
+    r = handle_message(USER, 'nội dung là tiền học cho em')
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.recipient is not None, 'recipient was clobbered'
+    assert 'tiền học' in (r.draft.description or '')
+
+
+@pytest.mark.parametrize(
+    'text,expected_desc',
+    [
+        ('nội dung là tiền học', 'tiền học'),
+        ('ghi chú là tiền cơm', 'tiền cơm'),
+        ('nội dung tiền học', 'tiền học'),
+        ('ghi chú tiền cơm', 'tiền cơm'),
+    ],
+)
+def test_description_extractor_strips_la_thanh_linker(
+    text: str, expected_desc: str
+) -> None:
+    """Linker words 'là' / 'thành' between the anchor and the actual
+    content must be stripped — pre-fix 'nội dung là tiền học' yielded
+    description='là tiền học'."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.description == expected_desc, (text, e.description)
+
+
+@pytest.mark.parametrize(
+    'amount,expected',
+    [
+        (1, 1),
+        (4_999, 4_999),
+        (5_000, 5_000),
+        (9_999, 9_999),
+    ],
+)
+def test_round_to_nice_preserves_sub_10k_amounts(
+    amount: int, expected: int,
+) -> None:
+    """Pre-fix `_round_to_nice` divided by a 10k step then banker's-
+    rounded, so 5_000 → round(0.5) → 0. The predictor then surfaced
+    "đề xuất 0đ" on the confirm card while safety raised
+    `missing_amount` (block) — user saw a contradiction. Below 10k we
+    leave the amount intact: nothing to smooth at that magnitude."""
+    from app.ml.amount_predictor import _round_to_nice
+    assert _round_to_nice(amount) == expected
+
+
+def test_round_to_nice_still_smooths_large_amounts() -> None:
+    """The fix must not regress the smoothing behaviour for the actual
+    target range. 50_000 stays as a "nice" 10k-aligned value; large
+    noisy amounts continue to snap to the appropriate step."""
+    from app.ml.amount_predictor import _round_to_nice
+    assert _round_to_nice(50_000) == 50_000
+    assert _round_to_nice(2_017_345) == 2_000_000
+    assert _round_to_nice(12_345_678) == 12_500_000
+

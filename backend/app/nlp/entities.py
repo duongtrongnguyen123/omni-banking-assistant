@@ -35,6 +35,8 @@ _TEMPORAL_PATTERNS = [
     r"nhu\s+lan\s+truoc",
     r"lần\s+trước",
     r"lan\s+truoc",
+    r"tháng\s+này",
+    r"thang\s+nay",
     r"tháng\s+trước",
     r"thang\s+truoc",
     r"người\s+hôm\s+qua",
@@ -57,7 +59,13 @@ _TEMPORAL_PATTERNS = [
 _TEMPORAL_RE = re.compile("|".join(_TEMPORAL_PATTERNS), re.IGNORECASE)
 
 _DESC_RE = re.compile(
-    r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu|tiền|tien)\s+"
+    # Anchor phrases — "nội dung / noi dung / ghi chú / ghi chu / tiền /
+    # tien" — optionally followed by a linker ("là / thành / là / =")
+    # that judges naturally put between "nội dung" and the actual
+    # content. Stripping the linker means "nội dung là tiền học" yields
+    # description "tiền học", not "là tiền học".
+    r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu|tiền|tien)"
+    r"\s+(?:là\s+|la\s+|thành\s+|thanh\s+|=\s+)?"
     r"([^,.\n?!]+?)"
     r"(?:$|[,.\n?!]| như | nhu |\s+cho\s+|\s+với\s+|\s+voi\s+)",
     re.IGNORECASE,
@@ -74,9 +82,12 @@ _CRON_DAY_OF_MONTH = re.compile(
     r"(?:mùng|mung|ngày|ngay)\s*(\d{1,2})\s*(?:hàng|hang|mỗi|moi)\s*tháng",
     re.IGNORECASE,
 )
-_CRON_MONTHLY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*tháng", re.IGNORECASE)
-_CRON_WEEKLY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*tuần", re.IGNORECASE)
-_CRON_DAILY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*ng[àa]y", re.IGNORECASE)
+# Both "hàng" and "hằng" are common VN spellings for "every / each".
+# Judges who type "hằng tháng" pre-fix got the missing-fields prompt
+# because only "hàng" was matched.
+_CRON_MONTHLY = re.compile(r"(?:hàng|hằng|hang|mỗi|moi)\s*tháng", re.IGNORECASE)
+_CRON_WEEKLY = re.compile(r"(?:hàng|hằng|hang|mỗi|moi)\s*tuần", re.IGNORECASE)
+_CRON_DAILY = re.compile(r"(?:hàng|hằng|hang|mỗi|moi)\s*ng[àa]y", re.IGNORECASE)
 
 # Day-of-week extraction for weekly schedules. Maps Vietnamese forms
 # ("thứ 2" / "thứ hai" / "Chủ nhật") to cron DOW (0=Sun, 1=Mon, …, 6=Sat).
@@ -170,6 +181,28 @@ _TOP_CATEGORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Category-keyword extractor. Mirrors the category list anchored by
+# _CATEGORY_HISTORY_RE / _CATEGORY_LEAD_RE in nlp/intent.py — these are
+# the categories the user phrases naturally and that the history
+# handler's lexical token-overlap filter can match on description /
+# category. Ordered longest-first so multi-token forms ("trà sữa",
+# "ăn uống", "tiền điện") win over their substrings.
+_CATEGORY_EXTRACT_RE = re.compile(
+    r"\b(?:"
+    r"ăn\s+uống|an\s+uong"
+    r"|trà\s+sữa|tra\s+sua"
+    r"|cà\s+phê|ca\s+phe"
+    r"|mua\s+sắm|mua\s+sam"
+    r"|giải\s+trí|giai\s+tri"
+    r"|tiền\s+điện|tien\s+dien|tiền\s+nước|tien\s+nuoc"
+    r"|tiền\s+nhà|tien\s+nha"
+    r"|tiền\s+học|tien\s+hoc|học\s+phí|hoc\s+phi"
+    r"|điện\s+nước|dien\s+nuoc"
+    r"|cafe|shopping|xăng|xang|grab|taxi"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Semantic filter trigger words: tiêu/chi (+ optional gì) + cho, plus
 # "liên quan đến", "về chủ đề". Captures the phrase after them.
 _SEMANTIC_RE = re.compile(
@@ -185,7 +218,12 @@ _SEMANTIC_RE = re.compile(
 
 # Lookahead stop tokens — used to decide where a recipient name ends.
 _STOP_LOOKAHEAD = (
-    r"\d"
+    # Digit + amount unit — stops the capture at the amount span ("cho mẹ
+    # 2tr" → "mẹ"). Bare digits without a unit (e.g. "Bạn cấp 3", "lớp 12",
+    # "khoá 5") are KEPT inside the recipient surface because they're
+    # part of the label, not an amount. Pre-fix the bare ``\d`` truncated
+    # "Bạn cấp 3" → "Bạn cấp" and the resolver couldn't match the label.
+    r"\d+(?:[.,]\d+)?\s*(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|đ|vnd|tỷ|ty|tỉ|ti|chai|vé|củ|lít|đồng|dong|m)\b"
     r"|số\s+tiền|so\s+tien"
     r"|số\s+tài|so\s+tai"
     r"|stk"
@@ -206,6 +244,33 @@ _STOP_LOOKAHEAD = (
     r"|ít\s+tiền|it\s+tien"    # "chuyển ny ít tiền" — qualifier, not part of name
     r"|một\s+ít|mot\s+it|vài\s+|vai\s+"
     r"|chút\s|chut\s"
+    # Trailing politeness / filler particles. "cho mẹ giúp tôi" /
+    # "cho mẹ nhé" / "cho mẹ đi" / "cho mẹ ạ" — pre-fix the prep regex
+    # ate the trailing particles as part of the recipient surface ("mẹ
+    # giúp tôi") and the resolver returned 0. Stop the capture at
+    # these tokens; ``_clean_recipient`` already trims punctuation.
+    r"|giúp\b|giup\b"          # "chuyển cho mẹ giúp tôi" → "mẹ"
+    r"|giùm\b|gium\b"          # "chuyển cho mẹ giùm" → "mẹ"
+    r"|hộ\b|ho\s"              # "chuyển cho mẹ hộ" — bounded so "hồ" doesn't false-trip
+    r"|nhé\b|nhe\b"            # trailing softener
+    r"|nha\b"
+    r"|nhi\b"                  # "cho mẹ nhỉ?"
+    r"|ạ\b"
+    r"|đi\b|di\b"              # "cho mẹ đi" — imperative softener
+    r"|đó\b|do\b"              # "cho mẹ đó"
+    r"|ơi\b|oi\b"              # vocative
+    # Self-correction particles. User report: "chuyển cho abc chứ nhầm"
+    # captured "abc chứ nhầm" as recipient — the "chứ nhầm" ("not, my
+    # mistake") was glued in and the resolver couldn't match. Stopping
+    # at "chứ" / "nhầm" / "à" / "ý" gives the resolver just "abc" → ABC.
+    r"|chứ\b|chu\b"            # "abc chứ nhầm" → "abc"; "abc chứ không phải mẹ"
+    r"|nhầm\b|nham\b"          # "abc nhầm" → "abc"
+    r"|không\s+phải|khong\s+phai"  # "mẹ không phải bố" → "mẹ"
+    r"|hay\s+là|hay\s+la"      # "mẹ hay là bố" → "mẹ"
+    r"|ý\s+là|y\s+la"          # "mẹ ý là bố" → "mẹ"
+    r"|à\b"                     # "mẹ à không bố" — trailing "à"
+    # NOTE: no plain "a\s" — it would false-fire inside "của" (which
+    # ends with "a") and chop "mẹ của tôi" → "mẹ củ".
     r"|$"
     r"|[,.?!\n]"
 )
@@ -213,17 +278,25 @@ _STOP_LOOKAHEAD = (
 # Preposition-led: "cho|tới X" — high precision.
 # NOTE: deliberately drop "đến/den" — it's overloaded in Vietnamese
 # ("đến giờ" = "until now") and causes false-positive recipient captures.
+#
+# Character class: FIRST char must be non-digit (avoids "cho 2 triệu" →
+# who="2 triệu"); subsequent chars allow digits so labels like "Bạn cấp
+# 3" / "Bạn ĐH" / "Khoá 5" stay intact. The STOP_LOOKAHEAD also requires
+# `\d+ + amount unit` (e.g. "3tr") to terminate, so a bare digit inside
+# a label doesn't accidentally end the capture.
 _RECIPIENT_PREP_RE = re.compile(
-    r"(?:cho|tới|toi)\s+(?P<who>[^\d,.\n?!]+?)"
+    r"(?:cho|tới|toi)\s+(?P<who>[^\d,.\n?!][^,.\n?!]*?)"
     rf"(?=\s*(?:{_STOP_LOOKAHEAD}))",
     re.IGNORECASE,
 )
 
 # Verb-led fallback: "chuyển|gửi|trả|nạp X <amount>" — used only when the
 # preposition pattern finds nothing (otherwise "chuyển cho X" double-matches).
+# Same first-char-non-digit guard so "chuyển 2 triệu mẹ" stays out of this
+# pattern and falls through to ``_VERB_AMOUNT_RECIPIENT_RE`` (backward order).
 _RECIPIENT_VERB_RE = re.compile(
     r"(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
-    r"(?P<who>[^\d,.\n?!]+?)"
+    r"(?P<who>[^\d,.\n?!][^,.\n?!]*?)"
     rf"(?=\s*(?:{_STOP_LOOKAHEAD}))",
     re.IGNORECASE,
 )
@@ -235,7 +308,7 @@ _RECIPIENT_VERB_RE = re.compile(
 # "ngân sách 1tr" via a denylist.
 _BARE_RECIPIENT_AMOUNT_RE = re.compile(
     r"^(?P<who>[^\d,.\n?!]+?)\s+\d+(?:[.,]\d+)?\s*"
-    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti)\b",
+    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti|củ|cu|chai|m)\b",
     re.IGNORECASE,
 )
 
@@ -243,10 +316,34 @@ _BARE_RECIPIENT_AMOUNT_RE = re.compile(
 # captured "who" reduces to any of these (after diacritic-fold), bail —
 # "lương 5tr" / "tiền nhà 3tr" / "số dư 2tr" must NOT route to transfer
 # with those words as the recipient.
+#
+# Also includes the money-flow verbs themselves — "chuyển 5tr Nam" was
+# matching ``_BARE_RECIPIENT_AMOUNT_RE`` with who="chuyển" + amount=5tr,
+# which prevented the backward word-order regex below from getting a
+# chance to extract "Nam" as the actual recipient.
 _BARE_RECIPIENT_DENYLIST = {
     "luong", "tien", "so du", "tien nha", "tien dien", "tien nuoc",
     "tien an", "ngan sach", "han muc", "muc tieu", "tiet kiem",
     "thue", "phi", "no", "cuoc",
+    "chuyen", "gui", "tra", "nap", "send", "transfer",
+    # Modification verbs — "đổi thành 5tr" / "đổi sang 3tr" /
+    # "sửa thành 1tr" / "thành 5tr" are amount edits on an existing
+    # draft. Pre-fix the rule extractor matched "đổi thành" as
+    # recipient_text, which then forced ``_modify_transfer_draft`` into
+    # the "user named a new recipient" branch and CLEARED the existing
+    # recipient — the user wanted only the amount changed.
+    "doi", "doi thanh", "doi sang", "sua", "sua thanh", "thanh",
+    "sang", "ve",
+    # Additive / subtractive amount modifiers — "cộng thêm 500k" /
+    # "thêm 500k" / "giảm 200k" / "bớt 100k" / "tăng 1tr". Same class
+    # of bug as the modify verbs above: pre-fix the rule extractor read
+    # "cộng thêm" as ``recipient_text`` and the modify path cleared the
+    # existing recipient on the failed alias lookup. Now they go in
+    # the denylist so the recipient survives the turn. Note: the
+    # additive math (1tr + 500k = 1.5tr) is NOT implemented here —
+    # the user still sees the new amount on the card and can correct.
+    "cong", "cong them", "them", "tang",
+    "giam", "bot", "tru",
 }
 
 # Leading tokens (diacritic-folded) that are money-movement verbs or
@@ -267,6 +364,26 @@ _NON_NAME_LEADERS = {
 # chuyển"). Deliberately excludes "doi/sang/thanh" (those collide with real
 # names like "Sang"/"Thành"); they stay first-token-only via _NON_NAME_LEADERS.
 _MONEY_VERBS_ANYWHERE = {"chuyen", "gui", "tra", "nap", "send", "transfer"}
+
+# Backward word-order: "<verb> <amount> <recipient>" — judges write this
+# often ("chuyển 5tr Nam", "gửi 300k sếp", "trả 2tr mẹ"). The verb and
+# amount come first; the recipient is the trailing token(s) up to the
+# end of the message or a particle. Stops the rule extractor from
+# silently dropping the recipient on backward-order inputs.
+_VERB_AMOUNT_RECIPIENT_RE = re.compile(
+    r"^(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
+    r"\d+(?:[.,]\d+)?\s*"
+    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti|đ|dong|đồng|củ|cu|chai|m)\b"
+    r"\s+(?:cho|tới|toi|đến|den|sang|qua\s+)?"
+    r"(?P<who>[^\d,.\n?!]+?)"
+    rf"\s*(?:{_STOP_LOOKAHEAD}|$)",
+    re.IGNORECASE,
+)
+
+# Amount-first phrasing: "<amount> cho <recipient>" — "5tr cho bạn thân"
+# already works via _RECIPIENT_PREP_RE because the preposition pattern
+# scans the whole string. Kept as a no-op here for symmetry with
+# documented test cases; the prep regex handles it.
 
 # First-person pronouns that judges naturally use ("gửi mình 200k",
 # "ai chuyển tiền cho mình", "trả tôi"). Without this guard, "mình"
@@ -329,17 +446,43 @@ _ACCOUNT_HINT_RE = re.compile(
 
 def _clean_recipient(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
+    # Strip surrounding quotes / colons that appear when judges paste a
+    # label from another chat — `chuyển cho "Bạn thân" 2tr` /
+    # `chuyển cho bạn thân: 2tr` previously returned missing_recipient
+    # because the resolver tried to match `"bạn thân"` (with quotes)
+    # verbatim against aliases.
+    s = s.strip(" '\"“”‘’:-")
+    # Strip leading prepositions/verbs that aren't part of the name. The
+    # set covers all Vietnamese money-flow words plus the directional
+    # particles "sang"/"qua" that appear in "gửi sang Minh" /
+    # "chuyển qua bạn thân", AND the "do me a favour" auxiliaries
+    # "giúp / giùm / hộ" that appear between verb and recipient in
+    # "chuyển giúp mẹ 200k" / "gửi giùm bố 500k". Without those, the
+    # resolver tries to match "giúp mẹ" verbatim and returns 0.
     s = re.sub(
-        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen)\s+",
+        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen|sang|qua|"
+        r"giúp|giup|giùm|gium|hộ|ho)\s+",
         "",
         s,
         flags=re.IGNORECASE,
     )
-    return s.strip(" ,.;-?!")
+    return s.strip(" ,.;-?!\"'“”‘’:")
 
 
 def extract(text: str) -> ExtractedEntities:
     out = ExtractedEntities()
+
+    # Pre-normalise punctuation that separates VN command parts. Judges
+    # paste from other chats with commas / colons / smart-quotes around
+    # the recipient label: `chuyển,bạn thân,2tr`, `chuyển cho bạn thân:
+    # 2tr`, `chuyển cho "Bạn thân" 2tr`. Replace non-numeric commas /
+    # colons / quotes with spaces so the prep + verb regexes (which
+    # require whitespace separators) can fire. Numeric commas like
+    # "5,5tr" stay intact via the digit-flanked guard.
+    text = re.sub(r"(?<!\d),(?!\d)", " ", text)
+    text = text.replace(":", " ")
+    text = re.sub(r"['\"“”‘’]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
 
     amount, span = parse_amount(text)
     if amount is not None:
@@ -362,14 +505,43 @@ def extract(text: str) -> ExtractedEntities:
         ):
             out.description = desc
 
-    m = _RECIPIENT_PREP_RE.search(text)
-    if m:
-        out.recipient_text = _clean_recipient(m.group("who"))
+    # Description-only modify message — "nội dung là tiền học cho em" /
+    # "ghi chú là tiền cơm" / "đổi nội dung thành X cho em". A judge
+    # editing the description shouldn't have the recipient extractor
+    # latch onto "cho em" inside the description span and clobber the
+    # active draft's recipient. If the message STARTS with one of the
+    # description anchors, suppress recipient extraction entirely —
+    # this is purely a description update.
+    _starts_with_desc_anchor = bool(
+        re.match(
+            r"^\s*(?:đổi\s+|doi\s+|sửa\s+|sua\s+)?"
+            r"(?:nội\s+dung|noi\s+dung|ghi\s+chú|ghi\s+chu)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+    if not _starts_with_desc_anchor:
+        m = _RECIPIENT_PREP_RE.search(text)
+        if m:
+            out.recipient_text = _clean_recipient(m.group("who"))
 
     if not out.recipient_text:
         m = _RECIPIENT_VERB_RE.search(text)
         if m:
             out.recipient_text = _clean_recipient(m.group("who"))
+
+    # Backward word-order: "<verb> <amount> <recipient>". Run BEFORE the
+    # bare-token-amount fallback so "chuyển 5tr Nam" extracts "Nam" instead
+    # of falling through to the bare pattern (which would have matched
+    # "chuyển" as recipient before the verb tokens were denylisted).
+    if not out.recipient_text:
+        m = _VERB_AMOUNT_RECIPIENT_RE.search(text)
+        if m:
+            candidate = _clean_recipient(m.group("who"))
+            folded = _strip_diacritics(candidate).strip()
+            if folded and folded not in _BARE_RECIPIENT_DENYLIST:
+                out.recipient_text = candidate
 
     # Bare leading-token + amount fallback ("mẹ 2tr" / "anh Hùng 500k").
     # Only fires when no other recipient was found. Denylist filters out
@@ -451,6 +623,16 @@ def extract(text: str) -> ExtractedEntities:
         sf = m.group(1).strip(" ,.;-?!")
         if sf and not re.search(r"\d", sf):
             out.semantic_filter = sf
+
+    # Category-shape extractor — pairs with the _CATEGORY_HISTORY_RE
+    # router in nlp/intent.py. When a known category keyword appears
+    # in a retrospective query AND no explicit semantic_filter was
+    # captured, surface the matched category so the history handler
+    # filters by it instead of returning the whole-month aggregate.
+    if not out.semantic_filter:
+        cat = _CATEGORY_EXTRACT_RE.search(text)
+        if cat is not None:
+            out.semantic_filter = cat.group(0).strip().lower()
 
     # ATM finder — bank hint is optional ("ATM gần nhất" sends None,
     # "ATM Vietcombank gần đây" sends the canonical issuer name).
