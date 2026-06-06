@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { TransactionDraft } from "../types";
 import { formatVND } from "../format";
+
+interface ConfirmPayload {
+  otp?: string;
+  biometric_verified?: boolean;
+  source_account_id?: string;
+}
 
 interface Props {
   draft: TransactionDraft;
@@ -10,6 +16,31 @@ interface Props {
   disabled?: boolean;
   actionable?: boolean;
 }
+
+const FingerprintIcon = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path
+      d="M12 3a8 8 0 0 0-8 8v3M12 3a8 8 0 0 1 8 8v2M8 11a4 4 0 0 1 8 0v3a8 8 0 0 1-1.5 4.6M12 11v4a5 5 0 0 1-1 3M4 17.5C4.7 19 5.4 20 6 21M20 17c-.4.8-.9 1.6-1.5 2.3"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const CheckIcon = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <path
+      d="M5 12l4.5 4.5L19 7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
 export const TransactionCard = ({
   draft,
@@ -22,20 +53,60 @@ export const TransactionCard = ({
   const [sourceAccountId, setSourceAccountId] = useState(
     draft.source_account_id ?? draft.source_accounts[0]?.id ?? "",
   );
-  const blocked = draft.flags.some((f) => f.severity === "block");
-  const hardBlocked = draft.flags.some(
-    (f) => f.severity === "block" && f.code !== "insufficient_balance",
-  );
+
+  const needOtp =
+    draft.auth_required.includes("otp") &&
+    !draft.auth_completed.includes("otp");
+  const needBio =
+    draft.auth_required.includes("biometric") &&
+    !draft.auth_completed.includes("biometric");
+  const otpDone = draft.auth_completed.includes("otp");
+  const bioDone = draft.auth_completed.includes("biometric") || bioLocalDone;
+
+  const blockFlags = draft.flags.filter((f) => f.severity === "block");
+  const hardBlocked =
+    draft.auth_required.length === 0 &&
+    blockFlags.some((f) => f.code !== "insufficient_balance");
   const warned = draft.flags.some((f) => f.severity === "warn");
   const r = draft.recipient;
-  const selectedAccount = draft.source_accounts.find((a) => a.id === sourceAccountId);
+  const selectedAccount = draft.source_accounts.find(
+    (a) => a.id === sourceAccountId,
+  );
   const selectedBalanceBlocks =
     selectedAccount && draft.amount != null ? draft.amount > selectedAccount.balance : false;
   const canSubmit =
     actionable && !disabled && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
 
+  const submit = () => {
+    const payload: ConfirmPayload = {
+      source_account_id: sourceAccountId || undefined,
+    };
+    if (needOtp) payload.otp = cleanOtp;
+    if (needBio && bioDone) payload.biometric_verified = true;
+    onConfirm(payload);
+  };
+
+  const handleConfirmClick = () => {
+    const requiresAuth = needOtp || needBio;
+    if (!requiresAuth) {
+      submit();
+      return;
+    }
+    if (!authOpen) {
+      setAuthOpen(true);
+      return;
+    }
+    submit();
+  };
+
+  const primaryReady = otpReady && bioReady;
+
   return (
-    <div className={`tx-card ${warned ? "tx-card--warn" : ""} ${!actionable ? "tx-card--done" : ""}`}>
+    <div
+      className={`tx-card ${warned ? "tx-card--warn" : ""} ${
+        !actionable ? "tx-card--done" : ""
+      }`}
+    >
       {draft.amount != null && (
         <div className="tx-card__amount">
           <div className="tx-card__label">SỐ TIỀN</div>
@@ -52,7 +123,9 @@ export const TransactionCard = ({
                 <div className="tx-recipient__name">{r.display_name}</div>
                 <div className="tx-recipient__meta">
                   {r.bank} · {r.account_masked}{" "}
-                  {r.verified && <span className="tx-verified">· Đã xác minh</span>}
+                  {r.verified && (
+                    <span className="tx-verified">· Đã xác minh</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -82,7 +155,8 @@ export const TransactionCard = ({
                 </select>
                 {selectedBalanceBlocks && (
                   <div className="account-select__hint">
-                    Tài khoản này không đủ số dư, hãy chọn tài khoản khác hoặc huỷ.
+                    Tài khoản này không đủ số dư, hãy chọn tài khoản khác hoặc
+                    huỷ.
                   </div>
                 )}
               </div>

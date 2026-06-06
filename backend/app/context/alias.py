@@ -72,18 +72,25 @@ def resolve_recipient(
     if matches:
         return _dedupe(matches)
 
-    # 3) Substring match on full name (lower precision)
+    # 3) Token prefix match on display name (e.g. "Min" → "Minh")
+    #    Match must align to a word boundary so "anh" doesn't sneak into
+    #    "Hạnh" via raw substring.
     for c in contacts:
-        folded_name = _fold(c.display_name)
-        if query_stripped in folded_name:
-            matches.append(ResolvedRecipient(contact=c, matched_from="name"))
+        for token in _fold(c.display_name).split():
+            if query_stripped and token.startswith(query_stripped):
+                matches.append(ResolvedRecipient(contact=c, matched_from="name"))
+                break
     if matches:
         return _dedupe(matches)
 
-    # 4) Alias substring (e.g., "anh Minh" -> alias "minh")
+    # 4) Whole-token match within an alias (e.g. "anh" matches alias
+    #    "anh tuấn" but not "hạnh" / "chị bích").
     for c in contacts:
         for alias in c.aliases:
-            if query_stripped and query_stripped in _fold(alias):
+            if not query_stripped:
+                continue
+            alias_tokens = _fold(alias).split()
+            if query_stripped in alias_tokens:
                 matches.append(
                     ResolvedRecipient(contact=c, via_alias=alias, matched_from="alias")
                 )

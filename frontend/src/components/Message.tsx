@@ -8,6 +8,12 @@ import { ScheduleCard } from "./ScheduleCard";
 import { ContactDraftCard } from "./ContactDraftCard";
 import { ScheduleDraftCard } from "./ScheduleDraftCard";
 
+interface ConfirmPayload {
+  otp?: string;
+  biometric_verified?: boolean;
+  source_account_id?: string;
+}
+
 interface Props {
   message: ChatMessage;
   onConfirm: (

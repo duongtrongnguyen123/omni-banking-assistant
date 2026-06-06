@@ -43,6 +43,9 @@ class Store:
     def get_user(self, user_id: str) -> User:
         return self.users[user_id]
 
+    def get_user_or_none(self, user_id: str) -> Optional[User]:
+        return self.users.get(user_id)
+
     def contacts_of(self, user_id: str) -> list[Contact]:
         return [c for c in self.contacts.values() if c.owner_id == user_id]
 
@@ -65,10 +68,16 @@ class Store:
             raise KeyError(account_id)
 
     def primary_account(self, user_id: str):
-        for acc in self.users[user_id].accounts:
+        """Return the user's primary account, or None if the user is unknown
+        or has no accounts on file. Callers must handle None gracefully —
+        crashing here would 500 the API on any unrecognised user_id."""
+        user = self.users.get(user_id)
+        if user is None or not user.accounts:
+            return None
+        for acc in user.accounts:
             if acc.primary:
                 return acc
-        return self.users[user_id].accounts[0]
+        return user.accounts[0]
 
     def account_by_id(self, user_id: str, account_id: str):
         for acc in self.users[user_id].accounts:

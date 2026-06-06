@@ -38,6 +38,7 @@ export default function App() {
   const [authOtp, setAuthOtp] = useState("");
   const [clock, setClock] = useState(currentClock);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const tick = window.setInterval(() => setClock(currentClock()), 1000);
@@ -286,7 +287,21 @@ export default function App() {
         </div>
 
         <div className="phone__input">
+          <RecentRecipients
+            disabled={busy}
+            onPick={(name) => {
+              const prefix = `Chuyển cho ${name} `;
+              setInput(prefix);
+              requestAnimationFrame(() => {
+                const el = inputRef.current;
+                if (!el) return;
+                el.focus();
+                el.setSelectionRange(prefix.length, prefix.length);
+              });
+            }}
+          />
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {

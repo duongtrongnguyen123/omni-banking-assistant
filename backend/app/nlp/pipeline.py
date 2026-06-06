@@ -15,6 +15,7 @@ def understand(
 ) -> NLUResult:
     llm_result = llm_understand(text, history=history)
     if llm_result is not None:
+        llm_result.source = "llm"
         # Merge: rule-based extractor often catches amount/description better
         # than the LLM for short Vietnamese inputs; only fill blanks.
         rule_entities = extract(text)
@@ -31,5 +32,9 @@ def understand(
     if intent != "schedule":
         entities.schedule_cron = None
     return NLUResult(
-        intent=intent, confidence=confidence, entities=entities, raw_text=text
+        intent=intent,
+        confidence=confidence,
+        entities=entities,
+        raw_text=text,
+        source="rule",
     )

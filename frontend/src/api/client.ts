@@ -65,4 +65,18 @@ export const api = {
     jsonFetch<OmniResponse>(`/api/schedules/${draftId}/cancel`, {
       method: "POST",
     }),
+  recentRecipients: async (max = 5): Promise<RecentRecipient[]> => {
+    const txs = await jsonFetch<
+      { id: string; created_at: string; contact: RecentRecipient["contact"] }[]
+    >("/api/transactions?limit=50");
+    const seen = new Set<string>();
+    const out: RecentRecipient[] = [];
+    for (const t of txs) {
+      if (!t.contact?.id || seen.has(t.contact.id)) continue;
+      seen.add(t.contact.id);
+      out.push({ contact: t.contact, last_at: t.created_at });
+      if (out.length >= max) break;
+    }
+    return out;
+  },
 };
