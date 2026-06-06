@@ -64,9 +64,20 @@ def _apply_budget_overrides(text: str, result: NLUResult) -> NLUResult:
 
 
 def understand(
-    text: str, history: Optional[list[dict]] = None
+    text: str,
+    history: Optional[list[dict]] = None,
+    current_draft: Optional[dict] = None,
 ) -> NLUResult:
-    llm_result = llm_understand(text, history=history)
+    """NLU entry — LLM first, rule fallback.
+
+    ``current_draft`` is an optional snapshot of the in-flight transfer
+    draft (``{"recipient_text": str, "amount": int, "description":
+    str}``) — passed to the LLM as conversational context so pronouns,
+    corrections, and bare references inherit unmentioned slots from the
+    antecedent draft instead of being silently dropped or re-resolved to
+    the wrong contact.
+    """
+    llm_result = llm_understand(text, history=history, current_draft=current_draft)
     if llm_result is not None:
         llm_result.source = "llm"
         # Merge: rule-based extractor often catches amount/description better
