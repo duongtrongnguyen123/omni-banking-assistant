@@ -2036,9 +2036,20 @@ def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
         return warn.message + " Bạn xác nhận mình mới thực hiện nhé."
 
     if referenced_tx is not None and draft.recipient is not None and draft.amount is not None:
+        # "Lặp lại?" only makes sense when the draft amount actually matches
+        # the prior transaction. If the user said "gửi mẹ 5 triệu như tháng
+        # trước" but tháng trước was 3tr, asking "Lặp lại?" against a 5tr
+        # draft is misleading — surface the diff and confirm the explicit
+        # amount instead.
+        if draft.amount == referenced_tx.amount:
+            return (
+                f"Tháng trước bạn gửi {format_vnd(referenced_tx.amount)} cho "
+                f"{draft.recipient.display_name} ({draft.recipient.bank}). Lặp lại?"
+            )
         return (
             f"Tháng trước bạn gửi {format_vnd(referenced_tx.amount)} cho "
-            f"{draft.recipient.display_name} ({draft.recipient.bank}). Lặp lại?"
+            f"{draft.recipient.display_name} — lần này {format_vnd(draft.amount)}. "
+            f"Xác nhận chuyển nhé?"
         )
 
     if draft.recipient is not None and draft.amount is not None:

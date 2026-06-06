@@ -1023,6 +1023,55 @@ def test_month_year_check_does_not_eat_other_intents(
     assert intent == expected, text
 
 
+# ---------------------------------------------------------------------------
+# "Lặp lại?" only fires when draft.amount actually matches the referenced tx
+# ---------------------------------------------------------------------------
+
+
+def test_temporal_reference_explicit_different_amount_does_not_say_repeat() -> None:
+    """When the user says "gửi mẹ 5 triệu như tháng trước" and tháng trước
+    was 3.000.000đ, the reply must NOT say "Lặp lại?" — that would imply
+    we're about to repeat the 3M figure, which would either confuse the
+    judge or get a silent over-confirm. The fix surfaces the diff
+    ("tháng trước bạn gửi 3tr — lần này 5tr") and asks "Xác nhận?"."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, "Gửi cho mẹ 5 triệu như tháng trước")
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.amount == 5_000_000
+    assert "Lặp lại?" not in r.text
+    assert "5.000.000đ" in r.text
+    # The prior amount surfaces in the diff so the user can spot a typo.
+    assert "Tháng trước" in r.text
+
+
+def test_temporal_reference_matching_amount_still_says_repeat() -> None:
+    """The classic "Gửi mẹ 3 triệu như tháng trước" (amount matches the
+    prior tx) keeps the short "Lặp lại?" framing — the demo's flagship
+    "intent over wording" moment."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, "Gửi cho mẹ 3 triệu như tháng trước")
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.amount == 3_000_000
+    assert "Lặp lại?" in r.text
+
+
+def test_temporal_reference_no_amount_fills_and_says_repeat() -> None:
+    """"Gửi mẹ như tháng trước" with no explicit amount fills from
+    history and asks "Lặp lại?" — the draft amount equals the prior tx
+    by construction."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, "Gửi cho mẹ như tháng trước")
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.amount == 3_000_000
+    assert "Lặp lại?" in r.text
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /
