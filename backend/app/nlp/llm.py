@@ -146,6 +146,15 @@ Rules:
 - "khoản nào định kỳ / khoản tự động / có khoản nào trả đều / liệt kê lịch
    tự động" → recurring (READ — show patterns inferred from history).
 - "nhắc nợ / nhắc trả" → reminder.
+- RECIPIENT — emit `recipient_text` ONLY when the user explicitly named
+  a recipient surface form (a name, nickname, alias, "mẹ"/"sếp", "Minh",
+  "anh Tuấn", "grabfood", "bạn thân"). Copy the EXACT surface the user
+  typed. Do NOT invent, paraphrase, or substitute — if the user says
+  "bạn thân", do NOT output "Bố"/"Lê Văn Hùng" even if context suggests
+  it. The contact-resolver downstream handles fuzzy matching; the LLM's
+  job is to surface what the user said, not to guess who they meant.
+  When the user did NOT name a recipient at all (e.g. "chuyển 2 triệu"),
+  emit recipient_text=null.
 - "ATM gần nhất / cây ATM / tìm ATM <bank>" → atm_finder; put the bank
   name (if mentioned) in entities.atm_bank.
 - FOLLOW-UPS: when the current message looks like a continuation
