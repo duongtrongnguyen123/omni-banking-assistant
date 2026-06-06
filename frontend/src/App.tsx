@@ -102,6 +102,27 @@ export default function App() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  // Phone-only mode: hide the pitch sidebar so the demo looks like a
+  // real banking app instead of a presentation slide. Persisted per
+  // browser so judges can toggle once and the choice survives reload.
+  const [showSidebar, setShowSidebar] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("omni.sidebar.visible") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "omni.sidebar.visible",
+        showSidebar ? "1" : "0",
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [showSidebar]);
 
   useEffect(() => {
     try {
@@ -618,7 +639,16 @@ export default function App() {
   );
 
   return (
-    <div className="page">
+    <div className={`page${showSidebar ? "" : " page--phone-only"}`}>
+      <button
+        type="button"
+        className="sidebar-toggle"
+        onClick={() => setShowSidebar((v) => !v)}
+        aria-pressed={showSidebar}
+        title={showSidebar ? "Ẩn thông tin demo" : "Hiện thông tin demo"}
+      >
+        {showSidebar ? "←" : "i"}
+      </button>
       <TelemetryOverlay />
       <MetricsCard />
       <AbTestCard />
@@ -977,6 +1007,7 @@ export default function App() {
         )}
       </div>
 
+      {showSidebar && (
       <aside className="sidebar" aria-label="Bảng giới thiệu và kịch bản demo">
         <h1 className="sidebar__brand">
           Omni <span>AI Assistant</span>
@@ -1007,6 +1038,7 @@ export default function App() {
           <HealthStatus />
         </div>
       </aside>
+      )}
     </div>
   );
 }

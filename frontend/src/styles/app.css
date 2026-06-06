@@ -121,8 +121,50 @@ textarea:focus-visible,
   align-items: start;
 }
 
+/* Phone-only layout — sidebar hidden, phone centered as if it were
+   a real banking app on a desktop browser frame. Width tuned to a
+   realistic phone aspect (≤ 460px) so the chat bubbles aren't huge
+   on a 27" monitor. */
+.page--phone-only {
+  grid-template-columns: minmax(0, 460px);
+  justify-content: center;
+  max-width: 100%;
+}
+
+/* Floating toggle — small "i" badge top-right of the viewport. When
+   the sidebar is showing, the same button becomes a "←" to collapse
+   back into phone-only. Lives outside the phone frame so it doesn't
+   look like part of the app chrome. */
+.sidebar-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 40;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(29, 24, 64, 0.18);
+  background: white;
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 15px;
+  font-family: serif;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(26, 26, 75, 0.12);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.sidebar-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(26, 26, 75, 0.18);
+}
+.sidebar-toggle:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
 @media (max-width: 900px) {
   .page { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+  .page--phone-only { grid-template-columns: 1fr; }
   .phone { height: auto; max-height: none; }
   .phone__chat { max-height: 65vh; }
 }
