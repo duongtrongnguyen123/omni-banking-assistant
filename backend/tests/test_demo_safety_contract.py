@@ -2522,3 +2522,63 @@ def test_schedule_list_route_doesnt_eat_commands(
 ) -> None:
     intent, _ = classify(text)
     assert intent == expected, text
+
+
+# ---------------------------------------------------------------------------
+# Category extractor → semantic_filter → actual category-filtered totals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    'text,expected_filter',
+    [
+        ('ăn uống tháng này', 'ăn uống'),
+        ('trà sữa bao nhiêu', 'trà sữa'),
+        ('cà phê tháng trước', 'cà phê'),
+        ('cafe tháng này', 'cafe'),
+        ('mua sắm bao nhiêu', 'mua sắm'),
+        ('giải trí tháng này', 'giải trí'),
+        ('xăng tháng này', 'xăng'),
+        ('grab tháng này', 'grab'),
+        ('tiền điện tháng này', 'tiền điện'),
+        ('tiền nhà bao nhiêu', 'tiền nhà'),
+        ('shopping bao nhiêu', 'shopping'),
+    ],
+)
+def test_category_extractor_populates_semantic_filter(
+    text: str, expected_filter: str
+) -> None:
+    """The router fix (iteration #35) sent these queries to history,
+    but without an extracted ``semantic_filter`` the handler returned
+    the unfiltered month total — judges saw the same number for 'ăn
+    uống tháng này' and 'tháng này tiêu bao nhiêu'. Adding category
+    extraction closes the loop so the response actually filters."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.semantic_filter is not None
+    assert expected_filter in e.semantic_filter.lower(), (
+        text, e.semantic_filter
+    )
+
+
+def test_category_filtered_response_scoped_to_period() -> None:
+    """Combined check: 'ăn uống tháng này' must (a) route to history,
+    (b) extract semantic_filter 'ăn uống', (c) keep period=this_month
+    (not silently expand to all_time as the semantic_filter override
+    used to do when no temporal_reference was set). Pre-fix label said
+    'Tất cả thời gian' because 'tháng này' wasn't in _TEMPORAL_PATTERNS."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, 'ăn uống tháng này')
+    s.clear_draft()
+    assert r.intent == 'history'
+    assert 'Tháng này' in r.text or 'tháng này' in r.text.lower(), r.text
+    assert 'Tất cả thời gian' not in r.text, r.text
+
+
+@pytest.mark.parametrize('text', ['tháng này', 'thang nay'])
+def test_thang_nay_is_a_temporal_reference(text: str) -> None:
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.temporal_reference is not None, text
+

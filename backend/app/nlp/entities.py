@@ -35,6 +35,8 @@ _TEMPORAL_PATTERNS = [
     r"nhu\s+lan\s+truoc",
     r"lần\s+trước",
     r"lan\s+truoc",
+    r"tháng\s+này",
+    r"thang\s+nay",
     r"tháng\s+trước",
     r"thang\s+truoc",
     r"người\s+hôm\s+qua",
@@ -167,6 +169,28 @@ _TOP_RECIPIENT_RE = re.compile(
 _TOP_CATEGORY_RE = re.compile(
     r"chủ\s+đề\s+nào|danh\s+mục\s+nào|khoản\s+(?:chi|nào)\s+nhiều\s+nhất"
     r"|chu\s+de\s+nao|danh\s+muc\s+nao",
+    re.IGNORECASE,
+)
+
+# Category-keyword extractor. Mirrors the category list anchored by
+# _CATEGORY_HISTORY_RE / _CATEGORY_LEAD_RE in nlp/intent.py — these are
+# the categories the user phrases naturally and that the history
+# handler's lexical token-overlap filter can match on description /
+# category. Ordered longest-first so multi-token forms ("trà sữa",
+# "ăn uống", "tiền điện") win over their substrings.
+_CATEGORY_EXTRACT_RE = re.compile(
+    r"\b(?:"
+    r"ăn\s+uống|an\s+uong"
+    r"|trà\s+sữa|tra\s+sua"
+    r"|cà\s+phê|ca\s+phe"
+    r"|mua\s+sắm|mua\s+sam"
+    r"|giải\s+trí|giai\s+tri"
+    r"|tiền\s+điện|tien\s+dien|tiền\s+nước|tien\s+nuoc"
+    r"|tiền\s+nhà|tien\s+nha"
+    r"|tiền\s+học|tien\s+hoc|học\s+phí|hoc\s+phi"
+    r"|điện\s+nước|dien\s+nuoc"
+    r"|cafe|shopping|xăng|xang|grab|taxi"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -535,6 +559,16 @@ def extract(text: str) -> ExtractedEntities:
         sf = m.group(1).strip(" ,.;-?!")
         if sf and not re.search(r"\d", sf):
             out.semantic_filter = sf
+
+    # Category-shape extractor — pairs with the _CATEGORY_HISTORY_RE
+    # router in nlp/intent.py. When a known category keyword appears
+    # in a retrospective query AND no explicit semantic_filter was
+    # captured, surface the matched category so the history handler
+    # filters by it instead of returning the whole-month aggregate.
+    if not out.semantic_filter:
+        cat = _CATEGORY_EXTRACT_RE.search(text)
+        if cat is not None:
+            out.semantic_filter = cat.group(0).strip().lower()
 
     # ATM finder — bank hint is optional ("ATM gần nhất" sends None,
     # "ATM Vietcombank gần đây" sends the canonical issuer name).
