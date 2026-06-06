@@ -1558,6 +1558,26 @@ def test_alias_resolver_exact_full_name_returns_single_candidate(
         ("chuyển mẹ 5 triệu rưỡi", 5_500_000),
         ("chuyển mẹ 500k", 500_000),
         ("chuyển mẹ 2 trieu", 2_000_000),
+        # CRITICAL (round 7): "100k 2 cho mẹ" used to concatenate the
+        # trailing standalone "2" as a sub-unit and parse as 100.002đ
+        # instead of 100.000đ. The pre-existing negative lookahead only
+        # blocked a hard-coded counter-word list
+        # (lần/tháng/ngày/giờ/...) so prepositions ("cho/tới/đến"),
+        # base-unit keywords ("tr/triệu"), and bare nouns all fell
+        # through. Money-loss class wrong-amount.
+        ("100k 2 cho mẹ", 100_000),
+        ("100k 2 tr", 100_000),
+        ("100k 2 ai đó", 100_000),
+        # Existing counter-word guard — kept as regression check.
+        ("100k 2 lần", 100_000),
+        # Legit compound forms must still work after the rest-group
+        # tightening.
+        ("5tr500", 5_500_000),
+        ("100k500", 100_500),
+        # Spaced compound with explicit sub-unit / EOS — sanity guards
+        # so the new rest alternatives don't silently regress.
+        ("5 triệu 500k", 5_500_000),
+        ("100k 2 nghìn", 102_000),
     ],
 )
 def test_amount_parser_wrong_money_regressions(
