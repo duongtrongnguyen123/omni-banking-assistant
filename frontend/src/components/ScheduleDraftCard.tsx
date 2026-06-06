@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ScheduleDraft } from "../types";
 import { formatVND, formatDate } from "../format";
 
@@ -24,12 +24,43 @@ export const ScheduleDraftCard = ({
   );
   const cleanOtp = otp.replace(/\D/g, "").slice(0, 6);
 
+  // Local inflight lock: the parent's `disabled` flag only flips while
+  // App.tsx's main send() is busy, NOT for the schedule confirm/cancel
+  // calls themselves (which go through sendDraftAction). Without this
+  // guard, a double-click on "Xác minh & tạo lịch" fires two parallel
+  // confirmSchedule requests and double-bumps onDraftResolved.
+  const [submitting, setSubmitting] = useState(false);
+  const prevDisabled = useRef<boolean | undefined>(disabled);
+  useEffect(() => {
+    // Reset the local lock once the parent's busy state clears, so
+    // the user can retry on error.
+    if (prevDisabled.current && !disabled) {
+      setSubmitting(false);
+    }
+    prevDisabled.current = disabled;
+  }, [disabled]);
+  // Also release the lock when the card flips to non-actionable
+  // (i.e. the action completed and a new draft / no draft replaced it).
+  useEffect(() => {
+    if (!actionable) setSubmitting(false);
+  }, [actionable]);
+
+  const locked = submitting || !!disabled;
+
   const handleConfirm = () => {
     if (!otpOpen) {
       setOtpOpen(true);
       return;
     }
+    if (submitting) return;
+    setSubmitting(true);
     onConfirm(cleanOtp, sourceAccountId || undefined);
+  };
+
+  const handleCancel = () => {
+    if (submitting) return;
+    setSubmitting(true);
+    onCancel();
   };
 
   return (
@@ -54,7 +85,7 @@ export const ScheduleDraftCard = ({
             className="account-select"
             value={sourceAccountId}
             onChange={(e) => setSourceAccountId(e.target.value)}
-            disabled={disabled || !actionable}
+            disabled={locked || !actionable}
           >
             {draft.source_accounts.map((account) => (
               <option key={account.id} value={account.id}>
@@ -102,15 +133,25 @@ export const ScheduleDraftCard = ({
       )}
       {actionable ? (
         <div className="tx-actions">
-          <button className="btn btn--ghost" onClick={onCancel} disabled={disabled}>
+          <button
+            className="btn btn--ghost"
+            onClick={handleCancel}
+            disabled={locked}
+            title={submitting ? "Đang xử lý — không thể huỷ" : undefined}
+          >
             Huỷ
           </button>
           <button
             className={`btn ${otpOpen ? "btn--warn" : "btn--primary"}`}
             onClick={handleConfirm}
-            disabled={disabled || (otpOpen && cleanOtp.length !== 6)}
+            disabled={locked || (otpOpen && cleanOtp.length !== 6)}
+            aria-busy={submitting}
           >
-            {otpOpen ? "Xác minh & tạo lịch" : "Tạo lịch"}
+            {submitting
+              ? "Đang xử lý…"
+              : otpOpen
+                ? "Xác minh & tạo lịch"
+                : "Tạo lịch"}
           </button>
         </div>
       ) : (
