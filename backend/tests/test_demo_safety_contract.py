@@ -2580,6 +2580,67 @@ def test_concurrent_turns_serialise_per_user() -> None:
             assert draft.amount == 2_000_000, draft.amount
 
 
+def test_otp_state_blocks_recipient_mutation() -> None:
+    """CRITICAL exploit class — round-10 stress: after "chuyển mẹ 50tr
+    → ok" the draft is awaiting_otp=True. Typing "bố" used to silently
+    swap the recipient to Lê Văn Hùng while keeping awaiting_otp=True
+    and the same draft_id — the user's OTP would have authorised a
+    transfer to bố instead of mẹ. The OTP-state lock now blocks any
+    non-OTP, non-cancel, non-confirm text turn while awaiting_otp."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 50tr")
+    handle_message("u_an", "ok")
+    s = _sf("u_an")
+    assert s.current_draft is not None
+    assert s.current_draft.awaiting_otp is True
+    pre_recipient = s.current_draft.recipient.display_name
+    pre_amount = s.current_draft.amount
+
+    resp = handle_message("u_an", "bố")
+    assert resp.draft is not None
+    assert resp.draft.recipient.display_name == pre_recipient
+    assert resp.draft.amount == pre_amount
+    assert resp.draft.awaiting_otp is True
+    assert "OTP" in resp.text or "otp" in resp.text.lower()
+
+
+@pytest.mark.parametrize(
+    "follow",
+    [
+        "bố thôi",
+        "à bố",
+        "à bố chứ",
+        "nhầm, bố",
+        "không, bố",
+        "mà bố",
+        "ơ bố",
+        "bố nhé",
+        "đổi sang bố",
+        "à mà bố",
+        "ơ nhầm bố",
+        "à không bố",
+    ],
+)
+def test_pivot_particles_strip_to_clean_recipient(follow: str) -> None:
+    """Round-10 pivot test — terse second-turn corrections with leading
+    or trailing fillers used to erase the recipient because the
+    particle got glued to "bố" and the resolver returned 0. Slot-fill
+    now strips these in a loop."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 2tr")
+    resp = handle_message("u_an", follow)
+    assert resp.draft is not None
+    assert resp.draft.recipient is not None, (follow, resp.text)
+    assert resp.draft.recipient.display_name == "Lê Văn Hùng", (
+        follow, resp.draft.recipient.display_name
+    )
+    assert resp.draft.amount == 2_000_000
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a
