@@ -664,7 +664,13 @@ export const TransactionCard = ({
           </div>
         </>
       ) : (
-        <div className="tx-status">Giao dịch này đã được xử lý.</div>
+        // Inactionable = no actionable draft beats this one in the
+        // message list. Could mean: executed, cancelled, or replaced by
+        // a newer draft. We don't have enough context here to say
+        // "thành công" — historically that wording bit a user during the
+        // biometric-fail-then-exit race ("hiện đã chuyển" but transfer
+        // never executed). Use neutral wording instead.
+        <div className="tx-status">Giao dịch này đã đóng.</div>
       )}
     </div>
   );

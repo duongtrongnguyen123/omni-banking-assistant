@@ -1231,7 +1231,23 @@ export default function App() {
               <BiometricFaceScan
                 open
                 challengeId={`${pendingAuth.draftId}:${cleanAuthOtp || "no-otp"}`}
-                onClose={() => setPendingAuth(null)}
+                onClose={() => {
+                  // Closing the bio scan overlay means: cancel the
+                  // transfer outright. Race window: a finishBiometric()
+                  // call may have already fired runConfirm seconds ago.
+                  // Even so, hitting cancel here clears the backend
+                  // draft — if the in-flight confirm hadn't reached
+                  // _execute_and_record yet, it now refuses ("Không
+                  // tìm thấy giao dịch chờ xác nhận"). Belt + braces.
+                  const draftId = pendingAuth?.draftId;
+                  setPendingAuth(null);
+                  setAuthOtp("");
+                  setAuthOtpError("");
+                  setAuthStage("otp");
+                  if (draftId) {
+                    onCancel(draftId);
+                  }
+                }}
                 onVerified={(scan) => finishBiometric(scan)}
               />
             )}
