@@ -193,7 +193,8 @@ export const TransactionCard = ({
           f.severity === "warn" &&
           (f.code === "new_recipient_large_amount" ||
             f.code === "amount_above_average" ||
-            f.code === "fraud_risk_high"),
+            f.code === "fraud_risk_high" ||
+            f.code === "transfer_velocity_high"),
       )
     : undefined;
 
@@ -493,6 +494,8 @@ export const TransactionCard = ({
                   spent_vnd?: number;
                   projected_vnd?: number;
                   overshoot_vnd?: number;
+                  recent_count?: number;
+                  window_sec?: number;
                 }
               | null
               | undefined;
@@ -515,6 +518,14 @@ export const TransactionCard = ({
               typeof d.monthly_limit_vnd === "number" &&
               typeof d.spent_vnd === "number" &&
               typeof d.projected_vnd === "number";
+            // Velocity detail block — N transfers in W seconds.
+            // Surfaces the exact count + window so judges see what
+            // tripped the velocity guard instead of having to infer it
+            // from the prose message.
+            const showVelocityWhy =
+              d?.kind === "velocity" &&
+              typeof d.recent_count === "number" &&
+              typeof d.window_sec === "number";
             return (
               <div key={i} className={`tx-flag tx-flag--${f.severity}`}>
                 <div>
@@ -568,6 +579,21 @@ export const TransactionCard = ({
                         <>
                           {" · "}Vượt{" "}
                           <strong>{formatVND(d!.overshoot_vnd!)}</strong>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {showVelocityWhy && (
+                  <div className="tx-flag__why">
+                    <div>
+                      Đã có{" "}
+                      <strong>{d!.recent_count}</strong> giao dịch trong{" "}
+                      <strong>{d!.window_sec}</strong> giây
+                      {typeof d!.threshold === "number" && (
+                        <>
+                          {" · "}Ngưỡng:{" "}
+                          <strong>{d!.threshold}</strong> giao dịch
                         </>
                       )}
                     </div>

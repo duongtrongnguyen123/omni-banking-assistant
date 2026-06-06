@@ -707,6 +707,53 @@ def test_amount_above_average_carries_structured_details() -> None:
     assert d["ratio"] >= 49.0  # ~50×
 
 
+def test_transfer_velocity_high_details_payload_shape() -> None:
+    """The transfer_velocity_high warn ships a structured ``details``
+    block (kind="velocity" + recent_count + window_sec + threshold)
+    that TransactionCard renders as a "why" panel. Backend rename
+    here silently drops the explanation, same failure mode as the
+    fraud_risk_high test. Pin the field names so the next merge
+    can't quietly break the panel."""
+    from app.models.schemas import SafetyFlag
+
+    # The flag literal must accept "transfer_velocity_high" — without
+    # this entry rules.py raises Pydantic ValidationError before any
+    # frontend ever sees the warn.
+    f = SafetyFlag(
+        code="transfer_velocity_high",
+        severity="warn",
+        message="x",
+        details={
+            "kind": "velocity",
+            "recent_count": 5,
+            "window_sec": 60,
+            "threshold": 3,
+        },
+    )
+    assert f.code == "transfer_velocity_high"
+    assert f.details is not None
+    assert f.details.get("kind") == "velocity"
+    assert f.details.get("recent_count") == 5
+    assert f.details.get("window_sec") == 60
+
+
+def test_velocity_high_triggers_step_up() -> None:
+    """``requires_step_up()`` must include the velocity flag — otherwise
+    a velocity hit would render the warn message but never gate OTP
+    and the velocity rule would be decorative."""
+    from app.models.schemas import SafetyFlag
+    from app.safety.rules import requires_step_up
+
+    flags = [
+        SafetyFlag(
+            code="transfer_velocity_high",
+            severity="warn",
+            message="x",
+        )
+    ]
+    assert requires_step_up(flags) is True
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /
