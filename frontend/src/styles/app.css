@@ -721,11 +721,11 @@ textarea:focus-visible,
 }
 
 .auth-overlay--full {
-  inset: 84px 0 68px;
+  inset: 0;
   place-items: center;
   padding: 18px;
-  background: rgba(244, 243, 250, 0.92);
-  backdrop-filter: blur(8px);
+  background: #f4f3fa;
+  backdrop-filter: none;
 }
 
 .auth-overlay--full .bio-screen {
