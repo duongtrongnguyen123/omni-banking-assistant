@@ -506,10 +506,29 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
     ):
         from ..models.schemas import ExtractedEntities, NLUResult as _NLU
 
+        # Vietnamese prepositions that frequently lead a slot-fill answer
+        # ("cho Nam", "tới Nam", "gửi Nam") but aren't part of the actual
+        # name. Strip them before feeding to the resolver so the embedding
+        # match doesn't latch onto the preposition and return random
+        # contacts. _strip_relational handles family prefixes
+        # (anh/chị/em/…); these are pure money-flow words.
+        import re as _re
+        recipient_surface = _re.sub(
+            r"^\s*(?:cho|tới|toi|đến|den|gửi|gui|sang|qua)\s+",
+            "",
+            text,
+            flags=_re.IGNORECASE,
+        ).strip()
+        # If stripping took everything (user typed just "cho"), fall back
+        # to the original — we'd rather show a clarification than silently
+        # turn it into a name lookup of empty string.
+        if not recipient_surface:
+            recipient_surface = text
+
         synth = _NLU(
             intent="transfer",
             confidence=0.7,
-            entities=ExtractedEntities(recipient_text=text),
+            entities=ExtractedEntities(recipient_text=recipient_surface),
             raw_text=text,
             source="rule",
         )
