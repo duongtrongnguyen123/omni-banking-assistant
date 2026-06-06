@@ -1739,14 +1739,27 @@ def _execute_and_record(
     # persist it so next time the same phrase resolves in O(1) without any
     # LLM or embedding lookup. This is how long-tail contacts get smarter
     # over real usage.
+    alias_learned: Optional[dict] = None
     if draft.recipient and draft.recipient_surface:
         if _is_worth_learning_alias(draft.recipient_surface, draft.recipient):
             try:
-                get_store().add_alias(draft.recipient.id, draft.recipient_surface)
+                inserted = get_store().add_alias(
+                    draft.recipient.id, draft.recipient_surface
+                )
             except Exception:
                 # Opportunistic — never fail a confirmed transfer because an
                 # alias write hit an unexpected constraint.
-                pass
+                inserted = False
+            if inserted:
+                # Only fire the toast on the FIRST confirm of a phrase. A
+                # second confirm of "anh hai" later returns False from
+                # INSERT OR IGNORE and we stay silent — repeating "Đã ghi
+                # nhớ ..." would be noise.
+                alias_learned = {
+                    "contact_id": draft.recipient.id,
+                    "contact_name": draft.recipient.display_name,
+                    "alias": draft.recipient_surface.strip(),
+                }
 
     otp_note = " (đã xác minh OTP)" if otp_used else ""
     text = (
@@ -1774,7 +1787,7 @@ def _execute_and_record(
     except Exception:
         pass
 
-    return OmniResponse(intent="transfer", text=text)
+    return OmniResponse(intent="transfer", text=text, alias_learned=alias_learned)
 
 
 def cancel_draft(user_id: str, draft_id: str) -> OmniResponse:

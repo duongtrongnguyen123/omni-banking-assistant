@@ -304,6 +304,13 @@ class OmniResponse(BaseModel):
     # Frontend renders this via ``<HelpCard />``; the plain ``text``
     # field carries an equivalent prose fallback for AT users / replays.
     help_sections: Optional[list[dict]] = None
+    # Populated only when a transfer confirm just persisted a brand-new
+    # alias (Store.add_alias returned True — false on idempotent re-
+    # confirms so the toast doesn't fire twice). Shape:
+    #   {"contact_id": str, "contact_name": str, "alias": str}
+    # Frontend renders a one-line "Đã ghi nhớ '{alias}' cho {contact_name}"
+    # toast so the user sees the auto-learn loop close.
+    alias_learned: Optional[dict] = None
     needs_disambiguation: bool = False
     # Populated only when the ``?dev=1`` query param flags the request as
     # a telemetry-overlay client. ``None`` in the default UI path so
