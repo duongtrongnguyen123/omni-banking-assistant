@@ -754,6 +754,12 @@ def _dispatch_intent(
     if nlu.intent == "atm_finder":
         return _handle_atm_finder(user_id, nlu)
 
+    if nlu.intent == "my_account":
+        return _handle_my_account(user_id)
+
+    if nlu.intent == "receive_qr":
+        return _handle_receive_qr(user_id, nlu)
+
     if nlu.intent == "smalltalk":
         # Pick the fallback line by the type of smalltalk the user wrote
         # — judges who say "cảm ơn" deserve a "không có chi" not a
@@ -1029,6 +1035,103 @@ def _handle_atm_finder(user_id: str, nlu: NLUResult) -> OmniResponse:
             "Bạn cho phép truy cập vị trí để xem cây nào gần bạn nhất nhé."
         )
     return OmniResponse(intent="atm_finder", text=text, atms=preview)
+
+
+def _handle_my_account(user_id: str) -> OmniResponse:
+    """Show the user's own bank accounts so they can share for inbound
+    transfers. Read-only — no money movement, no draft."""
+    store = get_store()
+    user = store.get_user(user_id)
+    primary = next((a for a in user.accounts if a.primary), user.accounts[0] if user.accounts else None)
+    if primary is None:
+        return OmniResponse(
+            intent="my_account",
+            text="Bạn chưa có tài khoản nào trong Omni. Liên kết tài khoản trước nhé.",
+        )
+    accounts = [
+        {
+            "id": a.id,
+            "bank": a.bank,
+            "number": a.number,
+            "masked": f"****{a.number[-4:]}",
+            "holder_name": user.display_name,
+            "primary": a.primary,
+        }
+        for a in user.accounts
+    ]
+    # Compose a friendly text summary so screen-reader / replay paths
+    # still get the info even without the my_accounts card.
+    primary_line = (
+        f"Tài khoản chính của bạn: {primary.bank} · {primary.number} "
+        f"(chủ: {user.display_name})."
+    )
+    if len(user.accounts) > 1:
+        extra = ", ".join(
+            f"{a.bank} {a.number[-4:]}"
+            for a in user.accounts
+            if not a.primary
+        )
+        primary_line += f" Tài khoản khác: {extra}."
+    return OmniResponse(
+        intent="my_account",
+        text=primary_line,
+        my_accounts=accounts,
+    )
+
+
+def _handle_receive_qr(user_id: str, nlu: NLUResult) -> OmniResponse:
+    """Generate a VietQR-style payload for the user's primary account.
+
+    Optional amount / description from the NLU result get baked into the
+    QR so the sender's banking app pre-fills both fields after the scan.
+    """
+    from ..banking.qr import encode_payload, generate_payment_qr
+
+    store = get_store()
+    user = store.get_user(user_id)
+    primary = next((a for a in user.accounts if a.primary), user.accounts[0] if user.accounts else None)
+    if primary is None:
+        return OmniResponse(
+            intent="receive_qr",
+            text="Bạn chưa có tài khoản nào để tạo QR. Liên kết tài khoản trước nhé.",
+        )
+    e = nlu.entities
+    amount = e.amount
+    desc = (e.description or "").strip() or None
+    payload = encode_payload(
+        bank=primary.bank,
+        account_number=primary.number,
+        amount=amount,
+        message=desc,
+    )
+    png_b64 = generate_payment_qr(
+        bank=primary.bank,
+        account=primary.number,
+        amount=amount,
+        message=desc,
+    )
+    amount_line = (
+        f" số tiền {format_vnd(amount)}." if amount else "."
+    )
+    desc_line = f" Nội dung: {desc}." if desc else ""
+    text = (
+        f"Đây là QR nhận tiền của bạn — quét bằng app ngân hàng để chuyển vào "
+        f"{primary.bank} · {primary.number} (chủ {user.display_name}){amount_line}"
+        f"{desc_line}"
+    )
+    return OmniResponse(
+        intent="receive_qr",
+        text=text,
+        receive_qr={
+            "bank": primary.bank,
+            "account": primary.number,
+            "holder_name": user.display_name,
+            "amount": amount,
+            "description": desc,
+            "payload": payload,
+            "png_base64": png_b64,
+        },
+    )
 
 
 def _handle_balance(

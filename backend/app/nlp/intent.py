@@ -45,6 +45,38 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "atm bidv", "atm mb", "atm vpb", "atm acb", "atm agribank",
         "atm sacom", "atm stb",
     ]),
+    # receive_qr — "tạo QR / cho tôi QR / share QR nhận tiền". Goes
+    # ABOVE my_account so "QR tài khoản của tôi" routes here (QR is
+    # the actionable surface; the my_account intent below is for the
+    # bare "STK của tôi" lookup).
+    ("receive_qr", [
+        "tao qr", "tạo qr", "ma qr", "mã qr",
+        "cho qr", "share qr", "gửi qr", "gui qr",
+        "qr nhan tien", "qr nhận tiền",
+        "qr de nhan", "qr để nhận",
+        "qr cua toi", "qr của tôi",
+        "qr tk", "qr tài khoản",
+        "vietqr",
+    ]),
+    # my_account — "STK của tôi", "số tài khoản của tôi". Read-only
+    # inbound info so someone else can transfer in.
+    #
+    # CRITICAL guard: phrasings like "tài khoản của tôi" / "thông tin
+    # tài khoản" are intentionally NOT here — they're already routed
+    # to ``balance`` (which surfaces STK alongside balance). Only the
+    # explicit STK / số tài khoản / TK lookups belong here so judges
+    # who want JUST the account number get a focused response.
+    ("my_account", [
+        "stk cua toi", "stk của tôi",
+        "stk cua minh", "stk của mình",
+        "so tai khoan cua toi", "số tài khoản của tôi",
+        "so tai khoan cua minh", "số tài khoản của mình",
+        "tk cua toi", "tk của tôi", "tk cua minh", "tk của mình",
+        "stk toi la gi", "stk tôi là gì",
+        "stk minh la gi", "stk mình là gì",
+        "stk de nhan", "stk để nhận",
+        "stk nhan tien", "stk nhận tiền",
+    ]),
     # insights (proactive analytics) — before history so "tieu nhieu hon
     # thang truoc" routes here, not to plain history.
     ("insights", [
@@ -427,9 +459,43 @@ _NEGATION_OR_HYPOTHETICAL_RE = re.compile(
 )
 
 
+_TERSE_SHORTCUTS: dict[str, "Intent"] = {
+    # User feedback: judges type 1-2 word commands on the phone. Pin the
+    # most common shortcuts so they always route to the right intent
+    # regardless of Tier-1 substring noise. Must be exact-match against
+    # the folded + stripped input — bare "qr" inside "QR mẹ" doesn't fire.
+    "qr": "receive_qr",
+    "qr code": "receive_qr",
+    "stk": "my_account",
+    "tk": "my_account",
+    "lich su": "history",
+    "lịch sử": "history",
+    "so du": "balance",
+    "số dư": "balance",
+    "atm": "atm_finder",
+    "ngan sach": "budget_status",
+    "ngân sách": "budget_status",
+    "muc tieu": "goal_status",
+    "mục tiêu": "goal_status",
+    "dinh ky": "recurring",
+    "định kỳ": "recurring",
+}
+
+
 def classify(text: str) -> tuple[Intent, float]:
     folded = _ascii_fold(text)
     folded = re.sub(r"\s+", " ", folded)
+
+    # Terse single-word shortcuts — judge feedback "QR" / "STK" / "lịch
+    # sử" / "số dư" alone should route directly without depending on
+    # Tier-1 substring rules.
+    stripped = folded.strip(" ?.!,:;")
+    if stripped in _TERSE_SHORTCUTS:
+        return _TERSE_SHORTCUTS[stripped], 0.95
+    # Also match the original (non-folded) form for VN-diacritic shortcuts.
+    stripped_orig = text.strip(" ?.!,:;").lower()
+    if stripped_orig in _TERSE_SHORTCUTS:
+        return _TERSE_SHORTCUTS[stripped_orig], 0.95
 
     # Negation / hypothetical / modal guard — before any Tier-1 match.
     # Stops "đừng chuyển mẹ 2tr" / "giả sử chuyển mẹ 5tr" / "thử chuyển
