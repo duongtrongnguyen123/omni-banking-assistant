@@ -358,9 +358,45 @@ _COMMAND_VERB_RE = re.compile(
 )
 
 
+# Negation / hypothetical / modal guards. Messages like "đừng chuyển mẹ
+# 2tr" / "giả sử chuyển mẹ 5tr" / "thử chuyển mẹ 1k xem được không"
+# still substring-match the Tier-1 ``chuyen`` transfer keyword, open a
+# one-click confirmable draft, and "thử ... 1k" becomes a real 1.000đ
+# transfer (round-6 S1+S2+S3). Detect these markers BEFORE Tier-1
+# dispatch and short-circuit to "unknown" so the chat asks for clarity
+# instead of staging money.
+_NEGATION_OR_HYPOTHETICAL_RE = re.compile(
+    r"\b(?:"
+    # Negation: "đừng chuyển" / "không muốn chuyển" / "không chuyển nữa"
+    r"đừng\s+(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap)"
+    r"|dung\s+(?:chuyen|gui|tra|nap)"
+    r"|không\s+(?:muốn|muon|nên|nen|cần|can|định|dinh)\s+(?:chuyển|chuyen|gửi|gui)"
+    r"|khong\s+(?:muon|nen|can|dinh)\s+(?:chuyen|gui)"
+    r"|không\s+(?:chuyển|chuyen|gửi|gui)\s+(?:nữa|nua)"
+    r"|khong\s+(?:chuyen|gui)\s+nua"
+    r"|hủy\s+ý\s+định|huy\s+y\s+dinh"
+    # Hypothetical / irrealis: "giả sử ..." / "nếu chuyển ..." /
+    # "thử chuyển ... xem"
+    r"|giả\s+sử|gia\s+su"
+    r"|nếu\s+(?:chuyển|chuyen|gửi|gui)"
+    r"|neu\s+(?:chuyen|gui)"
+    r"|thử\s+(?:chuyển|chuyen|gửi|gui)"
+    r"|thu\s+(?:chuyen|gui)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def classify(text: str) -> tuple[Intent, float]:
     folded = _ascii_fold(text)
     folded = re.sub(r"\s+", " ", folded)
+
+    # Negation / hypothetical / modal guard — before any Tier-1 match.
+    # Stops "đừng chuyển mẹ 2tr" / "giả sử chuyển mẹ 5tr" / "thử chuyển
+    # mẹ 1k xem được không" from opening a real transfer draft. See
+    # _NEGATION_OR_HYPOTHETICAL_RE above.
+    if _NEGATION_OR_HYPOTHETICAL_RE.search(text):
+        return "unknown", 0.85
 
     # Bare "lưu <person> STK <digits>" — informal add-contact pattern that
     # the Tier-1 keyword list can't capture without false-positiving on

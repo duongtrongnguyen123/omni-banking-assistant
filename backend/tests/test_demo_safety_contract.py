@@ -2192,6 +2192,122 @@ def test_category_amount_range_routes_to_history(text: str) -> None:
     assert intent == "history", (text, intent)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Negation + transfer verb — user is saying "don't transfer"
+        # not "transfer". Pre-fix the Tier-1 ``chuyen`` substring won,
+        # opened a one-click confirm card, and the user could land at
+        # OTP for a transfer they explicitly refused.
+        "đừng chuyển mẹ 2tr",
+        "không muốn chuyển mẹ 2tr",
+        "hủy ý định chuyển mẹ 2tr",
+        # Hypothetical / modal — "what if I sent...?" / "let me try
+        # sending..." used to become real drafts. "thử chuyển mẹ 1k"
+        # became a real 1.000đ transfer pre-fix.
+        "giả sử chuyển mẹ 5tr",
+        "thử chuyển mẹ 1k xem được không",
+        "nếu chuyển mẹ 2tr thì còn dư không?",
+    ],
+)
+def test_negation_and_hypothetical_route_to_unknown(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "unknown", (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Common confirmations missing from the pre-fix list. Judges
+        # who type "có" / "tất nhiên" / "chắc chắn" / "uh" at the
+        # confirm card had the message routed to NLU and re-prompted.
+        "có",
+        "tất nhiên",
+        "chắc chắn",
+        "uh",
+    ],
+)
+def test_confirm_matches_more_vn_acks(text: str) -> None:
+    assert _is_confirm(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Bare "có" with question / modal follow-ups must NOT confirm.
+        "có thể",
+        "có gì không",
+        "có sao không",
+        "có nên",
+        "có chuyện gì",
+    ],
+)
+def test_confirm_bare_co_negative_lookahead(text: str) -> None:
+    assert not _is_confirm(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Pre-fix these reassurance phrases starting with "không" /
+        # "thôi" were silently cancelling valid draft confirms — the
+        # user meant "no change, proceed" / "just go with it" but the
+        # session got cancelled. CRITICAL UX bug — valid intent lost.
+        "không thay đổi gì cả",
+        "không có gì thay đổi",
+        "không sao",
+        "không phải",
+        "thôi cứ thế đi",
+        "thôi vậy đi",
+        "thôi ok",
+    ],
+)
+def test_cancel_false_positive_guards(text: str) -> None:
+    from app.services.orchestrator import _is_cancel
+
+    assert not _is_cancel(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Bare cancel particles must still cancel.
+        "không",
+        "thôi",
+        "huỷ",
+        "cancel",
+        "không, huỷ đi",
+    ],
+)
+def test_cancel_bare_particles_still_cancel(text: str) -> None:
+    from app.services.orchestrator import _is_cancel
+
+    assert _is_cancel(text), text
+
+
+@pytest.mark.parametrize(
+    "text,expected_amount",
+    [
+        # Pre-fix "100k 2 lần cho mẹ" concatenated to 100.002đ — money-
+        # loss-class wrong-amount. The "2 lần" (times) is NOT an amount
+        # continuation; the negative lookahead now stops the rest match.
+        ("100k 2 lần cho mẹ", 100_000),
+        ("chuyển mẹ 100k 3 lần", 100_000),
+        # Legitimate concatenations must still work.
+        ("5tr500", 5_500_000),
+        ("5tr 500k", 5_500_000),
+        ("100k500", 100_500),
+    ],
+)
+def test_amount_no_digit_concatenation_before_non_unit_word(
+    text: str, expected_amount: int
+) -> None:
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount(text)
+    assert amount == expected_amount, (text, amount)
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a

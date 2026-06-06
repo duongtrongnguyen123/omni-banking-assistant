@@ -228,6 +228,25 @@ INPUT: "chuyển 5tr"
 INPUT: "chuyển cho mẹ"
 {"intent":"transfer","confidence":0.85,"entities":{"recipient_text":"mẹ","recipient_kind":"alias"}}
 
+# Negation / hypothetical / modal — these messages mention transfer
+# vocabulary but the user is NOT issuing a transfer command. Classify
+# as "unknown" so the orchestrator doesn't open a money-touching draft.
+# CRITICAL: "thử chuyển mẹ 1k" used to land as a real 1.000đ transfer.
+INPUT: "đừng chuyển mẹ 2tr"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "không muốn chuyển mẹ nữa"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "giả sử chuyển mẹ 5tr"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "thử chuyển mẹ 1k xem được không"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
+INPUT: "nếu chuyển mẹ 2tr thì còn dư không?"
+{"intent":"unknown","confidence":0.85,"entities":{}}
+
 INPUT: "Tháng này mình gửi mẹ bao nhiêu rồi?"
 {"intent":"history","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
 
