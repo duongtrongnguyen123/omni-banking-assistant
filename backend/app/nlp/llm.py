@@ -128,6 +128,20 @@ Schema:
   "confidence": 0..1,
   "entities": {
     "recipient_text": string|null,     // person's name or alias e.g. "mẹ", "Minh"
+    "recipient_kind": "alias"|"name"|null,
+    //   "alias" — relational / pet-name (mẹ, bố, ny, vợ, anh hai, bạn thân,
+    //             sếp, cô Lan, chú Tú) — looked up in contact_aliases table
+    //   "name"  — real Vietnamese given/family name (Nam, Minh, Hoa,
+    //             "Nguyễn Văn Minh", "anh Tuấn", "Lê Mai") — looked up in
+    //             display_name column
+    //   null    — no recipient mentioned, OR the LLM is uncertain. Resolver
+    //             then tries alias-table first, name-column second.
+    //   Rule of thumb: if the surface is a *kinship/role word* it's alias;
+    //   if it's a *proper-noun-like Vietnamese name* it's name. Tokens like
+    //   "anh"/"chị"/"em" alone are NOT alias — they're relational prefixes
+    //   that attach to a name. "anh Tuấn" → kind="name", "Tuấn" is the
+    //   name; "anh hai" → kind="alias" (idiom for elder brother / close
+    //   friend, not a name).
     "amount": integer|null,            // VND, integer (no separators)
     "amount_text": string|null,        // raw span e.g., "5 triệu"
     "description": string|null,        // e.g., "Tiền sinh hoạt"
@@ -165,10 +179,28 @@ Rules:
 
 Examples:
 INPUT: "Gửi cho mẹ 5 triệu như tháng trước"
-{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","amount":5000000,"amount_text":"5 triệu","temporal_reference":"như tháng trước"}}
+{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":5000000,"amount_text":"5 triệu","temporal_reference":"như tháng trước"}}
 
 INPUT: "Chuyển cho Minh 500k"
-{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Minh","amount":500000,"amount_text":"500k"}}
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Minh","recipient_kind":"name","amount":500000,"amount_text":"500k"}}
+
+INPUT: "Chuyển bạn thân 2tr"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bạn thân","recipient_kind":"alias","amount":2000000,"amount_text":"2tr"}}
+
+INPUT: "chuyển cho anh Tuấn 1tr5"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"anh Tuấn","recipient_kind":"name","amount":1500000,"amount_text":"1tr5"}}
+
+INPUT: "Gửi Nguyễn Văn Minh 500 nghìn"
+{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"Nguyễn Văn Minh","recipient_kind":"name","amount":500000,"amount_text":"500 nghìn"}}
+
+INPUT: "chuyển ny 200k"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"ny","recipient_kind":"alias","amount":200000,"amount_text":"200k"}}
+
+INPUT: "chuyển 5tr"
+{"intent":"transfer","confidence":0.85,"entities":{"amount":5000000,"amount_text":"5tr"}}
+
+INPUT: "chuyển cho mẹ"
+{"intent":"transfer","confidence":0.85,"entities":{"recipient_text":"mẹ","recipient_kind":"alias"}}
 
 INPUT: "Tháng này mình gửi mẹ bao nhiêu rồi?"
 {"intent":"history","confidence":0.9,"entities":{"recipient_text":"mẹ"}}
