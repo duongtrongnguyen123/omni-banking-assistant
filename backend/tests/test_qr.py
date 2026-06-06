@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import zlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,6 +132,82 @@ def test_message_too_long_rejected():
             account_number="123456",
             message="x" * 201,
         )
+
+
+# ---------------------------------------------------------------------
+# Hardened TLV parser — rejects non-digit length / non-alnum tag
+# ---------------------------------------------------------------------
+
+
+def _wrap_blob_bytes(blob_bytes: bytes) -> str:
+    """Wrap a hand-crafted TLV byte blob in a valid magic + CRC envelope.
+
+    We decode through latin-1 because it's the only codec that maps every
+    single byte 0x00-0xFF to a code point 1:1 — which means
+    ``str.encode("utf-8")`` inside :func:`decode_payload` will faithfully
+    reproduce the original bytes for the parser to chew on. UTF-8 would
+    silently re-encode high-bit code points as multi-byte sequences and
+    invalidate the test setup.
+    """
+    blob_text = blob_bytes.decode("latin-1")
+    # CRC is computed on what decode_payload will see after split:
+    # the blob substring re-encoded as UTF-8. For pure-ASCII blobs this
+    # is identical to the latin-1 bytes; for high-bit bytes it will
+    # differ — but that's fine, the parser fails before CRC validation
+    # on a malformed tag/length, and we only need the envelope to look
+    # plausible enough to reach the parser.
+    crc = format(zlib.crc32(blob_text.encode("utf-8")) & 0xFFFFFFFF, "08x")
+    return f"OMNIQR1|{blob_text}|{crc}"
+
+
+def _wrap_blob(blob: str) -> str:
+    crc = format(zlib.crc32(blob.encode("utf-8")) & 0xFFFFFFFF, "08x")
+    return f"OMNIQR1|{blob}|{crc}"
+
+
+@pytest.mark.parametrize(
+    "bad_length",
+    [
+        "+9",   # int() would happily parse "+9" → length 9
+        "-1",   # negative — would produce end < start, slicing in reverse
+        " 5",   # leading space — int() accepts, isdigit() does not
+        "0a",   # mixed digit + letter
+        "aa",   # no digits at all
+    ],
+)
+def test_decode_rejects_non_digit_length(bad_length):
+    # Tag "BK" followed by a two-char length field that int() might
+    # accept but isn't actually a clean unsigned decimal. The tail is
+    # padded so a legitimate length read would not also be truncated.
+    blob = f"BK{bad_length}valuevaluevalue"
+    payload = _wrap_blob(blob)
+    with pytest.raises(ValueError):
+        decode_payload(payload)
+
+
+def test_decode_negative_length_does_not_silently_succeed():
+    # The exact bug we're guarding: a "-1" length would set
+    # end = start - 1 < start, producing value = b"" — silent corruption.
+    payload = _wrap_blob("BK-1")
+    with pytest.raises(ValueError):
+        decode_payload(payload)
+
+
+def test_decode_rejects_null_byte_tag():
+    # Tag bytes 0x00 0x00 are valid ASCII but not alphanumeric.
+    blob_bytes = b"\x00\x0002xy"
+    payload = _wrap_blob_bytes(blob_bytes)
+    with pytest.raises(ValueError, match="Tag"):
+        decode_payload(payload)
+
+
+def test_decode_rejects_high_bit_tag():
+    # 0xFF is not valid ASCII at all — must surface as a clean ValueError,
+    # never as an unhandled UnicodeDecodeError bubbling out of decode().
+    blob_bytes = b"\xff\xff02xy"
+    payload = _wrap_blob_bytes(blob_bytes)
+    with pytest.raises(ValueError):
+        decode_payload(payload)
 
 
 # ---------------------------------------------------------------------
