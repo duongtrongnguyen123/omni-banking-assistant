@@ -525,6 +525,66 @@ def test_default_limit_for_listy_history_queries(text: str) -> None:
     assert e.limit == 5, f"{text!r} → limit={e.limit}"
 
 
+def test_budget_overshoot_warn_when_draft_exceeds_envelope() -> None:
+    """End-to-end: when the user has a monthly budget for ``category`` and
+    the draft amount would push spent past the limit, evaluate() must
+    emit a ``budget_overshoot`` warn flag with structured details.
+    Soft warn only — must NOT trigger requires_step_up (the user already
+    opted in to the limit; the safety layer just reminds)."""
+    from datetime import datetime, timezone
+
+    from app.models.schemas import Account, Budget, Contact
+    from app.safety.rules import evaluate, requires_step_up
+    from app.store import get_store, new_id
+
+    store = get_store()
+    budget = Budget(
+        id=new_id("b"), user_id=USER, category="food",
+        monthly_limit_vnd=2_000_000,
+        created_at=datetime.now(timezone.utc),
+    )
+    store.add_budget(budget)
+
+    recipient = Contact(
+        id="c_quan", owner_id=USER, display_name="Quán Phở",
+        bank="MB", account_number="0123456789", account_masked="6789",
+    )
+    account = Account(
+        id="a_t", bank="Omni", number="999",
+        balance=100_000_000, primary=True,
+    )
+
+    flags = evaluate(
+        amount=2_500_000,
+        recipient_candidates=[],
+        recipient=recipient,
+        transactions=[],
+        account=account,
+        user_id=USER,
+        category="food",
+    )
+    over = next((f for f in flags if f.code == "budget_overshoot"), None)
+    assert over is not None, (
+        f"expected budget_overshoot in {[f.code for f in flags]}"
+    )
+    assert over.severity == "warn"
+    assert over.details is not None
+    d = over.details
+    assert d["kind"] == "budget_overshoot"
+    assert d["category"] == "food"
+    assert d["monthly_limit_vnd"] == 2_000_000
+    assert d["overshoot_vnd"] == 500_000
+
+    # Soft warn — never gates the transfer.
+    assert requires_step_up(flags) is False, (
+        "budget_overshoot must not trigger OTP step-up; "
+        "the user already set the limit themselves"
+    )
+
+    # Clean up so the seeded budget doesn't leak to sibling tests.
+    store.delete_budget(budget.id)
+
+
 def test_transfer_to_known_recipient_populates_recent_ledger() -> None:
     """End-to-end: ``Gửi mẹ 2 triệu`` against the seeded ``u_an`` user
     must produce a draft whose ``recent_to_recipient`` mini-ledger lists
