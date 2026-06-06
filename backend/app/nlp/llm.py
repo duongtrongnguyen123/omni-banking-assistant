@@ -12,6 +12,7 @@ Supported (set the matching env var to enable):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -293,6 +294,38 @@ Rules:
   rather than emitting null. Especially: inherit intent (history stays history,
   transfer stays transfer) and recipient.
 
+CURRENT DRAFT — co-reference / correction safety contract:
+  When the message contains a CURRENT DRAFT marker (a system-context line
+  starting with "CURRENT DRAFT: ..."), the user already has an active
+  transfer draft in flight. Treat its slots as the conversational
+  antecedent.
+  • PRONOUNS — "cô ấy", "ông ấy", "anh ấy", "chị ấy", "bạn ấy", "người
+    đó", "người ấy", "người kia" → recipient_text MUST be the
+    draft's existing ``recipient_text`` (copy it verbatim into the
+    output). DO NOT re-resolve to a different contact; DO NOT emit
+    null. The downstream resolver re-validates the name; your job is
+    to preserve the antecedent.
+  • BARE REFERENCES — "như cũ", "vẫn thế", "vẫn vậy", "y như cũ",
+    "tương tự", "cùng số tiền", "cùng amount", "giống lần trước",
+    "bố cũng vậy", "mẹ cũng thế", "thêm 500k nữa" → INHERIT
+    unmentioned slots (recipient and/or amount) from the current
+    draft. If the user names a new recipient ("bố cũng vậy", "thêm
+    cho bố", "cho bố thêm 500k"), emit the NEW recipient and inherit
+    the amount. If the user names a new amount ("đổi sang 3tr",
+    "thêm 500k"), emit the NEW amount and inherit the recipient.
+  • CORRECTIONS — "không phải X, Y", "nhầm rồi, Y", "à không, Y" →
+    emit recipient_text=Y, INHERIT amount from the draft. Do NOT
+    drop the amount just because the user re-named the recipient.
+  • RECAP probes — when the user explicitly asks "vừa rồi (mình)
+    gửi cho ai", "lúc nãy gửi bao nhiêu", "vừa nãy chuyển cho ai",
+    "tôi vừa làm gì" AFTER a confirmation, classify as recap, NOT
+    transfer. Even if the draft just got confirmed and is gone, the
+    user is asking a meta-question, not issuing a new command.
+  Critical: a co-reference / correction message is NOT a "fresh"
+  transfer command. Never silently swap the recipient to a randomly
+  matching contact; preserve the draft's antecedent and let the
+  resolver re-confirm.
+
 Examples:
 INPUT: "Gửi cho mẹ 5 triệu như tháng trước"
 {"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":5000000,"amount_text":"5 triệu","temporal_reference":"như tháng trước"}}
@@ -489,11 +522,71 @@ PRIOR: history by category. INPUT: "Cái nào nhiều nhất?"
 
 INPUT: "Tháng này mình tiêu vào những chủ đề nào?"
 {"intent":"history","confidence":0.9,"entities":{}}
+
+# CO-REFERENCE / CORRECTION examples — these REQUIRE a CURRENT DRAFT
+# context line. The expected behaviour is to INHERIT the unmentioned
+# slot(s) from the draft instead of dropping them to null.
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "cô ấy"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "ông ấy"
+{"intent":"transfer","confidence":0.85,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "người đó"
+{"intent":"transfer","confidence":0.85,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "không phải mẹ, bố"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bố","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "bố cũng vậy"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bố","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "cho mẹ thêm 500k"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2500000,"amount_text":"thêm 500k"}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "cùng số tiền cho bố"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bố","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "như cũ"
+{"intent":"transfer","confidence":0.85,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2000000}}
+
+CURRENT DRAFT: {"recipient_text":"mẹ","amount":2000000}
+INPUT: "tương tự nhưng cho chị Thảo"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"chị Thảo","recipient_kind":"name","amount":2000000}}
+
+# RECAP after confirmation — "vừa rồi (mình) gửi cho ai" / "lúc nãy
+# chuyển bao nhiêu". These ask about a JUST-COMPLETED action; they are
+# NOT a new transfer command even when no draft is in flight.
+INPUT: "vừa rồi gửi cho ai"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "vừa rồi mình gửi cho ai"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "lúc nãy gửi cho ai"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "lúc nãy chuyển bao nhiêu"
+{"intent":"recap","confidence":0.9,"entities":{}}
+
+INPUT: "vừa nãy chuyển cho ai"
+{"intent":"recap","confidence":0.9,"entities":{}}
 """
 
 
 def llm_understand(
-    text: str, history: Optional[list[dict]] = None
+    text: str,
+    history: Optional[list[dict]] = None,
+    current_draft: Optional[dict] = None,
 ) -> Optional[NLUResult]:
     providers = _enabled_providers()
     if not providers and privacy.get_mode() == "local-only":
@@ -510,10 +603,28 @@ def llm_understand(
             note="llm_understand suppressed by local-only mode",
         )
         return None
+    # Inline the current draft state into the system prompt as a "CURRENT
+    # DRAFT" line so the LLM treats pronouns / corrections / bare
+    # references as co-references against the in-flight draft. Pass the
+    # composed prompt instead of the static one so every provider in the
+    # pool sees the same context-augmented instructions.
+    sys_prompt = _NLU_SYSTEM
+    if current_draft:
+        try:
+            sys_prompt = (
+                _NLU_SYSTEM
+                + "\n\nCURRENT DRAFT: "
+                + json.dumps(current_draft, ensure_ascii=False)
+            )
+        except (TypeError, ValueError):
+            # Defensive: a non-serialisable value in the draft snapshot
+            # must never break the NLU path. Fall back to the static
+            # prompt — coref handling degrades but routing stays correct.
+            sys_prompt = _NLU_SYSTEM
     for p in providers:
         data = _openai_compat(
             provider=p,
-            system_prompt=_NLU_SYSTEM,
+            system_prompt=sys_prompt,
             history=history,
             user_message=text,
             temperature=0,
@@ -980,10 +1091,20 @@ def _openai_compat(
                 return None
             return choices[0]["message"]["content"]
         except urllib.error.HTTPError as e:
+            # ``HTTPError`` IS a file-like object holding the underlying
+            # socket — Python's ``http.client`` ties the response stream to
+            # the connection. If we don't ``close()`` it the keep-alive
+            # connection stays in CLOSE_WAIT and the per-process FD pool
+            # bleeds out under sustained load (Bug A: backend stalls after
+            # ~25 multi-turn requests). The ``with``-block above only binds
+            # ``resp`` on success; the error path needs an explicit close.
             try:
                 body_text = e.read().decode("utf-8", "ignore")[:240]
             except Exception:
                 body_text = ""
+            finally:
+                with contextlib.suppress(Exception):
+                    e.close()
             log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
             if e.code == 429:
                 status = "429"

@@ -1558,6 +1558,26 @@ def test_alias_resolver_exact_full_name_returns_single_candidate(
         ("chuyển mẹ 5 triệu rưỡi", 5_500_000),
         ("chuyển mẹ 500k", 500_000),
         ("chuyển mẹ 2 trieu", 2_000_000),
+        # CRITICAL (round 7): "100k 2 cho mẹ" used to concatenate the
+        # trailing standalone "2" as a sub-unit and parse as 100.002đ
+        # instead of 100.000đ. The pre-existing negative lookahead only
+        # blocked a hard-coded counter-word list
+        # (lần/tháng/ngày/giờ/...) so prepositions ("cho/tới/đến"),
+        # base-unit keywords ("tr/triệu"), and bare nouns all fell
+        # through. Money-loss class wrong-amount.
+        ("100k 2 cho mẹ", 100_000),
+        ("100k 2 tr", 100_000),
+        ("100k 2 ai đó", 100_000),
+        # Existing counter-word guard — kept as regression check.
+        ("100k 2 lần", 100_000),
+        # Legit compound forms must still work after the rest-group
+        # tightening.
+        ("5tr500", 5_500_000),
+        ("100k500", 100_500),
+        # Spaced compound with explicit sub-unit / EOS — sanity guards
+        # so the new rest alternatives don't silently regress.
+        ("5 triệu 500k", 5_500_000),
+        ("100k 2 nghìn", 102_000),
     ],
 )
 def test_amount_parser_wrong_money_regressions(
@@ -3480,4 +3500,301 @@ def test_round_to_nice_still_smooths_large_amounts() -> None:
     assert _round_to_nice(50_000) == 50_000
     assert _round_to_nice(2_017_345) == 2_000_000
     assert _round_to_nice(12_345_678) == 12_500_000
+
+
+def test_predicted_amount_single_confirm_phrase() -> None:
+    """Offer-don't-set (this branch's context contract supersedes
+    origin/main #48's auto-set-confirm phrasing): "chuyển cho mẹ" with no
+    amount must NOT auto-fill the figure. The predictor's estimate is
+    OFFERED via ``suggested_amount`` (tappable chip) while ``amount`` stays
+    None; the reply is a SINGLE coherent VN line that asks "bao nhiêu" and
+    mentions the suggestion — never the old doubled wall-of-text prompt."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", "chuyển cho mẹ")
+    assert resp.draft is not None
+    # Amount is NOT auto-set; it's offered as a suggestion the user taps.
+    assert resp.draft.amount is None
+    assert resp.draft.predicted_amount is False
+    assert resp.draft.suggested_amount is not None  # mẹ has history → offered
+    text = resp.text
+
+    # No doubled prompt (the ~180-char wall bug): never the standard confirm
+    # line, and never a "Đúng không?" preamble glued onto the question.
+    assert "Đã hiểu! Xác nhận" not in text
+    assert "Đúng không?" not in text
+    assert "gợi ý" in text.lower()
+    # Stay below the ~180-char wall the stress agent flagged.
+    assert len(text) < 180, f"confirm text too long ({len(text)} chars): {text!r}"
+    _sf("u_an").clear_draft()
+
+
+# ---------------------------------------------------------------------------
+# Bug A — global anomaly fallback false-positive on all-zero history
+# ---------------------------------------------------------------------------
+
+
+def test_global_anomaly_fallback_skips_all_zero_history() -> None:
+    """Cold-contact path (no per-recipient baseline) used to compute
+    ``avg = mean(all_amounts)`` without filtering ``amount > 0``. A user
+    whose entire history is zero-amount (contest-dataset corruption)
+    landed at ``avg=0`` and every cold-contact transfer tripped
+    ``amount >= 0 * MULTIPLIER == 0`` — a guaranteed false positive on
+    every transfer until they made a non-zero one.
+
+    Regression: pin that zero-amount history no longer fires the global
+    fallback ``amount_above_average`` flag.
+    """
+    from datetime import datetime, timezone
+
+    from app.models.schemas import Account, Contact, Transaction
+    from app.safety.rules import evaluate
+
+    cold = Contact(
+        id="c_cold", owner_id=USER, display_name="Người Lạ",
+        bank="MB", account_number="9999900000", account_masked="0000",
+    )
+    account = Account(
+        id="a_test", bank="Omni", number="987",
+        balance=500_000_000, primary=True,
+    )
+    # All-zero completed history. With the old code, avg=0 → flag fires.
+    base = datetime.now(timezone.utc)
+    past = [
+        Transaction(
+            id=f"t{i}", owner_id=USER, contact_id=f"c_other_{i}",
+            amount=0, description="garbage",
+            category="other", status="completed", created_at=base,
+        )
+        for i in range(5)
+    ]
+
+    flags = evaluate(
+        amount=500_000,  # well below the 10M new-recipient large threshold
+        recipient_candidates=[],
+        recipient=cold,
+        transactions=past,
+        account=account,
+        user_id=USER,
+    )
+    codes = [f.code for f in flags]
+    assert "amount_above_average" not in codes, (
+        f"all-zero history must not produce false-positive anomaly; got {codes}"
+    )
+
+
+def test_global_anomaly_fallback_still_fires_with_real_history() -> None:
+    """The fix is a positive-amount filter, not a disable. With real
+    non-zero history the global fallback still trips when the cold
+    transfer is ``ANOMALY_MULTIPLIER ×`` the user's average."""
+    from datetime import datetime, timezone
+
+    from app.models.schemas import Account, Contact, Transaction
+    from app.safety.rules import evaluate, ANOMALY_MULTIPLIER
+
+    cold = Contact(
+        id="c_cold", owner_id=USER, display_name="Người Lạ",
+        bank="MB", account_number="9999900000", account_masked="0000",
+    )
+    account = Account(
+        id="a_test", bank="Omni", number="987",
+        balance=5_000_000_000, primary=True,
+    )
+    base = datetime.now(timezone.utc)
+    past = [
+        Transaction(
+            id=f"t{i}", owner_id=USER, contact_id=f"c_other_{i}",
+            amount=100_000, description="prior",
+            category="other", status="completed", created_at=base,
+        )
+        for i in range(5)
+    ]
+    flags = evaluate(
+        amount=100_000 * ANOMALY_MULTIPLIER * 2,  # well above the trip line
+        recipient_candidates=[],
+        recipient=cold,
+        transactions=past,
+        account=account,
+        user_id=USER,
+    )
+    codes = [f.code for f in flags]
+    assert "amount_above_average" in codes, (
+        f"global fallback must still fire for real outliers; got {codes}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bug B — next_run_for accepts naive datetime
+# ---------------------------------------------------------------------------
+
+
+def test_next_run_for_accepts_naive_datetime() -> None:
+    """``_safe_day_in_month`` returns a tz-aware datetime via
+    ``.astimezone()`` but the public ``next_run_for(cron, ref)`` was
+    typed as ``datetime`` with no tz precondition. Calling with a naive
+    ``datetime.now()`` (the obvious thing eval scripts and tests do)
+    crashed inside the ``candidate <= ref`` comparison with
+    ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+
+    Regression: ensure a naive ref no longer crashes for each of the
+    three cron families we generate.
+    """
+    from datetime import datetime
+
+    from app.banking.service import next_run_for
+
+    naive = datetime.now()  # no tzinfo — the bug trigger
+    for cron in ("0 9 15 * *", "0 9 * * 1", "0 9 * * *"):
+        result = next_run_for(cron, naive)
+        assert result is not None
+        # ``_safe_day_in_month`` returns aware; daily / weekly paths
+        # preserve the (now-coerced) tz on ref. Either way the result
+        # must be tz-aware so downstream toISOString() doesn't double-bug.
+        assert result.tzinfo is not None, f"{cron!r} → naive result"
+
+
+# ---------------------------------------------------------------------------
+# Bug C — fraud model lazy retrain on new contact
+# ---------------------------------------------------------------------------
+
+
+def test_fraud_model_lazy_retrains_when_contact_id_is_new(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``train_fraud_models`` runs once at startup. After a user adds a
+    new contact + makes a transfer, ``stats.recipient_counts`` is stale
+    and the very next score call for that contact_id sees
+    ``is_new_recipient=1`` (spurious ``fraud_risk_high``).
+
+    Pin: when ``score_draft`` is called with a contact_id absent from the
+    snapshot stats, the model retrains in-place and the refreshed stats
+    contain the contact_id."""
+    from datetime import datetime, timezone, timedelta
+
+    from app.models.schemas import Transaction
+    from app.safety import fraud_model
+
+    if not fraud_model.is_enabled():
+        import pytest as _pt
+        _pt.skip("fraud model disabled (sklearn missing / opt-out)")
+
+    fraud_model.clear_models()
+
+    user_id = "u_lazy_retrain"
+    now = datetime.now(timezone.utc)
+
+    # Seed: enough varied tx to clear MIN_TX_FOR_TRAINING and not have a
+    # degenerate Isolation Forest fit.
+    def _seed(n: int, cid: str, amt: int, offset_days: int = 0) -> list:
+        return [
+            Transaction(
+                id=f"t_{cid}_{i}", owner_id=user_id, contact_id=cid,
+                amount=amt + i * 1_000,
+                description="seed", category="other", status="completed",
+                created_at=now - timedelta(days=offset_days + i),
+            )
+            for i in range(n)
+        ]
+
+    initial_txs = _seed(30, "c_alpha", 1_000_000) + _seed(30, "c_beta", 2_000_000, offset_days=40)
+
+    # 1) Train the initial model
+    fitted = fraud_model.train_user(user_id, initial_txs)
+    assert fitted is not None, "seed too thin for IsolationForest fit"
+    assert "c_alpha" in fitted.stats.recipient_counts
+    assert "c_gamma" not in fitted.stats.recipient_counts
+
+    # 2) Append a brand-new contact + tx to the store-shaped feed and
+    #    monkeypatch ``transactions_of`` so the lazy retrain path sees it.
+    augmented_txs = initial_txs + _seed(5, "c_gamma", 500_000)
+
+    class _FakeStore:
+        def transactions_of(self, uid):  # noqa: ARG002
+            return augmented_txs
+
+    monkeypatch.setattr(
+        "app.store.get_store", lambda: _FakeStore()
+    )
+
+    # 3) Score a draft to ``c_gamma`` — the new contact. The lazy
+    #    retrain path should fire, refit, and the resulting model's
+    #    stats should contain c_gamma.
+    score = fraud_model.score_draft(
+        user_id=user_id,
+        amount=500_000,
+        contact_id="c_gamma",
+    )
+    # The score itself is non-deterministic across sklearn versions, but
+    # it must be a real probability — None means we silently bailed.
+    assert score is not None, "lazy retrain failed to produce a model"
+    assert 0.0 <= score <= 1.0
+
+    refreshed = fraud_model._models.get(user_id)
+    assert refreshed is not None
+    assert "c_gamma" in refreshed.stats.recipient_counts, (
+        "lazy retrain did not refresh stats with the new contact_id"
+    )
+
+
+def test_fraud_model_lazy_retrain_throttled_by_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The time-based retrain branch must not hot-loop on bursty traffic.
+    When the contact_id is already in stats, repeat scoring within
+    ``LAZY_RETRAIN_COOLDOWN_SEC`` must not refit the IsolationForest."""
+    from datetime import datetime, timezone, timedelta
+
+    from app.models.schemas import Transaction
+    from app.safety import fraud_model
+
+    if not fraud_model.is_enabled():
+        import pytest as _pt
+        _pt.skip("fraud model disabled (sklearn missing / opt-out)")
+
+    fraud_model.clear_models()
+    user_id = "u_cooldown"
+    now = datetime.now(timezone.utc)
+
+    txs = [
+        Transaction(
+            id=f"t{i}", owner_id=user_id, contact_id="c_alpha",
+            amount=1_000_000 + i * 1_000,
+            description="seed", category="other", status="completed",
+            created_at=now - timedelta(days=i),
+        )
+        for i in range(60)
+    ]
+    fitted = fraud_model.train_user(user_id, txs)
+    assert fitted is not None
+    initial_trained_at = fitted.trained_at
+
+    # Bump the cooldown timestamp so the next call sees "just retrained".
+    import time as _time
+    fraud_model._last_retrain_attempt[user_id] = _time.monotonic()
+
+    # Even if the store has fresh data, no retrain should happen within
+    # the cooldown for a known-contact scoring call.
+    fresh_tx = Transaction(
+        id="t_fresh", owner_id=user_id, contact_id="c_alpha",
+        amount=999_999, description="fresh", category="other",
+        status="completed", created_at=now + timedelta(hours=1),
+    )
+
+    class _FakeStore:
+        def transactions_of(self, uid):  # noqa: ARG002
+            return txs + [fresh_tx]
+
+    monkeypatch.setattr("app.store.get_store", lambda: _FakeStore())
+
+    fraud_model.score_draft(
+        user_id=user_id,
+        amount=1_000_000,
+        contact_id="c_alpha",  # known — only time-based path could trigger
+    )
+    after = fraud_model._models.get(user_id)
+    assert after is not None
+    assert after.trained_at == initial_trained_at, (
+        "cooldown failed — retrained inside the throttle window"
+    )
 

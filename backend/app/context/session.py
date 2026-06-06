@@ -220,6 +220,18 @@ class Session:
     # Alias to match the deliverable's spec name.
     append_message = append
 
+    def clear_history(self) -> None:
+        """Wipe the user's conversation history at the backend level.
+
+        Audit fix: callers previously did ``session.history.clear()`` to
+        reset history, but the ``history`` property returns a *fresh
+        list copy* from the backend (see ``InMemorySessionStore.get_history``:
+        ``return list(raw)``), so mutating it had no effect on stored
+        state. This helper writes an empty list through ``set_history``
+        so both the in-memory and Redis backends actually drop the
+        messages."""
+        self._backend.set_history(self.user_id, [])
+
     def set_conversation_history(self, history: list[dict]) -> None:
         """Replace history wholesale (used by tests / admin)."""
         max_n = history_max_messages()

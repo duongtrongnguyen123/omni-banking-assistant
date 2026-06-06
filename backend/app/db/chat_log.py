@@ -372,8 +372,32 @@ def append_message(
     The first *user* turn in an untitled conversation also sets the
     conversation title (so the sidebar shows something meaningful
     without the user having to name it).
+
+    Two safety properties enforced here (audit B1/B2):
+
+    * **Atomicity.** The INSERT into ``chat_messages`` and the UPDATE on
+      ``chat_sessions.updated_at`` are wrapped in a single
+      ``BEGIN IMMEDIATE`` / ``COMMIT`` transaction. With the connection
+      in autocommit (``isolation_level=None``) the two statements would
+      otherwise land as separate writes — a crash between them would
+      archive the message while the session timestamp drifts (sidebar
+      ordering wrong and the new turn no longer surfaces at the top).
+    * **Ownership.** The INSERT carries an ``AND user_id = ?`` predicate
+      sourced from ``chat_sessions`` via a SELECT subquery so we cannot
+      append into a conversation that doesn't belong to the caller —
+      defence in depth in case a future caller forgets to gate via
+      :func:`resolve_session` first. We raise ``PermissionError`` rather
+      than silently inserting if ownership is wrong, so callers fail
+      loudly.
     """
     conn = get_connection()
+    # Ownership pre-check: cheap SELECT before the write transaction.
+    # Catches a wrong session_id / wrong user_id pair before we hold any
+    # write lock. ``get_session`` already filters by user_id.
+    if get_session(session_id, user_id) is None:
+        raise PermissionError(
+            f"session {session_id!r} is not owned by user {user_id!r}"
+        )
     mid = _new_id()
     now = _now()
     response_json = (
@@ -381,19 +405,48 @@ def append_message(
         if response is not None
         else None
     )
-    conn.execute(
-        "INSERT INTO chat_messages "
-        "(id, session_id, user_id, role, content, intent, response_json, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (mid, session_id, user_id, role, content, intent, response_json, now),
-    )
-    conn.execute(
-        "UPDATE chat_sessions SET updated_at = ?, "
-        "title = CASE WHEN (title IS NULL OR title = '') AND ? = 'user' "
-        "             THEN ? ELSE title END "
-        "WHERE id = ?",
-        (now, role, _derive_title(content), session_id),
-    )
+    # Explicit transaction: the connection is in autocommit mode
+    # (``isolation_level=None``), so ``with conn:`` would not produce a
+    # transaction. ``BEGIN IMMEDIATE`` grabs the write lock up front so
+    # the INSERT and UPDATE either both land or both roll back.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = conn.execute(
+            "INSERT INTO chat_messages "
+            "(id, session_id, user_id, role, content, intent, response_json, created_at) "
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ? "
+            "WHERE EXISTS ("
+            "    SELECT 1 FROM chat_sessions "
+            "    WHERE id = ? AND user_id = ?"
+            ")",
+            (
+                mid, session_id, user_id, role, content, intent, response_json, now,
+                session_id, user_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            # The session vanished (or the user_id was tampered with)
+            # between the pre-check and the INSERT. Roll back and refuse.
+            conn.execute("ROLLBACK")
+            raise PermissionError(
+                f"session {session_id!r} is not owned by user {user_id!r}"
+            )
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at = ?, "
+            "title = CASE WHEN (title IS NULL OR title = '') AND ? = 'user' "
+            "             THEN ? ELSE title END "
+            "WHERE id = ? AND user_id = ?",
+            (now, role, _derive_title(content), session_id, user_id),
+        )
+        conn.execute("COMMIT")
+    except PermissionError:
+        raise
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
     return {
         "id": mid,
         "session_id": session_id,

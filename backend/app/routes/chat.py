@@ -14,6 +14,7 @@ from ..services.orchestrator import (
     cancel_contact_draft,
     cancel_draft,
     cancel_schedule_draft,
+    clear_user_module_state,
     confirm_contact_draft,
     confirm_draft,
     confirm_schedule_draft,
@@ -107,7 +108,12 @@ class BiometricScanResult(BaseModel):
 class ConfirmTransactionRequest(BaseModel):
     otp: str | None = None
     source_account_id: str | None = None
-    biometric_verified: bool = False
+    # Audit Bug A: there is intentionally no ``biometric_verified`` boolean
+    # here. Biometric auth is gated by a real scan payload only — a
+    # client-supplied "I already verified" flag is a trust-the-attacker
+    # primitive even when the current ``_biometric_scan_valid`` happens to
+    # reject ``None``. Future refactors must not be able to flip a bit
+    # in the request body to bypass the 8D scan.
     biometric_scan: BiometricScanResult | None = None
     session_id: str | None = None
 
@@ -148,6 +154,16 @@ def chat(
         session_id = chat_log.resolve_session(user_id, req.session_id)
     response.headers["X-Chat-Session-Id"] = session_id
     _enter_chat_session(user_id, session_id)
+    # Archive the USER turn BEFORE invoking the orchestrator. If
+    # ``handle_message`` raises (LLM blew up, downstream banking error)
+    # the user's typed message must still land in the sidebar — losing
+    # both the reply AND the user's own message is the worst possible UX
+    # (the user can't even see what they sent). Best-effort: a logging
+    # failure must never break the user's transfer flow.
+    try:
+        chat_log.append_message(session_id, user_id, "user", req.message)
+    except Exception:  # noqa: BLE001 — archival is non-critical
+        pass
     if dev:
         begin_telemetry()
     try:
@@ -155,10 +171,10 @@ def chat(
     finally:
         if dev:
             end_telemetry()
-    # Persist both sides of the turn. Best-effort: a logging failure must
-    # never break the user's transfer flow.
+    # Archive the omni reply only on success. (If ``handle_message``
+    # raised, control never reaches here — FastAPI surfaces the 500 to
+    # the client, the user message is already archived above.)
     try:
-        chat_log.append_message(session_id, user_id, "user", req.message)
         chat_log.append_message(
             session_id,
             user_id,
@@ -306,58 +322,197 @@ The frontend's matching ``inFlightDraftIds`` set already disables
 the Huỷ button — this is a server-side belt for the same braces."""
 
 
+# ---------------------------------------------------------------------------
+# Audit A: per-(user, draft) lock + OTP-attempt counter on the confirm route.
+# ---------------------------------------------------------------------------
+#
+# Bug A — double-debit race:
+#   The previous implementation only did `set.add(cache_key)` and never
+#   CHECKED membership before invoking ``confirm_draft``. Two concurrent
+#   POSTs to /api/transactions/{draft_id}/confirm therefore both passed
+#   the idempotency cache (cold) AND both entered the inflight set, both
+#   called confirm_draft → execute_transfer → two debits on the same
+#   draft. The SQLite schema has no ``CHECK(balance>=0)`` so the account
+#   silently went negative.
+#
+#   Fix: a per-(user, draft) ``threading.Lock`` held around the entire
+#   read-cache → run-confirm → write-cache sequence. The first caller
+#   takes the lock and writes the idempotency entry on its way out;
+#   subsequent concurrent callers block on the lock, then find the
+#   cached response on re-entry and replay it.
+#
+# Bug B — OTP brute-force:
+#   No per-draft attempt counter at the HTTP layer and no rate limit on
+#   the confirm route meant a scripted client could spam 000000..999999
+#   against an open draft. Add a bounded per-(user,draft) counter that
+#   trips at 3 failed OTP attempts, cancels the draft, and returns a
+#   polite Vietnamese lock notice. Also wire ``enforce_user_rate_limit``
+#   so the bucket caps overall confirm-endpoint throughput per user.
+
+_CONFIRM_LOCKS_MAX = 1024
+_CONFIRM_LOCKS: "_OD[str, threading.Lock]" = _OD()
+_CONFIRM_LOCKS_GUARD = threading.Lock()
+
+_OTP_ATTEMPTS_MAX = 1024
+_OTP_ATTEMPTS: "_OD[str, int]" = _OD()
+_OTP_ATTEMPTS_GUARD = threading.Lock()
+_OTP_MAX_ATTEMPTS = 3
+
+
+def _confirm_lock(cache_key: str) -> threading.Lock:
+    """Acquire (or create) a per-(user, draft) lock used to serialise
+    concurrent confirm calls. Bounded LRU so a long-lived process can't
+    accumulate one lock per unique cache_key forever."""
+    with _CONFIRM_LOCKS_GUARD:
+        lock = _CONFIRM_LOCKS.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _CONFIRM_LOCKS[cache_key] = lock
+            if len(_CONFIRM_LOCKS) > _CONFIRM_LOCKS_MAX:
+                _CONFIRM_LOCKS.popitem(last=False)
+        else:
+            _CONFIRM_LOCKS.move_to_end(cache_key)
+        return lock
+
+
+def _otp_attempts_get(cache_key: str) -> int:
+    with _OTP_ATTEMPTS_GUARD:
+        return _OTP_ATTEMPTS.get(cache_key, 0)
+
+
+def _otp_attempts_inc(cache_key: str) -> int:
+    with _OTP_ATTEMPTS_GUARD:
+        n = _OTP_ATTEMPTS.get(cache_key, 0) + 1
+        _OTP_ATTEMPTS[cache_key] = n
+        _OTP_ATTEMPTS.move_to_end(cache_key)
+        if len(_OTP_ATTEMPTS) > _OTP_ATTEMPTS_MAX:
+            _OTP_ATTEMPTS.popitem(last=False)
+        return n
+
+
+def _otp_attempts_reset(cache_key: str) -> None:
+    with _OTP_ATTEMPTS_GUARD:
+        _OTP_ATTEMPTS.pop(cache_key, None)
+
+
 @router.post("/transactions/{draft_id}/confirm", response_model=OmniResponse)
 def confirm(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
 ) -> OmniResponse:
-    # Idempotency: if this user already successfully confirmed this draft,
-    # replay the cached response instead of re-executing the transfer.
-    # Stops the demo-classic "user double-clicked → two debits" failure.
+    # Cheap front-line throttle: stops scripted clients from hammering
+    # /confirm with one OTP guess per request. Pairs with the per-draft
+    # attempt counter below — defence in depth.
+    enforce_user_rate_limit(user_id)
+
     cache_key = f"{user_id}:{draft_id}"
-    cached = _confirmed_get(cache_key)
-    if cached is not None:
+
+    # Brute-force lock: a draft that has already burned its OTP budget
+    # stays locked even on retries. Cancel the underlying draft so the
+    # user must start a new flow.
+    if _otp_attempts_get(cache_key) >= _OTP_MAX_ATTEMPTS:
+        try:
+            cancel_draft(user_id, draft_id)
+        except Exception:  # pragma: no cover — best effort
+            pass
+        locked = OmniResponse(
+            intent="transfer",
+            text=(
+                "Quá nhiều lần thử sai OTP, giao dịch bị khoá. "
+                "Bạn vui lòng tạo lại lệnh chuyển tiền nhé."
+            ),
+        )
         _persist_action_turn(
             user_id=user_id,
             session_id=req.session_id if req else None,
-            user_text=_otp_log_label(req, cached),
-            resp=cached,
+            user_text="Xác minh OTP",
+            resp=locked,
         )
-        return cached
+        return locked
 
-    # Biometric face-scan auth: risky transfers require OTP + an 8D face
-    # scan. The frontend sends both together in the confirm body; the
-    # orchestrator verifies each method independently (see confirm_draft).
-    # The _INFLIGHT_CONFIRMS guard makes the endpoint idempotent against
-    # double-click races (commit 94f6443 — verifier audit A2).
-    _INFLIGHT_CONFIRMS.add(cache_key)
-    try:
-        resp = confirm_draft(
-            user_id,
-            draft_id,
-            otp=req.otp if req else None,
-            source_account_id=req.source_account_id if req else None,
-            biometric_scan=req.biometric_scan.dict() if req and req.biometric_scan else None,
-            biometric_verified=req.biometric_verified if req else False,
+    # Per-(user, draft) mutex: serialise the entire read-cache →
+    # confirm_draft → write-cache window so two concurrent POSTs cannot
+    # both pass the cold cache check, both call ``execute_transfer``,
+    # and double-debit the source account. The second caller blocks
+    # here, then exits the critical section seeing the idempotency
+    # cache populated and replays the first caller's response.
+    with _confirm_lock(cache_key):
+        # Idempotency: if this user already successfully confirmed this draft,
+        # replay the cached response instead of re-executing the transfer.
+        # Stops the demo-classic "user double-clicked → two debits" failure.
+        cached = _confirmed_get(cache_key)
+        if cached is not None:
+            _persist_action_turn(
+                user_id=user_id,
+                session_id=req.session_id if req else None,
+                user_text=_otp_log_label(req, cached),
+                resp=cached,
+            )
+            return cached
+
+        # Biometric face-scan auth: risky transfers require OTP + an 8D face
+        # scan. The frontend sends both together in the confirm body; the
+        # orchestrator verifies each method independently (see confirm_draft).
+        # The _INFLIGHT_CONFIRMS guard makes the endpoint idempotent against
+        # double-click races (commit 94f6443 — verifier audit A2).
+        _INFLIGHT_CONFIRMS.add(cache_key)
+        try:
+            resp = confirm_draft(
+                user_id,
+                draft_id,
+                otp=req.otp if req else None,
+                source_account_id=req.source_account_id if req else None,
+                biometric_scan=req.biometric_scan.dict() if req and req.biometric_scan else None,
+            )
+        finally:
+            _INFLIGHT_CONFIRMS.discard(cache_key)
+        if resp.intent == "unknown":
+            raise HTTPException(status_code=404, detail=resp.text)
+
+        # OTP attempt accounting. ``resp.draft.awaiting_otp == True`` after
+        # a confirm with an ``otp`` arg means the orchestrator rejected the
+        # supplied code (wrong / empty / missing); count it as a failed
+        # attempt at the HTTP layer too so a brute-force loop trips the
+        # lock at 3 even if the orchestrator's per-draft counter is reset
+        # by a session swap.
+        otp_supplied = bool(req and req.otp is not None)
+        wrong_otp = (
+            otp_supplied
+            and resp.draft is not None
+            and getattr(resp.draft, "awaiting_otp", False)
         )
-    finally:
-        _INFLIGHT_CONFIRMS.discard(cache_key)
-    if resp.intent == "unknown":
-        raise HTTPException(status_code=404, detail=resp.text)
-    _persist_action_turn(
-        user_id=user_id,
-        session_id=req.session_id if req else None,
-        user_text=_otp_log_label(req, resp),
-        resp=resp,
-    )
-    # Only cache fully-confirmed transfers — OTP prompts / re-confirm
-    # branches still need to be replayable for new input. Heuristic:
-    # cache when the response carries no draft (transfer landed) or
-    # the draft has no ``awaiting_otp`` flag.
-    if resp.draft is None or not getattr(resp.draft, "awaiting_otp", False):
-        _confirmed_set(cache_key, resp)
-    return resp
+        if wrong_otp:
+            attempts = _otp_attempts_inc(cache_key)
+            if attempts >= _OTP_MAX_ATTEMPTS:
+                try:
+                    cancel_draft(user_id, draft_id)
+                except Exception:  # pragma: no cover
+                    pass
+                resp = OmniResponse(
+                    intent="transfer",
+                    text=(
+                        "Quá nhiều lần thử sai OTP, giao dịch bị khoá. "
+                        "Bạn vui lòng tạo lại lệnh chuyển tiền nhé."
+                    ),
+                )
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text=_otp_log_label(req, resp),
+            resp=resp,
+        )
+        # Only cache fully-confirmed transfers — OTP prompts / re-confirm
+        # branches still need to be replayable for new input. Heuristic:
+        # cache when the response carries no draft (transfer landed) or
+        # the draft has no ``awaiting_otp`` flag.
+        if resp.draft is None or not getattr(resp.draft, "awaiting_otp", False):
+            _confirmed_set(cache_key, resp)
+            # Successful terminal state — clear the attempt counter so a
+            # future draft with a colliding key (extraordinarily rare,
+            # but possible) doesn't inherit stale failures.
+            _otp_attempts_reset(cache_key)
+        return resp
 
 
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
@@ -494,13 +649,74 @@ def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> Omni
 @router.post("/session/reset")
 def reset_session(user_id: str = Depends(current_user)) -> dict:
     """Clear all in-flight drafts and conversation history for the caller.
+
     Intended for testing and as the 'fresh chat' button — not exposed in
-    the UI but harmless if hit accidentally."""
+    the UI but harmless if hit accidentally.
+
+    Safety contract (stress-agent A regression, "wrong-recipient silent
+    confirm"): every per-user piece of state that a subsequent
+    confirm/cancel/OTP token could land on MUST be wiped here. If even
+    one slot survives, a future bare "ok" turn can dispatch the prior
+    flow's draft — including an awaiting-OTP transfer to the wrong
+    recipient at the wrong amount.
+
+    Slots reset:
+      * Session drafts (transfer / contact / schedule) — including drafts
+        already in ``awaiting_otp=True`` state. ``clear_draft`` drops the
+        whole serialized blob, so the OTP flag goes with it.
+      * Orchestrator module dicts (budget draft / goal draft / pending
+        split-bill queue) — these live outside the session backend and
+        ``Session.clear_*`` doesn't touch them.
+      * Idempotency / OTP-attempt caches in this module that key on
+        ``f"{user_id}:{draft_id}"`` — after reset, any new draft uses a
+        fresh UUID, but we also drop everything user-scoped so a stale
+        "already-confirmed" replay can't echo back to a new session.
+      * Conversation history at the backend layer. The previous code
+        wrote ``s.history.clear()``, which mutated the *list copy*
+        returned by the ``history`` property and never reached the
+        backend; the new ``clear_history()`` helper writes an empty
+        list through ``set_history``.
+      * The ``_LAST_SESSION_BY_USER`` marker so the next /api/chat call
+        re-enters fresh — preserving it would only matter for chat
+        archival, but resetting it costs nothing and keeps the surface
+        clean.
+    """
     s = session_for(user_id)
     # current_* are read-only properties after the Redis-sessions refactor;
     # use the clear_* methods instead so this works for memory/redis/fake-redis.
     s.clear_draft()
     s.clear_contact_draft()
     s.clear_schedule_draft()
-    s.history.clear()
+    # Backend-level history wipe (was: s.history.clear() — a no-op against
+    # the copy returned by the property).
+    s.clear_history()
+
+    # Orchestrator module-level dicts: budget draft / goal draft / split queue.
+    clear_user_module_state(user_id)
+
+    # Drop any cached confirm response / inflight / OTP-attempt counters
+    # for this user so a new draft cannot inherit them by accident.
+    prefix = f"{user_id}:"
+    with _CONFIRMED_DRAFT_LOCK:
+        stale_confirmed = [k for k in _CONFIRMED_DRAFT_RESPONSES if k.startswith(prefix)]
+        for k in stale_confirmed:
+            _CONFIRMED_DRAFT_RESPONSES.pop(k, None)
+    with _OTP_ATTEMPTS_GUARD:
+        stale_otp = [k for k in _OTP_ATTEMPTS if k.startswith(prefix)]
+        for k in stale_otp:
+            _OTP_ATTEMPTS.pop(k, None)
+    with _CONFIRM_LOCKS_GUARD:
+        stale_locks = [k for k in _CONFIRM_LOCKS if k.startswith(prefix)]
+        for k in stale_locks:
+            _CONFIRM_LOCKS.pop(k, None)
+    # Inflight set isn't lock-guarded but a discard is safe — we only
+    # remove entries that belong to this user.
+    stale_inflight = [k for k in list(_INFLIGHT_CONFIRMS) if k.startswith(prefix)]
+    for k in stale_inflight:
+        _INFLIGHT_CONFIRMS.discard(k)
+
+    # Forget the last-seen conversation marker so the next /api/chat
+    # opens a clean slot for this user.
+    _LAST_SESSION_BY_USER.pop(user_id, None)
+
     return {"ok": True, "user_id": user_id}

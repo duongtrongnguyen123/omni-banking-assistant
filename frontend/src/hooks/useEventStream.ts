@@ -148,7 +148,19 @@ export function useEventStream(
 
     const scheduleRetry = () => {
       if (cancelled) return;
-      retryTimer = setTimeout(connect, retryDelayMs);
+      // Clear any pending retry first — if `connect()` failed and called
+      // `scheduleRetry()` synchronously, or if `onclose` and `onerror`
+      // both fire a retry in the same tick, overwriting the handle
+      // without clearing leaks the previous timer (Bug B). Under fast
+      // disconnect/reconnect cycles this grows unbounded.
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        connect();
+      }, retryDelayMs);
       retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
     };
 
@@ -156,7 +168,10 @@ export function useEventStream(
 
     return () => {
       cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
       try {
         ws?.close();
       } catch {

@@ -7,9 +7,12 @@ appropriate side-effects (draft creation, history lookup, schedule creation).
 from __future__ import annotations
 
 import contextvars
+import logging
 import re
 import time
 from typing import Any, Optional
+
+_LOG = logging.getLogger(__name__)
 
 # Per-request telemetry bucket. The chat route sets this to {} when the
 # caller passes ``?dev=1``; the orchestrator and NLU layer fill it as
@@ -131,6 +134,26 @@ def _pop_goal_draft(user_id: str, draft_id: str) -> Optional[GoalDraft]:
 def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
     with _drafts_lock:
         return _goal_drafts.get(user_id)
+
+
+def clear_user_module_state(user_id: str) -> None:
+    """Drop every orchestrator-module per-user slot for ``user_id``.
+
+    The orchestrator keeps three pieces of state outside the pluggable
+    session backend (budget drafts, goal drafts, the pending split-bill
+    queue). They share the user_id key with the session but aren't
+    touched by ``session.clear_*`` calls. The /api/session/reset
+    endpoint needs to wipe them too — otherwise a half-finished split
+    queue or stranded budget/goal confirmation card survives the reset
+    and a subsequent "ok" from the user gets routed to it.
+
+    Safety-critical companion to the ``Session.clear_*`` calls on the
+    /api/session/reset path."""
+    with _drafts_lock:
+        _budget_drafts.pop(user_id, None)
+        _goal_drafts.pop(user_id, None)
+        _split_queues.pop(user_id, None)
+
 
 _CONFIRM_RE = re.compile(
     # Plain confirmation tokens — must occur at message start. Expanded
@@ -557,8 +580,36 @@ def _handle_message_inner(
             session.append("omni", cont.text)
             return cont
 
+    # Snapshot the active draft (if any) so the NLU layer can treat
+    # pronouns / corrections / bare references in this turn as
+    # co-references against the in-flight transfer rather than silently
+    # re-resolving to the wrong contact or dropping recipient/amount.
+    # See `docs/llm-vs-rule.md` and the fix/coreference PR for the
+    # bug class this guards against (E2/B1/B2/F1/F2/F3/H1 + A2).
+    current_draft_snapshot: Optional[dict] = None
+    if session.current_draft is not None:
+        cd = session.current_draft
+        snap: dict = {}
+        if cd.recipient is not None:
+            snap["recipient_text"] = cd.recipient.display_name
+        elif cd.source_text:
+            # Fall back to the originally typed surface form if the
+            # resolver hasn't pinned a contact yet — still useful as
+            # the LLM antecedent.
+            snap["recipient_text"] = cd.source_text
+        if cd.amount is not None:
+            snap["amount"] = int(cd.amount)
+        if cd.description:
+            snap["description"] = cd.description
+        # Only attach a snapshot when at least one slot is filled —
+        # an empty draft adds no signal and just bloats the prompt.
+        if snap:
+            current_draft_snapshot = snap
+
     nlu_t0 = time.perf_counter()
-    nlu = understand(text, history=history_msgs)
+    nlu = understand(
+        text, history=history_msgs, current_draft=current_draft_snapshot
+    )
     nlu_ms = int((time.perf_counter() - nlu_t0) * 1000)
     bucket = get_telemetry()
     if bucket is not None:
@@ -885,6 +936,66 @@ def _dispatch_intent(
             "\"chuyển cho mẹ 2 triệu\" hoặc \"tháng này tiêu bao nhiêu?\""
         ),
     )
+
+
+# Co-reference cues that bind to the previous draft's AMOUNT slot.
+# When any of these appear in the user message and the message does NOT
+# itself carry a parsed amount, the orchestrator inherits the prior
+# draft's amount and suppresses the predictor. Diacritic-tolerant —
+# matched against the raw text (case-insensitive) AND against an
+# ASCII-folded copy so "cùng" and "cung" both fire.
+_AMOUNT_COREF_RE = re.compile(
+    r"\b(?:"
+    r"cùng\s+(?:số\s+tiền|amount|so\s+tien)"
+    r"|cung\s+(?:so\s+tien|amount)"
+    r"|vẫn\s+(?:thế|vậy|nhu\s+vay|như\s+vậy)"
+    r"|van\s+(?:the|vay|nhu\s+vay)"
+    r"|y\s+chang|y\s+nhu\s+cu|y\s+như\s+cũ"
+    r"|như\s+cũ|nhu\s+cu"
+    r"|giống\s+(?:lần\s+trước|hôm\s+trước|lúc\s+nãy)"
+    r"|giong\s+(?:lan\s+truoc|hom\s+truoc|luc\s+nay)"
+    r"|tương\s+tự|tuong\s+tu"
+    r"|same\s+amount"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_amount_coref_cue(text: str) -> bool:
+    """Does the message say "same amount as last time"?
+
+    Used by ``_handle_transfer`` to (a) inherit the previous draft's
+    amount instead of letting the predictor fill bố's median over the
+    user-implied 2tr, and (b) suppress the predictor entirely so a
+    follow-up "cùng số tiền cho bố" never silently swaps in an
+    unintended number.
+    """
+    if not text:
+        return False
+    return bool(_AMOUNT_COREF_RE.search(text))
+
+
+def _last_known_draft_amount(user_id: str) -> Optional[int]:
+    """Return the most recent draft amount for this user, if any.
+
+    Reads the live ``session.current_draft.amount`` first so an active
+    draft wins (most common case for "đổi sang bố" / "thêm cho bố").
+    Falls back to the most recent confirmed transaction's amount so
+    "cùng số tiền cho bố" still works one turn after a confirmation
+    has cleared the draft.
+    """
+    s = session_for(user_id)
+    if s.current_draft is not None and s.current_draft.amount:
+        return int(s.current_draft.amount)
+    # Last completed tx as a fallback antecedent. Cheap query —
+    # already cached on the in-memory store.
+    try:
+        txs = get_store().transactions_of(user_id, status="completed", limit=1)
+        if txs and txs[0].amount:
+            return int(txs[0].amount)
+    except Exception:  # noqa: BLE001 — best-effort lookup, never fatal
+        pass
+    return None
 
 
 _BARE_RECIPIENT_COMMANDS = {
@@ -2350,14 +2461,32 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         amount = None
         user_invalid_amount = True
 
-    # Smart amount SUGGESTION: when the user named a recipient but no amount,
-    # OFFER the most likely figure via ``suggested_amount`` (a tappable chip)
-    # — but do NOT apply it to ``amount`` (stays None → ``evaluate`` raises
-    # ``missing_amount`` → asks "bao nhiêu"; only the user's tap commits it).
-    # Offer-don't-decide. ``user_invalid_amount`` skips the offer for a
-    # nonsense typed amount (0 / negative) so the user is told it's invalid.
+    # Co-reference / "same amount" guard (origin/main #49). When the user
+    # EXPLICITLY references the previous draft's amount ("cùng số tiền cho
+    # bố", "vẫn vậy", "như cũ") the correct fill is the prior draft's amount,
+    # NOT the predictor's median. This is a user-stated reference, so setting
+    # it is legitimate (unlike the silent predictor below).
+    coref_amount_cue = _has_amount_coref_cue(nlu.raw_text)
+    if amount is None and not user_invalid_amount and coref_amount_cue:
+        prior_amount = _last_known_draft_amount(user_id)
+        if prior_amount is not None and prior_amount > 0:
+            amount = prior_amount
+
+    # Smart amount SUGGESTION: when the user named a recipient but no amount
+    # (and gave no coref cue), OFFER the most likely figure via
+    # ``suggested_amount`` (a tappable chip) — but do NOT apply it to
+    # ``amount`` (stays None → ``evaluate`` raises ``missing_amount`` → asks
+    # "bao nhiêu"; only the user's tap commits it). Offer-don't-decide.
+    # ``user_invalid_amount`` skips the offer for a nonsense typed amount
+    # (0 / negative); ``coref_amount_cue`` skips it because we either
+    # inherited the prior amount above or fall to missing_amount.
     prediction: Optional[dict] = None
-    if amount is None and not user_invalid_amount and chosen is not None:
+    if (
+        amount is None
+        and not user_invalid_amount
+        and not coref_amount_cue
+        and chosen is not None
+    ):
         prediction = predict_amount(user_id, chosen.id)
 
     # Auto-categorise BEFORE evaluate() so the safety layer can check
@@ -2416,8 +2545,12 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     session = session_for(user_id)
     session.set_draft(draft)
 
-    # ``_compose_transfer_text`` surfaces the suggestion hint when the
-    # amount is the only missing slot — no override needed here.
+    # ``_compose_transfer_text`` surfaces the suggestion hint when the amount
+    # is the only missing slot. We do NOT apply origin/main's
+    # predicted-amount text override here: that assumed the predictor SET
+    # ``draft.amount`` (now it only offers ``suggested_amount`` while amount
+    # stays None), so its ``format_vnd(draft.amount)`` would render None.
+    # Offer-don't-set is our context contract — keep the hint-based prompt.
     text = _compose_transfer_text(draft, referenced_tx)
     return OmniResponse(
         intent="transfer",
@@ -3045,7 +3178,6 @@ def confirm_draft(
     otp: str | None = None,
     source_account_id: str | None = None,
     biometric_scan: dict[str, Any] | None = None,
-    biometric_verified: bool = False,
 ) -> OmniResponse:
     session = session_for(user_id)
     draft = session.current_draft
@@ -3141,10 +3273,16 @@ def confirm_draft(
         session.set_draft(draft)
 
     # --- Biometric (8D face scan) ---
+    # SAFETY (audit Bug A): biometric auth ONLY advances when a real scan
+    # payload is present. There is no client-trusted boolean shortcut —
+    # the previous ``biometric_verified`` flag was a forward-compat hazard
+    # because future refactors could relax ``_biometric_scan_valid``'s
+    # ``None`` guard. Drop the flag entirely; the only path that completes
+    # biometric is a valid scan payload.
     if (
         "biometric" in draft.auth_required
         and "biometric" not in draft.auth_completed
-        and (biometric_scan or biometric_verified)
+        and biometric_scan
     ):
         scan_ok, scan_error = _biometric_scan_valid(biometric_scan, draft.id, otp)
         if not scan_ok:
@@ -3247,7 +3385,15 @@ def _execute_and_record(
             category=draft.category,
         )
     except ValueError as e:
-        text = f"Giao dịch thất bại: {e}"
+        # Audit Bug B: do NOT surface the raw English exception code
+        # ("no_source_account", "insufficient_balance", …) into the VN
+        # chat — it leaked enum-style tokens that judges flagged as a
+        # locale break. Log server-side and show a single friendly VN line.
+        _LOG.warning(
+            "execute_transfer failed for user=%s draft=%s: %s",
+            user_id, draft.id, e,
+        )
+        text = "Có lỗi khi xử lý giao dịch, bạn thử lại sau nhé."
         session.append("omni", text)
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
@@ -3557,4 +3703,5 @@ __all__ = [
     "cancel_budget_draft",
     "confirm_goal_draft",
     "cancel_goal_draft",
+    "clear_user_module_state",
 ]

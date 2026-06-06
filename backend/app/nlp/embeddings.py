@@ -16,6 +16,7 @@ subsequent calls reuse the cached encoder. We pre-warm it from the FastAPI
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import struct
@@ -151,10 +152,16 @@ def _gemini_embed(text: str, task_type: str) -> Optional[list[float]]:
             payload = json.loads(resp.read().decode("utf-8"))
         return payload["embedding"]["values"]
     except urllib.error.HTTPError as e:
+        # See Bug A fix in nlp/llm.py — HTTPError holds the underlying
+        # socket; close it so the keep-alive connection doesn't sit in
+        # CLOSE_WAIT forever and exhaust the FD pool.
         try:
             err_body = e.read().decode("utf-8", "ignore")[:160]
         except Exception:
             err_body = ""
+        finally:
+            with contextlib.suppress(Exception):
+                e.close()
         log.warning("Gemini embed HTTP %s: %s", e.code, err_body)
         return None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
