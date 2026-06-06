@@ -133,9 +133,20 @@ def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
         return _goal_drafts.get(user_id)
 
 _CONFIRM_RE = re.compile(
-    # Plain confirmation tokens — must occur at message start.
-    r"^(?:xac nhan|xacnhan|ok|okay|oki|đồng ý|dong y|y|yes|confirm|duyệt|duyet|ừ|ừm|ư|um)\b"
+    # Plain confirmation tokens — must occur at message start. Expanded
+    # to include polite forms (dạ / vâng), informal acks (ờ / ờ ơ), and
+    # the slangy ok-variants judges actually type (okela / okie / oce).
+    r"^(?:xac nhan|xacnhan|ok|okay|oki|okie|okela|oce|okê|oke|"
+    r"đồng ý|dong y|y|yes|confirm|duyệt|duyet|"
+    r"ừ|ừm|ư|um|ờ|ờm|"
+    r"dạ|da|vâng|vang|"
+    r"chuẩn|chuan)\b"
     r"|^xác nhận"
+    # "đúng" / "phải" — "right/correct/yes" confirm, but NOT when
+    # followed by an action / question verb that would make the
+    # sentence a question. "đúng" / "phải làm gì" must NOT route to
+    # confirm.
+    r"|^(?:đúng|dung|phải|phai)(?!\s+(?:làm|lam|đi|di|về|ve|đến|den|nào|nao|gì|gi|không|khong|ko))\b"
     # "được" / "duoc" alone or with a continuation particle ("được rồi",
     # "được luôn", "được nha"). The plain word means "OK / fine" in
     # Vietnamese — judges use it constantly.

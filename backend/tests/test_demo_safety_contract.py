@@ -1770,3 +1770,55 @@ def test_insights_anomaly_renders_detector_reason() -> None:
     # / "~0đ" rendering from the field-mismatch bug.
     assert "(không rõ)" not in r.text
     assert "thường ~0đ" not in r.text
+
+
+# ---------------------------------------------------------------------------
+# Confirm matcher — VN polite/informal acks (dạ/vâng/ờ/okela) + neg-guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Polite forms — judges saying yes politely.
+        "dạ", "dạ vâng", "vâng", "vâng ạ",
+        # Right / correct affirmations.
+        "đúng", "đúng rồi", "đúng vậy", "chuẩn",
+        "phải", "phải rồi",
+        # Informal acks.
+        "ờ", "ờm", "ờ ơ",
+        # Slangy ok variants judges actually type in chat.
+        "okela", "oce", "okie", "okê",
+        # Regression — original confirms still work.
+        "ok", "ừ", "xác nhận", "được",
+    ],
+)
+def test_confirm_matches_common_vn_acks(text: str) -> None:
+    """Pre-fix the rule fallback only recognised "ok / okay / ừ / xác
+    nhận / được" as confirms — a judge saying "dạ" / "vâng" / "đúng" /
+    "okela" against a confirm card got the message routed to NLU and
+    treated as an unknown / transfer instead. Polite formal Vietnamese
+    is the default register; without these the demo feels brittle."""
+    assert _is_confirm(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Question / action followers must NOT trip the confirm guard.
+        # "phải/đúng" matched bare is a confirm; followed by a verb
+        # they're part of a question.
+        "phải làm gì bây giờ",
+        "đúng làm gì",
+        "phải đi đâu",
+        "phải về nhà",
+        # Cancel particles must NOT route to confirm.
+        "không",
+        "không phải",
+        # Real intents must NOT route to confirm.
+        "tháng này tiêu bao nhiêu",
+        "chuyển mẹ 2 triệu",
+    ],
+)
+def test_confirm_negative_lookahead_doesnt_eat_questions(text: str) -> None:
+    assert not _is_confirm(text), text
