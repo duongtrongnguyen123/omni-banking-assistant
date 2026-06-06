@@ -196,6 +196,32 @@ INPUT: "Gửi Nguyễn Văn Minh 500 nghìn"
 INPUT: "chuyển ny 200k"
 {"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"ny","recipient_kind":"alias","amount":200000,"amount_text":"200k"}}
 
+# Backward word order — amount comes BEFORE the recipient. The amount
+# can sit between "chuyển/gửi" and the recipient; the recipient is the
+# trailing kinship/name token. Extract BOTH.
+INPUT: "chuyển 5tr Nam"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Nam","recipient_kind":"name","amount":5000000,"amount_text":"5tr"}}
+
+INPUT: "5tr cho bạn thân"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"bạn thân","recipient_kind":"alias","amount":5000000,"amount_text":"5tr"}}
+
+INPUT: "gửi 300k sếp"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"sếp","recipient_kind":"alias","amount":300000,"amount_text":"300k"}}
+
+INPUT: "chuyển 2 triệu cho mẹ"
+{"intent":"transfer","confidence":0.95,"entities":{"recipient_text":"mẹ","recipient_kind":"alias","amount":2000000,"amount_text":"2 triệu"}}
+
+# Single given-name surfaces — these are NAMES, not aliases. The
+# resolver will ask the user to disambiguate when multiple contacts
+# share the token instead of silently picking one. Critically, do NOT
+# tag bare given names ("Hùng", "Đức", "Minh", "Nam") as kind="alias"
+# even though they're short — alias is for KINSHIP / ROLE words.
+INPUT: "chuyển cho Hùng 1tr"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Hùng","recipient_kind":"name","amount":1000000,"amount_text":"1tr"}}
+
+INPUT: "gửi Đức 500k"
+{"intent":"transfer","confidence":0.9,"entities":{"recipient_text":"Đức","recipient_kind":"name","amount":500000,"amount_text":"500k"}}
+
 INPUT: "chuyển 5tr"
 {"intent":"transfer","confidence":0.85,"entities":{"amount":5000000,"amount_text":"5tr"}}
 
