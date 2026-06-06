@@ -424,6 +424,54 @@ def test_default_limit_for_listy_history_queries(text: str) -> None:
     assert e.limit == 5, f"{text!r} → limit={e.limit}"
 
 
+def test_amount_above_average_carries_structured_details() -> None:
+    """The per-recipient anomaly flag must ship a ``details`` payload with
+    median / p90 / n_samples / ratio so the TransactionCard can render a
+    "why" box under the warn line. Without these, the chip falls back to
+    prose-only and the UX regression goes silent."""
+    from datetime import datetime, timezone
+
+    from app.models.schemas import Account, Contact, Transaction
+    from app.safety.rules import evaluate
+
+    recipient = Contact(
+        id="c_test", owner_id=USER, display_name="Test",
+        bank="MB", account_number="0123456789", account_masked="6789",
+    )
+    account = Account(
+        id="a_test", bank="Omni", number="987",
+        balance=500_000_000, primary=True,
+    )
+    # 6 prior transfers all ~1M; the new draft is 50M — 50× the median.
+    base = datetime.now(timezone.utc)
+    past = [
+        Transaction(
+            id=f"t{i}", owner_id=USER, contact_id="c_test",
+            amount=1_000_000, description="prior",
+            category="other", status="completed", created_at=base,
+        )
+        for i in range(6)
+    ]
+    flags = evaluate(
+        amount=50_000_000,
+        recipient_candidates=[],
+        recipient=recipient,
+        transactions=past,
+        account=account,
+        user_id=USER,
+    )
+    anomaly = next((f for f in flags if f.code == "amount_above_average"), None)
+    assert anomaly is not None, f"expected amount_above_average in {[f.code for f in flags]}"
+    assert anomaly.details is not None, "details payload must be populated"
+    d = anomaly.details
+    assert d["kind"] == "per_recipient"
+    assert d["median"] == 1_000_000
+    assert d["p90"] == 1_000_000
+    assert d["n_samples"] == 6
+    assert d["current_amount"] == 50_000_000
+    assert d["ratio"] >= 49.0  # ~50×
+
+
 def test_fraud_model_threshold_constant_exists() -> None:
     """rules.evaluate() reads ``fraud_model.FRAUD_RISK_THRESHOLD``. A
     rename / reorder would silently disable the integration; assert
