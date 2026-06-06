@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { ChatMessage, Contact } from "../types";
+import type { ChatMessage, Contact, OmniResponse } from "../types";
 import { OmniAvatar } from "./OmniAvatar";
 import { TransactionCard } from "./TransactionCard";
 import { DisambiguationCard } from "./DisambiguationCard";
@@ -24,6 +24,14 @@ interface Props {
   onConfirmSchedule: (draftId: string, otp: string, sourceAccountId?: string) => void;
   onCancelSchedule: (draftId: string) => void;
   onPrefill?: (text: string) => void;
+  /**
+   * Notify the parent that a budget/goal draft was confirmed (or
+   * cancelled) so it can refresh the sidebar BudgetCard / GoalsCard
+   * that fetch from REST. Without this the user creates a goal in
+   * chat and the sidebar widget stays empty until the next page
+   * load — visible "where's my goal" demo bug.
+   */
+  onDraftResolved?: (resp: OmniResponse) => void;
   busy?: boolean;
   actionableDraftIds?: Set<string>;
   actionableScheduleDraftIds?: Set<string>;
@@ -40,6 +48,7 @@ export const Message = ({
   onConfirmSchedule,
   onCancelSchedule,
   onPrefill,
+  onDraftResolved,
   busy,
   actionableDraftIds,
   actionableScheduleDraftIds,
@@ -143,6 +152,7 @@ export const Message = ({
               // letting the user re-trigger via chat keyword if they
               // want a second action.
               message.response = resp;
+              onDraftResolved?.(resp);
             }}
             busy={busy}
           />
@@ -152,6 +162,7 @@ export const Message = ({
             draft={r.goal_draft}
             onResolve={(resp) => {
               message.response = resp;
+              onDraftResolved?.(resp);
             }}
             busy={busy}
           />

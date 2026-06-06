@@ -635,6 +635,18 @@ export default function App() {
                 setInput(text);
                 setTimeout(() => inputRef.current?.focus(), 0);
               }}
+              onDraftResolved={(resp) => {
+                // A budget or goal draft was confirmed/cancelled. Bump
+                // the sidebar refresh key so BudgetCard / GoalsCard
+                // re-fetch and the new envelope / goal shows up
+                // immediately instead of after the next page load.
+                if (
+                  resp.intent === "set_goal" ||
+                  resp.intent === "set_budget"
+                ) {
+                  setSuggestRefresh((n) => n + 1);
+                }
+              }}
               busy={busy}
               actionableDraftIds={actionableDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
