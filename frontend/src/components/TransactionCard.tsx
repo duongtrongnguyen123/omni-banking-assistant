@@ -356,7 +356,12 @@ export const TransactionCard = ({
                 e.preventDefault();
                 const cleaned = pendingAmount.replace(/[^\d]/g, "");
                 const n = parseInt(cleaned, 10);
-                if (!isFinite(n) || n <= 0) {
+                // Cap at 100 tỷ (1e11) — well above any realistic
+                // transfer. Without this, parseInt happily returns
+                // 1e18 for `999999999999999999` and we'd dispatch
+                // "đổi sang 1000000000000000000" to the orchestrator.
+                const MAX_AMOUNT = 100_000_000_000;
+                if (!isFinite(n) || n <= 0 || n > MAX_AMOUNT) {
                   setEditingAmount(false);
                   return;
                 }
