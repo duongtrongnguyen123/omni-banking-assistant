@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-1.5-flash"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    # Speech-to-text via Groq whisper-large-v3 (OpenAI-compatible audio API).
+    groq_stt_model: str = "whisper-large-v3"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    openai_api_key: str = ""
+    openai_stt_model: str = "gpt-4o-mini-transcribe"
+    # auto: Groq if GROQ_API_KEY set, else OpenAI, else local faster-whisper.
+    speech_stt_provider: str = "auto"
     demo_user_id: str = "u_an"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     banking_data_dir: str = ""
