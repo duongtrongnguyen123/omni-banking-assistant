@@ -165,6 +165,15 @@ _SMALLTALK_HI_RE = re.compile(r"\b(?:hi|hey)\b", re.IGNORECASE)
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
 
+# Month / year reference — "tháng 5 năm 2026" / "tháng 5/2026" / "thang
+# 5". Without this, the Tier-3 bare-digit fallback routes the date query
+# to "transfer" because "2026" / "5" trip the digit detector. History
+# is the right intent for any specific-month aggregate question.
+_HISTORY_DATE_RE = re.compile(
+    r"\bth[áa]ng\s+\d{1,2}(?:[/\s]\d{2,4}|\s+n[ăa]m\s+\d{4})?\b",
+    re.IGNORECASE,
+)
+
 # Branch / ATM intent — substring matchers in the Tier-1 list miss
 # "chi nhánh BIDV gần nhất" / "atm acb o dau" because the bank token
 # sits between the two anchor words. Regex-based pre-check handles
@@ -214,6 +223,12 @@ def classify(text: str) -> tuple[Intent, float]:
     # routing from any intent. Matches whole words only.
     if _SMALLTALK_HI_RE.search(folded):
         return "smalltalk", 0.65
+
+    # Tier 2.6 — month/year reference is a history query, not a transfer.
+    # Catches "tháng 5 năm 2026" / "tháng 5/2026" / "thang 5" before the
+    # Tier-3 bare-digit fallback steals it.
+    if _HISTORY_DATE_RE.search(text):
+        return "history", 0.55
 
     # Tier 3 — bare digit means an unclassified transfer command.
     if re.search(r"\d", folded):

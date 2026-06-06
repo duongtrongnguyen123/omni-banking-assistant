@@ -951,6 +951,47 @@ def test_cron_label_renders_correct_vn_day() -> None:
     assert _cron_label("0 9 * * *") == "mỗi ngày"
 
 
+# ---------------------------------------------------------------------------
+# Month-year reference routes to history, not transfer (Tier-3 fallback bug)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "tháng 5 năm 2026",
+        "tháng 5/2026",
+        "thang 4",
+        "tháng 12 năm 2025",
+    ],
+)
+def test_month_year_reference_routes_history(text: str) -> None:
+    """Bare "tháng N năm YYYY" / "tháng N/YYYY" used to fall through to
+    the Tier-3 bare-digit fallback and get classified as transfer
+    (because the year is a digit). Judges asking about a specific
+    month would see a confused transfer draft instead of a history
+    aggregate."""
+    intent, _ = classify(text)
+    assert intent == "history", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Same-class negatives — must still route correctly.
+        ("Chuyển 2 triệu cho mẹ", "transfer"),
+        ("Gửi mẹ 5 triệu", "transfer"),
+        ("số dư", "balance"),
+        ("Lưu Lê Mai STK 0123987654 Vietcombank", "add_contact"),
+    ],
+)
+def test_month_year_check_does_not_eat_other_intents(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /
