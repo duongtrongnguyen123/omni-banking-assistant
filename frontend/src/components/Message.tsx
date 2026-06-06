@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { ChatMessage, Contact, OmniResponse } from "../types";
+import type { ChatMessage, Contact, OmniResponse, TransactionDraft } from "../types";
 import { OmniAvatar } from "./OmniAvatar";
 import { TransactionCard } from "./TransactionCard";
 import { DisambiguationCard } from "./DisambiguationCard";
@@ -16,7 +16,7 @@ import { speak } from "../lib/tts";
 
 interface Props {
   message: ChatMessage;
-  onConfirm: (draftId: string, otp: string, sourceAccountId?: string) => void;
+  onConfirm: (draftId: string, draft: TransactionDraft, sourceAccountId?: string) => void;
   onCancel: (draftId: string) => void;
   onSelectCandidate: (draftId: string, contact: Contact) => void;
   onConfirmContact: (draftId: string) => void;
@@ -127,7 +127,7 @@ export const Message = ({
         {r?.draft && r.draft.recipient && (
           <TransactionCard
             draft={r.draft}
-            onConfirm={(otp, sourceAccountId) => onConfirm(r.draft!.id, otp, sourceAccountId)}
+            onConfirm={(sourceAccountId) => onConfirm(r.draft!.id, r.draft!, sourceAccountId)}
             onCancel={() => onCancel(r.draft!.id)}
             onEdit={
               onPrefill

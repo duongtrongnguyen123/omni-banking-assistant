@@ -208,11 +208,11 @@ def confirm(
     if cached is not None:
         return cached
 
-    # Biometric params are part of ConfirmTransactionRequest (kept from
-    # origin/main wire schema) but the orchestrator's confirm_draft
-    # doesn't consume them yet — they'll be wired when we land the
-    # face-scan auth layer. For now they're accepted-and-ignored so the
-    # frontend can ship the wire without backend failure.
+    # Biometric face-scan auth: risky transfers require OTP + an 8D face
+    # scan. The frontend sends both together in the confirm body; the
+    # orchestrator verifies each method independently (see confirm_draft).
+    # The _INFLIGHT_CONFIRMS guard makes the endpoint idempotent against
+    # double-click races (commit 94f6443 — verifier audit A2).
     _INFLIGHT_CONFIRMS.add(cache_key)
     try:
         resp = confirm_draft(
@@ -220,6 +220,8 @@ def confirm(
             draft_id,
             otp=req.otp if req else None,
             source_account_id=req.source_account_id if req else None,
+            biometric_scan=req.biometric_scan.dict() if req and req.biometric_scan else None,
+            biometric_verified=req.biometric_verified if req else False,
         )
     finally:
         _INFLIGHT_CONFIRMS.discard(cache_key)

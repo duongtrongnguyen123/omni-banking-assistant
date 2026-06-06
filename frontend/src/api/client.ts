@@ -1,5 +1,6 @@
 import type {
   AtmHit,
+  BiometricScanResult,
   BudgetRow,
   ChatSession,
   Contact,
@@ -182,10 +183,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ script, cadence_ms: cadenceMs }),
     }),
-  confirm: (draftId: string, otp: string, sourceAccountId?: string) =>
+  confirm: (
+    draftId: string,
+    otp: string,
+    sourceAccountId?: string,
+    biometricScan?: BiometricScanResult,
+  ) =>
     jsonFetch<OmniResponse>(`/api/transactions/${draftId}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ otp, source_account_id: sourceAccountId }),
+      body: JSON.stringify({
+        otp,
+        source_account_id: sourceAccountId,
+        biometric_scan: biometricScan,
+      }),
     }),
   splitBill: (
     totalAmount: number,

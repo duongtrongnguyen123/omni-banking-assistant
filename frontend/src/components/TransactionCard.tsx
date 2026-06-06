@@ -106,7 +106,9 @@ const AmountVsHistoryBars = ({
 
 interface Props {
   draft: TransactionDraft;
-  onConfirm: (otp: string, sourceAccountId?: string) => void;
+  /** Trigger confirmation. OTP + biometric are collected by the App-level
+   *  auth overlay (full phone-frame), not inside this card. */
+  onConfirm: (sourceAccountId?: string) => void;
   onCancel: () => void;
   onEdit?: () => void;
   /** Submit a new amount for this draft — wired to the orchestrator's
@@ -138,8 +140,6 @@ export const TransactionCard = ({
 }: Props) => {
   const [editingAmount, setEditingAmount] = useState(false);
   const [pendingAmount, setPendingAmount] = useState("");
-  const [otpOpen, setOtpOpen] = useState(false);
-  const [otp, setOtp] = useState("");
   const [sourceAccountId, setSourceAccountId] = useState(
     draft.source_account_id ?? draft.source_accounts[0]?.id ?? "",
   );
@@ -175,22 +175,15 @@ export const TransactionCard = ({
     !!selectedAccount && draft.amount != null && draft.amount > selectedAccount.balance;
   const canSubmit =
     actionable && !disabled && !inFlight && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
-  const cleanOtp = otp.replace(/\D/g, "").slice(0, 6);
-
-  const handleOtpChange = (value: string) => {
-    setOtp(value.replace(/\D/g, "").slice(0, 6));
-  };
 
   const handleConfirm = () => {
     // Defend at the handler — the button's ``disabled`` attr should
     // already block this, but a fast double-click can land both events
     // in the same React batch before re-render. Drop the second one.
     if (inFlight) return;
-    if (!otpOpen) {
-      setOtpOpen(true);
-      return;
-    }
-    onConfirm(cleanOtp, sourceAccountId || undefined);
+    // Auth (OTP + optional 8D face scan) is now handled by the App-level
+    // overlay that fills the phone frame — the card just kicks it off.
+    onConfirm(sourceAccountId || undefined);
   };
 
   const handleCancel = () => {
@@ -214,6 +207,7 @@ export const TransactionCard = ({
         (f) =>
           f.severity === "warn" &&
           (f.code === "new_recipient_large_amount" ||
+            f.code === "large_amount" ||
             f.code === "amount_above_average" ||
             f.code === "fraud_risk_high" ||
             f.code === "transfer_velocity_high"),
@@ -466,6 +460,7 @@ export const TransactionCard = ({
                         (f) =>
                           f.code === "amount_above_average" ||
                           f.code === "fraud_risk_high" ||
+                          f.code === "large_amount" ||
                           f.code === "new_recipient_large_amount",
                       )}
                     />
@@ -639,22 +634,6 @@ export const TransactionCard = ({
 
       {actionable ? (
         <>
-          {otpOpen && (
-            <div className="otp-panel">
-              <div className="otp-panel__copy">
-                Nhập OTP để xác minh giao dịch. Mã demo: <strong>123456</strong>
-              </div>
-              <input
-                className="otp-input"
-                value={cleanOtp}
-                onChange={(e) => handleOtpChange(e.target.value)}
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="••••••"
-                autoFocus
-              />
-            </div>
-          )}
           <div className="tx-actions">
             <button
               className="btn btn--ghost"
@@ -674,13 +653,13 @@ export const TransactionCard = ({
               </button>
             )}
             <button
-              className={`btn ${draft.requires_step_up || otpOpen ? "btn--warn" : "btn--primary"}`}
+              className={`btn ${draft.requires_step_up ? "btn--warn" : "btn--primary"}`}
               onClick={handleConfirm}
-              disabled={!canSubmit || (otpOpen && cleanOtp.length !== 6) || inFlight}
+              disabled={!canSubmit}
               aria-busy={inFlight}
               data-onboarding="confirm"
             >
-              {inFlight ? "Đang xử lý…" : otpOpen ? "Xác minh & chuyển" : "Xác nhận"}
+              {inFlight ? "Đang xử lý…" : "Xác nhận"}
             </button>
           </div>
         </>

@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, friendlyApiError } from "./api/client";
 import { TOAST_EVENT_NAME, type ToastEvent } from "./hooks/useEventStream";
-import type { AtmHit, BalanceResult, ChatMessage, ChatSession, Contact, OmniResponse } from "./types";
+import type {
+  AtmHit,
+  BalanceResult,
+  BiometricScanResult,
+  ChatMessage,
+  ChatSession,
+  Contact,
+  OmniResponse,
+  TransactionDraft,
+} from "./types";
 import { ChatHistory } from "./components/ChatHistory";
 import { ContactPicker } from "./components/ContactPicker";
+import { BiometricFaceScan } from "./components/BiometricFaceScan";
 import { Message } from "./components/Message";
 import { InsightsCard } from "./components/InsightsCard";
 import { BudgetCard } from "./components/BudgetCard";
@@ -90,6 +100,17 @@ export default function App() {
   // Last confirmed transfer's amount — used by the "Cùng số tiền, người
   // khác" CTA to prefill the chat input with "chuyển <amount> cho ".
   const [lastConfirmedAmount, setLastConfirmedAmount] = useState<number | null>(null);
+  // Transaction auth is handled by a full phone-frame overlay (not inside
+  // the card): an OTP step, then — for risky transfers — the 8D face scan.
+  // OTP + scan are submitted together to the backend.
+  const [pendingAuth, setPendingAuth] = useState<{
+    draftId: string;
+    draft: TransactionDraft;
+    sourceAccountId?: string;
+  } | null>(null);
+  const [authStage, setAuthStage] = useState<"otp" | "biometric">("otp");
+  const [authOtp, setAuthOtp] = useState("");
+  const [authOtpError, setAuthOtpError] = useState("");
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readStoredTtsPref());
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -441,7 +462,41 @@ export default function App() {
     }
   };
 
-  const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) => {
+  // Submit the confirm request with OTP and (for risky transfers) the 8D
+  // face scan together. Drives the chat pending/resolve bubble.
+  const runConfirm = async (
+    draftId: string,
+    otp: string,
+    sourceAccountId?: string,
+    biometricScan?: BiometricScanResult,
+  ) => {
+    appendUser(biometricScan ? "Xác minh sinh trắc học" : "Xác minh OTP");
+    const pendingId = appendOmniPending();
+    setBusy(true);
+    try {
+      const resp = await api.confirm(draftId, otp, sourceAccountId, biometricScan);
+      resolveOmni(pendingId, resp);
+      if (!resp.draft) {
+        setClosedDraftIds((prev) => new Set(prev).add(draftId));
+        if (resp.intent === "transfer") {
+          setSuggestRefresh((n) => n + 1);
+          setConfirmedTransfers((n) => n + 1);
+        }
+      }
+    } catch (e) {
+      failOmni(pendingId, e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Card → open the full-frame auth overlay. OTP first; biometric (if the
+  // draft requires it) is a second stage inside the same overlay.
+  const onConfirm = (
+    draftId: string,
+    draft: TransactionDraft,
+    sourceAccountId?: string,
+  ) => {
     // Capture the amount before the draft disappears so the "Cùng số
     // tiền, người khác" CTA can prefill the chat input after the
     // transfer lands.
@@ -451,11 +506,47 @@ export default function App() {
         break;
       }
     }
-    sendDraftAction(
-      () => api.confirm(draftId, otp, sourceAccountId),
-      "Xác minh OTP",
-      draftId,
-    );
+    const needsOtp = draft.auth_required?.includes("otp") ?? draft.requires_step_up;
+    setPendingAuth({ draftId, draft, sourceAccountId });
+    setAuthStage(needsOtp ? "otp" : "biometric");
+    setAuthOtp("");
+    setAuthOtpError("");
+  };
+
+  const cleanAuthOtp = authOtp.replace(/\D/g, "").slice(0, 6);
+
+  // OTP stage "Tiếp tục": advance to the face scan if required, else submit.
+  const submitOtp = () => {
+    if (!pendingAuth) return;
+    if (cleanAuthOtp !== "123456") {
+      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      return;
+    }
+    setAuthOtpError("");
+    if (pendingAuth.draft.auth_required?.includes("biometric")) {
+      setAuthStage("biometric");
+      return;
+    }
+    const { draftId, sourceAccountId } = pendingAuth;
+    const otp = cleanAuthOtp;
+    setPendingAuth(null);
+    setAuthOtp("");
+    runConfirm(draftId, otp, sourceAccountId);
+  };
+
+  // Face scan verified → submit OTP + scan together.
+  const finishBiometric = (scan: BiometricScanResult) => {
+    if (!pendingAuth) return;
+    if (cleanAuthOtp !== "123456") {
+      setAuthStage("otp");
+      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      return;
+    }
+    const { draftId, sourceAccountId } = pendingAuth;
+    const otp = cleanAuthOtp;
+    setPendingAuth(null);
+    setAuthOtp("");
+    runConfirm(draftId, otp, sourceAccountId, scan);
   };
 
   const onCancel = (draftId: string) =>
@@ -1106,6 +1197,67 @@ export default function App() {
           open={receiveOpen}
           onClose={() => setReceiveOpen(false)}
         />
+        {pendingAuth && (
+          <div
+            className={`auth-overlay ${authStage === "biometric" ? "auth-overlay--full" : ""}`}
+          >
+            {authStage === "otp" ? (
+              <div className="auth-card">
+                <div className="auth-card__eyebrow">Xác thực giao dịch</div>
+                <h2>Nhập mã OTP</h2>
+                <p>
+                  Mã demo: <strong>123456</strong>
+                </p>
+                <input
+                  className="otp-input auth-card__otp"
+                  value={cleanAuthOtp}
+                  onChange={(e) => {
+                    setAuthOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
+                    setAuthOtpError("");
+                  }}
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="••••••"
+                  autoFocus
+                />
+                {authOtpError && (
+                  <div className="auth-card__error" role="alert">
+                    {authOtpError}
+                  </div>
+                )}
+                <div className="auth-card__actions">
+                  <button
+                    className="btn btn--ghost"
+                    onClick={() => {
+                      setPendingAuth(null);
+                      setAuthOtp("");
+                      setAuthOtpError("");
+                    }}
+                    disabled={busy}
+                  >
+                    Huỷ
+                  </button>
+                  <button
+                    className="btn btn--primary"
+                    onClick={submitOtp}
+                    disabled={busy || cleanAuthOtp.length !== 6}
+                  >
+                    {pendingAuth.draft.auth_required?.includes("biometric")
+                      ? "Tiếp tục"
+                      : "Xác minh & chuyển"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <BiometricFaceScan
+                open
+                challengeId={`${pendingAuth.draftId}:${cleanAuthOtp || "no-otp"}`}
+                onClose={() => setPendingAuth(null)}
+                onVerified={(scan) => finishBiometric(scan)}
+              />
+            )}
+          </div>
+        )}
         {showClearConfirm && (
           <div
             className="clear-confirm"
