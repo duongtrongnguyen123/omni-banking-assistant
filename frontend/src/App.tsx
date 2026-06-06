@@ -11,7 +11,7 @@ import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { SkillsCard } from "./components/SkillsCard";
 import { TutorialOverlay } from "./components/TutorialOverlay";
-import { VoiceButton } from "./components/VoiceButton";
+import { VoiceButton, type VoiceButtonHandle } from "./components/VoiceButton";
 import { ReceiveCard } from "./components/ReceiveCard";
 import { QrScanButton } from "./components/QrScanButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
@@ -79,6 +79,10 @@ export default function App() {
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Lets `send()` and other code paths stop voice recognition when the
+  // user is done dictating (e.g. clicked Gửi), so the mic doesn't keep
+  // listening and overwrite the cleared input on the next onresult.
+  const voiceRef = useRef<VoiceButtonHandle | null>(null);
 
   // Power-user state.
   const [slashOpen, setSlashOpen] = useState(false);
@@ -203,6 +207,10 @@ export default function App() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || busy) return;
+      // Release the mic before doing anything else — if the user
+      // dictated this message, we don't want recognition to keep
+      // running and clobber the now-empty input via a late onresult.
+      voiceRef.current?.stop();
       appendUser(trimmed);
       const pendingId = appendOmniPending();
       setInput("");
@@ -420,6 +428,12 @@ export default function App() {
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
+    // If the user wipes the field while voice was filling it, treat
+    // that as "I'm done dictating" — release the mic so the next
+    // onresult doesn't repopulate the input behind their back.
+    if (value === "" && voiceRef.current?.isListening()) {
+      voiceRef.current.stop();
+    }
     setInput(value);
     setHistoryIdx(null);
     const caret = e.target.selectionStart ?? value.length;
@@ -818,6 +832,7 @@ export default function App() {
             }}
           >
             <VoiceButton
+              ref={voiceRef}
               onTranscript={(t) => setInput(t)}
               disabled={busy}
             />
