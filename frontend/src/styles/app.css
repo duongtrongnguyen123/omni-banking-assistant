@@ -357,6 +357,10 @@ textarea:focus-visible,
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 160px;
 }
+.tx-amount-bars {
+  display: block; margin: 6px 0 0;
+  vertical-align: bottom;
+}
 @media (prefers-reduced-motion: reduce) {
   .suggest-chip__bar-fill { transition: none; }
 }

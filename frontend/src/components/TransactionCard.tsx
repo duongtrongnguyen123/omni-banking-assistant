@@ -50,6 +50,60 @@ const CategoryChip = ({ category }: { category: string }) => {
   );
 };
 
+/** Tiny bar chart contrasting the last 3 amounts to this recipient
+ *  against the current draft amount. The current bar gets a warn fill
+ *  when the safety layer flagged the draft so the divergence is
+ *  visually unmistakable even before the user reads the prose flag. */
+const AmountVsHistoryBars = ({
+  history,
+  current,
+  flagged,
+}: {
+  history: number[];
+  current: number;
+  flagged: boolean;
+}) => {
+  const values = [...history, current];
+  const max = Math.max(...values, 1);
+  const w = 14;
+  const gap = 4;
+  const h = 22;
+  return (
+    <svg
+      className="tx-amount-bars"
+      width={values.length * (w + gap) - gap}
+      height={h}
+      role="img"
+      aria-label={
+        flagged
+          ? "Số tiền hiện tại cao bất thường so với các lần trước"
+          : "Số tiền hiện tại so với các lần trước"
+      }
+    >
+      {values.map((v, i) => {
+        const isCurrent = i === values.length - 1;
+        const bh = Math.max(2, (v / max) * h);
+        const fill = isCurrent
+          ? flagged
+            ? "#dc2626"
+            : "var(--orange, #f97316)"
+          : "#cbd5e1";
+        return (
+          <rect
+            key={i}
+            x={i * (w + gap)}
+            y={h - bh}
+            width={w}
+            height={bh}
+            rx={2}
+            fill={fill}
+          />
+        );
+      })}
+    </svg>
+  );
+};
+
 interface Props {
   draft: TransactionDraft;
   onConfirm: (otp: string, sourceAccountId?: string) => void;
@@ -306,6 +360,23 @@ export const TransactionCard = ({
                     })}
                   </ul>
                 )}
+                {draft.recent_to_recipient &&
+                  draft.recent_to_recipient.length > 0 &&
+                  draft.amount != null && (
+                    <AmountVsHistoryBars
+                      history={draft.recent_to_recipient
+                        .slice(0, 3)
+                        .map((t) => t.amount)
+                        .reverse()}
+                      current={draft.amount}
+                      flagged={draft.flags.some(
+                        (f) =>
+                          f.code === "amount_above_average" ||
+                          f.code === "fraud_risk_high" ||
+                          f.code === "new_recipient_large_amount",
+                      )}
+                    />
+                  )}
               </div>
             </div>
           </div>
