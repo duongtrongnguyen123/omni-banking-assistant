@@ -124,6 +124,11 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "tai khoan cua toi",        # "tài khoản của tôi"
         "cac tai khoan",            # "các tài khoản"
         "tong tai san",             # "tổng tài sản"
+        "kiem tra tai khoan",       # "kiểm tra tài khoản (đi)"
+        "thong tin tai khoan",      # "thông tin tài khoản"
+        "check balance",            # English fallback judges sometimes use
+        "check so du",              # "check số dư" — code-switching
+        "show balance",
     ]),
     ("history", [
         "lich su", "thong ke", "sao ke", "bao cao chi tieu",
@@ -232,6 +237,49 @@ _SMALLTALK_HI_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Category-shaped retrospective queries. Catches "ăn uống tháng này" /
+# "mua sắm tuần trước" / "cafe tháng này" / "tiêu ăn uống bao nhiêu" —
+# all clear history-with-category queries where the category is the
+# subject and a temporal/aggregation cue follows. Without this they
+# fall to "unknown" because no Tier-1/2 keyword fires.
+#
+# Word list deliberately small + high-precision; categories that share
+# tokens with intents ("tiền nhà" inside "tiền" etc.) are excluded
+# unless paired with the time anchor.
+_CATEGORY_HISTORY_RE = re.compile(
+    r"\b(?:"
+    r"ăn\s+uống|an\s+uong"
+    r"|ăn\s+sáng|ăn\s+trưa|ăn\s+tối|an\s+sang|an\s+trua|an\s+toi"
+    r"|mua\s+sắm|mua\s+sam"
+    r"|giải\s+trí|giai\s+tri"
+    r"|cafe|cà\s+phê|ca\s+phe|trà\s+sữa|tra\s+sua"
+    r"|shopping"
+    r"|xăng|xang|grab|taxi"
+    r"|tiền\s+điện|tien\s+dien|tiền\s+nước|tien\s+nuoc|điện\s+nước|dien\s+nuoc"
+    r"|tiền\s+nhà|tien\s+nha"
+    r"|tiền\s+học|tien\s+hoc|học\s+phí|hoc\s+phi"
+    r")\b"
+    # Anchored to either a leading "tiêu/chi" verb OR a trailing
+    # temporal / aggregation cue. This keeps "tiền nhà tôi vừa trả"
+    # (a transfer reference) out of history while still catching the
+    # retrospective forms judges actually type.
+    r"(?:"
+    r"\s+(?:tháng|thang|tuần|tuan|năm|nam|hôm|hom|ngày|ngay|bao\s+nhi|gần\s+đây|gan\s+day)"
+    r"|.*\b(?:bao\s+nhi|tổng|tong|trung\s+bình|trung\s+binh)\b"
+    r")",
+    re.IGNORECASE,
+)
+# Also catches the leading "tiêu/chi <category>" form without time
+# cue: "tiêu ăn uống", "chi giải trí".
+_CATEGORY_LEAD_RE = re.compile(
+    r"^(?:tiêu|chi|tieu)\s+"
+    r"(?:ăn\s+uống|an\s+uong|mua\s+sắm|mua\s+sam|giải\s+trí|giai\s+tri"
+    r"|cafe|cà\s+phê|ca\s+phe|shopping|xăng|xang|grab|taxi"
+    r"|tiền\s+điện|tien\s+dien|tiền\s+nước|tien\s+nuoc"
+    r"|tiền\s+nhà|tien\s+nha)",
+    re.IGNORECASE,
+)
+
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
 
@@ -306,6 +354,15 @@ def classify(text: str) -> tuple[Intent, float]:
     # keywords don't steal "chi nhánh BIDV gần nhất" away.
     if _ATM_FINDER_RE.search(folded):
         return "atm_finder", 0.9
+
+    # Category-shaped retrospective queries — "ăn uống tháng này" /
+    # "mua sắm tuần trước" / "tiêu giải trí bao nhiêu". Must run before
+    # Tier-1 so the "tiêu" / "chi" inside transfer keywords don't
+    # eat the routing, and before Tier-2 "bao nhieu" → history default
+    # (which produces a generic month aggregate without the category
+    # filter the user actually asked for).
+    if _CATEGORY_HISTORY_RE.search(text) or _CATEGORY_LEAD_RE.search(text):
+        return "history", 0.75
 
     # Tier 1 — first match wins, no scoring needed.
     for intent, kws in _HIGH:

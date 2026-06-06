@@ -1773,6 +1773,81 @@ def test_insights_anomaly_renders_detector_reason() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Category-shaped queries — "ăn uống tháng này" / "cafe bao nhiêu" → history
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # <category> + temporal
+        "ăn uống tháng này",
+        "ăn uống tuần trước",
+        "mua sắm tháng này",
+        "cafe tháng này",
+        "cà phê tháng này",
+        "xăng tháng này",
+        "grab tháng này",
+        "tiền điện tháng này",
+        # <category> + aggregation cue
+        "giải trí bao nhiêu",
+        "shopping bao nhiêu",
+        "tiền nhà bao nhiêu",
+        # tiêu/chi + <category>
+        "tiêu ăn uống",
+        "chi giải trí",
+        "tiêu ăn uống bao nhiêu",
+    ],
+)
+def test_category_shaped_queries_route_history(text: str) -> None:
+    """Without a category-aware route, "ăn uống tháng này" / "mua sắm
+    tháng này" / "tiền điện tháng này" all fell to "unknown" — the
+    Tier-2 history defaults (bao nhieu / tieu) only fired on phrasings
+    that included a verb. Judges naturally drop the verb when asking
+    about a specific category."""
+    intent, _ = classify(text)
+    assert intent == "history", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Critical negatives — category words inside a transfer command
+        # ("tiền ăn" / "tiền nhà") must NOT trigger the category route.
+        ("gửi mẹ tiền ăn 100k", "transfer"),
+        ("gửi mẹ tiền nhà 5tr", "transfer"),
+        ("chuyển mẹ 2 triệu", "transfer"),
+        ("số dư", "balance"),
+        ("tháng này tiêu bao nhiêu", "history"),
+    ],
+)
+def test_category_route_doesnt_eat_transfer_commands(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "kiểm tra tài khoản đi",
+        "kiểm tra tài khoản",
+        "thông tin tài khoản",
+        "check balance",
+        "check số dư",
+        "show balance",
+    ],
+)
+def test_check_account_phrasings_route_balance(text: str) -> None:
+    """Code-switched and verb-led account queries that pre-fix fell to
+    transfer ("kiểm tra" matched no balance keyword; the Tier-2 default
+    sent any unrecognised verb-led message to transfer)."""
+    intent, _ = classify(text)
+    assert intent == "balance", text
+
+
+# ---------------------------------------------------------------------------
 # Confirm matcher — VN polite/informal acks (dạ/vâng/ờ/okela) + neg-guard
 # ---------------------------------------------------------------------------
 
