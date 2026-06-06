@@ -424,6 +424,38 @@ def test_default_limit_for_listy_history_queries(text: str) -> None:
     assert e.limit == 5, f"{text!r} → limit={e.limit}"
 
 
+def test_transaction_draft_schema_carries_recent_to_recipient_field() -> None:
+    """The TransactionCard renders an inline mini-ledger from
+    ``draft.recent_to_recipient`` (last 3 completed transfers to the
+    chosen recipient). If that schema field is silently dropped the
+    frontend just hides the ledger and the regression is invisible —
+    so pin the field's existence + shape at the schema layer where the
+    isolated test conftest can verify it without a seeded DB."""
+    from app.models.schemas import TransactionDraft
+
+    fields = TransactionDraft.model_fields
+    assert "recent_to_recipient" in fields, (
+        "TransactionDraft.recent_to_recipient must exist — mini-ledger UI depends on it"
+    )
+    # Construct a draft with the payload the orchestrator builds — same
+    # raw-dict shape the frontend consumes. Pydantic must accept it.
+    d = TransactionDraft(
+        id="d_x",
+        recent_to_recipient=[
+            {
+                "amount": 1_000_000,
+                "created_at": "2026-06-01T08:00:00+07:00",
+                "description": "phí học",
+                "category": "education",
+            }
+        ],
+    )
+    assert d.recent_to_recipient is not None and len(d.recent_to_recipient) == 1
+    row = d.recent_to_recipient[0]
+    assert row["amount"] == 1_000_000
+    assert row["description"] == "phí học"
+
+
 def test_amount_above_average_carries_structured_details() -> None:
     """The per-recipient anomaly flag must ship a ``details`` payload with
     median / p90 / n_samples / ratio so the TransactionCard can render a
