@@ -1143,6 +1143,45 @@ def test_alias_resolver_strips_possessive_tail(
     )
 
 
+@pytest.mark.parametrize(
+    "surface,expected",
+    [
+        # Exact full-name match must short-circuit before RAG/embedding
+        # fallback. Otherwise multi-token names fall through to the
+        # semantic stage and surface many "similar-looking" candidates
+        # (reported bug: "chuyển cho Vũ Thị Hạnh 2 nghìn" → 16 candidates).
+        ("Vũ Thị Hạnh", "Vũ Thị Hạnh"),
+        ("Nguyễn Thị Lan", "Nguyễn Thị Lan"),
+        ("Trần Hoàng Minh", "Trần Hoàng Minh"),
+        # Case-insensitive / diacritic-insensitive variants should also
+        # short-circuit on exact display-name fold.
+        ("vũ thị hạnh", "Vũ Thị Hạnh"),
+        ("VU THI HANH", "Vũ Thị Hạnh"),
+    ],
+)
+def test_alias_resolver_exact_full_name_returns_single_candidate(
+    surface: str, expected: str
+) -> None:
+    """Regression: an exact display-name match must yield exactly one
+    candidate, regardless of whether the embedding model is loaded.
+    Prior to the fix, names not present as an alias (e.g. "Vũ Thị
+    Hạnh" — aliases are only "chị hạnh"/"hạnh") fell through to step
+    5 (RAG/lexical) which could return a wide set of plausible names
+    from the same demographic. The orchestrator then surfaced all of
+    them as disambiguation candidates — the screenshot bug.
+    """
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of(USER)
+    matches = resolve_recipient(surface, contacts)
+    names = [m.contact.display_name for m in matches]
+    assert len(matches) == 1, (
+        f"{surface!r} should match exactly one contact; got {names}"
+    )
+    assert names[0] == expected
+
+
 # ---------------------------------------------------------------------------
 # Amount parser — wrong-money bugs (visible safety contract!)
 # ---------------------------------------------------------------------------
