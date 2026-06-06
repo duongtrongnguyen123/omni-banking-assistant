@@ -53,6 +53,12 @@ def get_connection() -> sqlite3.Connection:
 def _init_schema(conn: sqlite3.Connection) -> None:
     with SCHEMA_PATH.open("r", encoding="utf-8") as f:
         conn.executescript(f.read())
+    cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(chat_messages)").fetchall()
+    }
+    if "response_json" not in cols:
+        conn.execute("ALTER TABLE chat_messages ADD COLUMN response_json TEXT")
 
 
 def reset_connection() -> None:

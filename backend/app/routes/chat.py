@@ -62,6 +62,7 @@ class RenameSessionRequest(BaseModel):
 
 class SelectCandidateRequest(BaseModel):
     contact_id: str
+    session_id: str | None = None
 
 
 class BiometricPose(BaseModel):
@@ -107,6 +108,11 @@ class ConfirmTransactionRequest(BaseModel):
     source_account_id: str | None = None
     biometric_verified: bool = False
     biometric_scan: BiometricScanResult | None = None
+    session_id: str | None = None
+
+
+class ActionSessionRequest(BaseModel):
+    session_id: str | None = None
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -153,11 +159,52 @@ def chat(
     try:
         chat_log.append_message(session_id, user_id, "user", req.message)
         chat_log.append_message(
-            session_id, user_id, "omni", resp.text, intent=resp.intent
+            session_id,
+            user_id,
+            "omni",
+            resp.text,
+            intent=resp.intent,
+            response=resp.model_dump(mode="json"),
         )
     except Exception:  # noqa: BLE001 — archival is non-critical
         pass
     return resp
+
+
+def _persist_action_turn(
+    *,
+    user_id: str,
+    session_id: str | None,
+    user_text: str,
+    resp: OmniResponse,
+) -> None:
+    if not session_id:
+        return
+    sid = chat_log.resolve_session(user_id, session_id)
+    try:
+        chat_log.append_message(sid, user_id, "user", user_text)
+        chat_log.append_message(
+            sid,
+            user_id,
+            "omni",
+            resp.text,
+            intent=resp.intent,
+            response=resp.model_dump(mode="json"),
+        )
+    except Exception:  # noqa: BLE001 — archival must never break banking flow
+        pass
+
+
+def _otp_log_label(req: ConfirmTransactionRequest | None, resp: OmniResponse) -> str:
+    if req and req.biometric_scan:
+        return "Xác minh sinh trắc học"
+    if req and req.otp is not None:
+        text = (resp.text or "").lower()
+        if "otp thất bại" in text or "quá 5 lần" in text:
+            return "Xác minh OTP thất bại"
+        if resp.intent == "transfer" and resp.draft is None:
+            return "Xác minh OTP thành công"
+    return "Xác minh OTP"
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +297,12 @@ def confirm(
     cache_key = f"{user_id}:{draft_id}"
     cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
     if cached is not None:
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text=_otp_log_label(req, cached),
+            resp=cached,
+        )
         return cached
 
     # Biometric face-scan auth: risky transfers require OTP + an 8D face
@@ -271,6 +324,12 @@ def confirm(
         _INFLIGHT_CONFIRMS.discard(cache_key)
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
+    _persist_action_turn(
+        user_id=user_id,
+        session_id=req.session_id if req else None,
+        user_text=_otp_log_label(req, resp),
+        resp=resp,
+    )
     # Only cache fully-confirmed transfers — OTP prompts / re-confirm
     # branches still need to be replayable for new input. Heuristic:
     # cache when the response carries no draft (transfer landed) or
@@ -281,20 +340,44 @@ def confirm(
 
 
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
-def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+def cancel(
+    draft_id: str,
+    req: ActionSessionRequest | None = None,
+    user_id: str = Depends(current_user),
+) -> OmniResponse:
     cache_key = f"{user_id}:{draft_id}"
     # Confirm is mid-execute — refuse to clear the session under it.
     if cache_key in _INFLIGHT_CONFIRMS:
-        return OmniResponse(
+        resp = OmniResponse(
             intent="transfer",
             text="Giao dịch đang được xử lý, không thể huỷ ở bước này.",
         )
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text="Huỷ",
+            resp=resp,
+        )
+        return resp
     # Confirm already finished — replay the idempotent confirm response
     # instead of pretending the cancel succeeded.
     cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
     if cached is not None:
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id if req else None,
+            user_text="Huỷ",
+            resp=cached,
+        )
         return cached
-    return cancel_draft(user_id, draft_id)
+    resp = cancel_draft(user_id, draft_id)
+    _persist_action_turn(
+        user_id=user_id,
+        session_id=req.session_id if req else None,
+        user_text="Huỷ",
+        resp=resp,
+    )
+    return resp
 
 
 class SplitBillRequest(BaseModel):
@@ -329,12 +412,26 @@ def select(
 ) -> OmniResponse:
     resp = select_candidate(user_id, draft_id, req.contact_id)
     if resp.intent == "unknown":
-        return OmniResponse(
+        fallback = OmniResponse(
             intent="transfer",
             text=(
                 "Phiên giao dịch vừa được làm mới. Bạn nhập lại câu chuyển tiền giúp mình nhé."
             ),
         )
+        _persist_action_turn(
+            user_id=user_id,
+            session_id=req.session_id,
+            user_text="Chọn người nhận",
+            resp=fallback,
+        )
+        return fallback
+    recipient_name = resp.draft.recipient.display_name if resp.draft and resp.draft.recipient else "người nhận"
+    _persist_action_turn(
+        user_id=user_id,
+        session_id=req.session_id,
+        user_text=f"Chọn {recipient_name}",
+        resp=resp,
+    )
     return resp
 
 

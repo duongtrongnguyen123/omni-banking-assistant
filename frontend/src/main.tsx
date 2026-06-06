@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { AdminChatLogs } from "./components/AdminChatLogs";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles/app.css";
 
@@ -11,10 +12,14 @@ if (import.meta.env.DEV) {
   import("./lib/axe").then((m) => m.bootAxe());
 }
 
+const Root = window.location.pathname.startsWith("/admin/chat-logs")
+  ? AdminChatLogs
+  : App;
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <Root />
     </ErrorBoundary>
   </React.StrictMode>,
 );

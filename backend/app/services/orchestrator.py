@@ -2510,6 +2510,19 @@ def confirm_draft(
     # code stops immediately instead of making the user complete a face scan.
     if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is not None:
         if not otp.strip() or otp.strip() != "123456":
+            draft.otp_attempts += 1
+            session.set_draft(draft)
+            if draft.otp_attempts >= 5:
+                session.clear_draft()
+                text = "Xác minh OTP thất bại. Bạn đã nhập sai OTP quá 5 lần, giao dịch đã được huỷ để bảo vệ tài khoản."
+                session.append("user", "Xác minh OTP")
+                session.append("omni", text)
+                try:
+                    from .audit_log import record_otp
+                    record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+                except Exception:  # pragma: no cover
+                    pass
+                return OmniResponse(intent="transfer", text=text)
             text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
             session.append("user", "Xác minh OTP")
             session.append("omni", text)
@@ -2525,6 +2538,7 @@ def confirm_draft(
         except Exception:  # pragma: no cover
             pass
         draft.auth_completed.append("otp")
+        draft.otp_attempts = 0
         session.set_draft(draft)
 
     # --- Biometric (8D face scan) ---
@@ -2569,6 +2583,19 @@ def confirm_draft(
         and otp
         and otp.strip() != "123456"
     ):
+        draft.otp_attempts += 1
+        session.set_draft(draft)
+        if draft.otp_attempts >= 5:
+            session.clear_draft()
+            text = "Xác minh OTP thất bại. Bạn đã nhập sai OTP quá 5 lần, giao dịch đã được huỷ để bảo vệ tài khoản."
+            session.append("user", "Xác minh OTP")
+            session.append("omni", text)
+            try:
+                from .audit_log import record_otp
+                record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+            except Exception:  # pragma: no cover
+                pass
+            return OmniResponse(intent="transfer", text=text)
         text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
         session.append("user", "Xác minh OTP")
         session.append("omni", text)
@@ -2588,6 +2615,7 @@ def confirm_draft(
         except Exception:  # pragma: no cover
             pass
         draft.auth_completed.append("otp")
+        draft.otp_attempts = 0
 
     # --- Any required method still outstanding? ---
     missing_auth = [m for m in draft.auth_required if m not in draft.auth_completed]

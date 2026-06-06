@@ -47,6 +47,7 @@ import {
 import { RecipientAutocomplete } from "./components/RecipientAutocomplete";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { cancelSpeech, isSpeechSupported } from "./lib/tts";
+import { repairVietnameseText } from "./lib/repairVietnamese";
 import { formatVND } from "./format";
 
 const TTS_STORAGE_KEY = "omni.tts.enabled";
@@ -96,6 +97,7 @@ export default function App() {
   // fire on a cancel — verifier audit, user feedback "ấn huỷ … vẫn
   // hiện là đã chuyển khoản được rồi".
   const [cancelledDraftIds, setCancelledDraftIds] = useState<Set<string>>(new Set());
+  const [confirmedDraftIds, setConfirmedDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   // Bumped after every executed transfer so the suggestion strip re-ranks.
@@ -327,6 +329,8 @@ export default function App() {
     setCurrentSessionId(null);
     sessionIdRef.current = null;
     setClosedDraftIds(new Set());
+    setConfirmedDraftIds(new Set());
+    setCancelledDraftIds(new Set());
     setClosedScheduleDraftIds(new Set());
     setHistoryIdx(null);
     setHistoryOpen(false);
@@ -338,12 +342,34 @@ export default function App() {
       const mapped: ChatMessage[] = stored.map((m) => ({
         id: m.id,
         role: m.role,
-        text: m.content,
+        text: repairVietnameseText(m.content),
+        response: m.response ?? undefined,
       }));
+      const closed = new Set<string>();
+      const cancelled = new Set<string>();
+      const confirmed = new Set<string>();
+      let latestDraftId: string | null = null;
+      for (const m of mapped) {
+        const resp = m.response;
+        if (resp?.draft?.id) {
+          latestDraftId = resp.draft.id;
+        }
+        if (resp?.intent === "transfer" && latestDraftId && !resp.draft) {
+          closed.add(latestDraftId);
+          const lower = resp.text.toLowerCase();
+          if (lower.includes("huỷ") || lower.includes("hủy")) {
+            cancelled.add(latestDraftId);
+          } else if (lower.includes("đã chuyển") || lower.includes("mã giao dịch")) {
+            confirmed.add(latestDraftId);
+          }
+        }
+      }
       setMessages(mapped.length ? mapped : [WELCOME]);
       setCurrentSessionId(id);
       sessionIdRef.current = id;
-      setClosedDraftIds(new Set());
+      setClosedDraftIds(closed);
+      setCancelledDraftIds(cancelled);
+      setConfirmedDraftIds(confirmed);
       setClosedScheduleDraftIds(new Set());
       setHistoryIdx(null);
       setHistoryOpen(false);
@@ -469,6 +495,11 @@ export default function App() {
         // confirmedTransfers counter below.
         if (actionLabel === "Huỷ") {
           setCancelledDraftIds((prev) => new Set(prev).add(closeDraftId));
+          setConfirmedDraftIds((prev) => {
+            const next = new Set(prev);
+            next.delete(closeDraftId);
+            return next;
+          });
         }
         // Transfer was executed (or cancelled) — re-rank the suggestion
         // strip so the freshly-paid contact moves up or out.
@@ -533,10 +564,17 @@ export default function App() {
       return next;
     });
     try {
-      const resp = await api.confirm(draftId, otp, sourceAccountId, biometricScan);
+      const resp = await api.confirm(
+        draftId,
+        otp,
+        sourceAccountId,
+        biometricScan,
+        sessionIdRef.current,
+      );
       resolveOmni(pendingId, resp);
       if (!resp.draft) {
         setClosedDraftIds((prev) => new Set(prev).add(draftId));
+        setConfirmedDraftIds((prev) => new Set(prev).add(draftId));
         if (resp.intent === "transfer") {
           setSuggestRefresh((n) => n + 1);
           setConfirmedTransfers((n) => n + 1);
@@ -583,7 +621,12 @@ export default function App() {
   const submitOtp = () => {
     if (!pendingAuth) return;
     if (cleanAuthOtp !== "123456") {
-      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      const { draftId, sourceAccountId } = pendingAuth;
+      const otp = cleanAuthOtp;
+      setPendingAuth(null);
+      setAuthOtp("");
+      setAuthOtpError("");
+      runConfirm(draftId, otp, sourceAccountId);
       return;
     }
     setAuthOtpError("");
@@ -614,12 +657,13 @@ export default function App() {
   };
 
   const onCancel = (draftId: string) =>
-    sendDraftAction(() => api.cancel(draftId), "Huỷ", draftId);
+    sendDraftAction(() => api.cancel(draftId, sessionIdRef.current), "Huỷ", draftId);
 
   const onSelectCandidate = (draftId: string, contact: Contact) =>
     sendDraftAction(
-      () => api.select(draftId, contact.id),
+      () => api.select(draftId, contact.id, sessionIdRef.current),
       `Chọn ${contact.display_name}`,
+      draftId,
     );
 
   const actionableDraftIds = new Set<string>();
@@ -886,6 +930,8 @@ export default function App() {
   const confirmClear = () => {
     setMessages([WELCOME]);
     setClosedDraftIds(new Set());
+    setCancelledDraftIds(new Set());
+    setConfirmedDraftIds(new Set());
     setClosedScheduleDraftIds(new Set());
     setHistoryIdx(null);
     setShowClearConfirm(false);
@@ -1068,6 +1114,7 @@ export default function App() {
               busy={busy}
               actionableDraftIds={actionableDraftIds}
               cancelledDraftIds={cancelledDraftIds}
+              confirmedDraftIds={confirmedDraftIds}
               inFlightDraftIds={inFlightDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
               ttsEnabled={ttsEnabled}

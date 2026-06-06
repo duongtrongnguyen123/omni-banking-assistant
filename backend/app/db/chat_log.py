@@ -20,6 +20,7 @@ ISO-8601 UTC strings, matching the convention used elsewhere in the DB.
 from __future__ import annotations
 
 import uuid
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -97,6 +98,126 @@ def list_sessions(user_id: str, limit: int = 100) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def admin_list_sessions(
+    *,
+    user_id: Optional[str] = None,
+    q: Optional[str] = None,
+    intent: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]:
+    """Conversation list for operators.
+
+    User-facing history is scoped to one caller. Admin history intentionally
+    spans users but stays read-only and paginated so the dashboard can inspect
+    support/audit cases without touching the normal chat surface.
+    """
+    conn = get_connection()
+    where: list[str] = []
+    params: list[object] = []
+    if user_id:
+        where.append("s.user_id = ?")
+        params.append(user_id)
+    if q:
+        like = f"%{q.strip()}%"
+        where.append(
+            """
+            (
+                s.title LIKE ?
+                OR EXISTS (
+                    SELECT 1 FROM chat_messages mq
+                    WHERE mq.session_id = s.id AND mq.content LIKE ?
+                )
+            )
+            """
+        )
+        params.extend([like, like])
+    if intent:
+        where.append(
+            """
+            EXISTS (
+                SELECT 1 FROM chat_messages mi
+                WHERE mi.session_id = s.id AND mi.intent = ?
+            )
+            """
+        )
+        params.append(intent)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"""
+        SELECT s.id, s.user_id, s.title, s.created_at, s.updated_at,
+               (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id = s.id)
+                   AS message_count,
+               (SELECT m.content FROM chat_messages m
+                    WHERE m.session_id = s.id
+                    ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)
+                   AS preview,
+               (SELECT GROUP_CONCAT(DISTINCT m.intent)
+                    FROM chat_messages m
+                    WHERE m.session_id = s.id AND m.intent IS NOT NULL)
+                   AS intents
+        FROM chat_sessions s
+        {where_sql}
+        ORDER BY s.updated_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, max(1, min(limit, 500)), max(0, offset)),
+    ).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["intents"] = [
+            x for x in (item.get("intents") or "").split(",") if x
+        ]
+        out.append(item)
+    return out
+
+
+def admin_count_sessions(
+    *,
+    user_id: Optional[str] = None,
+    q: Optional[str] = None,
+    intent: Optional[str] = None,
+) -> int:
+    conn = get_connection()
+    where: list[str] = []
+    params: list[object] = []
+    if user_id:
+        where.append("s.user_id = ?")
+        params.append(user_id)
+    if q:
+        like = f"%{q.strip()}%"
+        where.append(
+            """
+            (
+                s.title LIKE ?
+                OR EXISTS (
+                    SELECT 1 FROM chat_messages mq
+                    WHERE mq.session_id = s.id AND mq.content LIKE ?
+                )
+            )
+            """
+        )
+        params.extend([like, like])
+    if intent:
+        where.append(
+            """
+            EXISTS (
+                SELECT 1 FROM chat_messages mi
+                WHERE mi.session_id = s.id AND mi.intent = ?
+            )
+            """
+        )
+        params.append(intent)
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM chat_sessions s {where_sql}",
+        params,
+    ).fetchone()
+    return int(row["n"] if row else 0)
+
+
 def get_session(session_id: str, user_id: str) -> Optional[dict]:
     conn = get_connection()
     row = conn.execute(
@@ -114,12 +235,47 @@ def get_messages(session_id: str, user_id: str) -> Optional[list[dict]]:
         return None
     conn = get_connection()
     rows = conn.execute(
-        "SELECT id, role, content, intent, created_at "
+        "SELECT id, role, content, intent, response_json, created_at "
         "FROM chat_messages WHERE session_id = ? "
         "ORDER BY created_at ASC, rowid ASC",
         (session_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [_row_to_message(r) for r in rows]
+
+
+def admin_get_session(session_id: str) -> Optional[dict]:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, user_id, title, created_at, updated_at "
+        "FROM chat_sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def admin_get_messages(session_id: str) -> Optional[list[dict]]:
+    if admin_get_session(session_id) is None:
+        return None
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, user_id, role, content, intent, response_json, created_at "
+        "FROM chat_messages WHERE session_id = ? "
+        "ORDER BY created_at ASC, rowid ASC",
+        (session_id,),
+    ).fetchall()
+    return [_row_to_message(r) for r in rows]
+
+
+def _row_to_message(row) -> dict:
+    item = dict(row)
+    raw = item.pop("response_json", None)
+    item["response"] = None
+    if raw:
+        try:
+            item["response"] = json.loads(raw)
+        except Exception:
+            item["response"] = None
+    return item
 
 
 def latest_session_id(user_id: str) -> Optional[str]:
@@ -175,6 +331,7 @@ def append_message(
     role: str,
     content: str,
     intent: Optional[str] = None,
+    response: Optional[dict] = None,
 ) -> dict:
     """Append one turn and bump the conversation's ``updated_at``.
 
@@ -185,11 +342,16 @@ def append_message(
     conn = get_connection()
     mid = _new_id()
     now = _now()
+    response_json = (
+        json.dumps(response, ensure_ascii=False, separators=(",", ":"))
+        if response is not None
+        else None
+    )
     conn.execute(
         "INSERT INTO chat_messages "
-        "(id, session_id, user_id, role, content, intent, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (mid, session_id, user_id, role, content, intent, now),
+        "(id, session_id, user_id, role, content, intent, response_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (mid, session_id, user_id, role, content, intent, response_json, now),
     )
     conn.execute(
         "UPDATE chat_sessions SET updated_at = ?, "
@@ -204,5 +366,6 @@ def append_message(
         "role": role,
         "content": content,
         "intent": intent,
+        "response": response,
         "created_at": now,
     }

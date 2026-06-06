@@ -48,6 +48,7 @@ interface Props {
    *  on any actionable→inactionable transition (verifier audit:
    *  cancel should never look like "Đã chuyển X · Y"). */
   cancelledDraftIds?: Set<string>;
+  confirmedDraftIds?: Set<string>;
   /** Drafts whose confirm/cancel request is currently in flight.
    *  TransactionCard locks both buttons + shows a spinner so the user
    *  can't fire a cancel that races a confirm. */
@@ -72,6 +73,7 @@ export const Message = ({
   busy,
   actionableDraftIds,
   cancelledDraftIds,
+  confirmedDraftIds,
   inFlightDraftIds,
   actionableScheduleDraftIds,
   ttsEnabled,
@@ -152,6 +154,7 @@ export const Message = ({
             inFlight={inFlightDraftIds?.has(r.draft.id) ?? false}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
             cancelled={cancelledDraftIds?.has(r.draft.id) ?? false}
+            completed={confirmedDraftIds?.has(r.draft.id) ?? false}
           />
         )}
         {r?.atms && r.atms.length > 0 && <AtmCard atms={r.atms} />}
