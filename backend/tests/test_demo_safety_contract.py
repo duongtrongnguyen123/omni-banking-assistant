@@ -826,6 +826,57 @@ def test_bare_recipient_denylist_rejects_context_nouns(text: str) -> None:
     )
 
 
+def test_audit_log_records_transfer_lifecycle(
+    tmp_path, monkeypatch
+) -> None:
+    """SBV-style audit trail must record OTP request + verify + the
+    actual transfer_executed event, plus cancel for the unhappy path.
+    eaf4484 shipped the writer; this test pins the call sites are
+    actually wired so a future revert can't silently disable the
+    audit trail."""
+    import json
+
+    monkeypatch.setenv("OMNI_AUDIT_DIR", str(tmp_path))
+    # Force a fresh writer that picks up the patched env.
+    from app.services import audit_log
+    audit_log._FH = None
+    audit_log._FH_DAY = None
+
+    from app.services.orchestrator import (
+        cancel_draft,
+        confirm_draft,
+        handle_message,
+    )
+    _clear_all_drafts()
+
+    # Happy path: draft → confirm (OTP req) → verify → execute.
+    r1 = handle_message(USER, "Chuyển 500k cho mẹ")
+    assert r1.draft is not None
+    draft_id = r1.draft.id
+    confirm_draft(USER, draft_id)            # OTP requested
+    confirm_draft(USER, draft_id, otp="123456")  # OTP verified + exec
+
+    # Unhappy path: draft → cancel.
+    _clear_all_drafts()
+    r4 = handle_message(USER, "Chuyển 500k cho mẹ")
+    cancel_draft(USER, r4.draft.id)
+
+    log_files = list(tmp_path.glob("audit-*.log"))
+    assert log_files, "no audit log file produced"
+    events = []
+    for f in log_files:
+        for line in f.read_text().splitlines():
+            events.append(json.loads(line))
+    kinds = {e["kind"] for e in events}
+    actions = {e.get("action") for e in events if e["kind"] == "otp"}
+
+    assert "otp" in kinds, "OTP request / verify not recorded"
+    assert "requested" in actions, "OTP requested action not recorded"
+    assert "verified" in actions, "OTP verified action not recorded"
+    assert "transfer_executed" in kinds, "transfer execute not recorded"
+    assert "cancel" in kinds, "draft cancel not recorded"
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /

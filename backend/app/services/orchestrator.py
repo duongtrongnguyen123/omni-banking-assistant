@@ -1721,14 +1721,34 @@ def confirm_draft(
         text = "Vui lòng nhập OTP để xác minh giao dịch. Mã demo: 123456."
         session.append("user", "Xác nhận giao dịch")
         session.append("omni", text)
+        # Audit OTP request — never the OTP itself (mock 123456 here,
+        # but the contract documents no-OTP-value-logged for real
+        # integrations).
+        try:
+            from .audit_log import record_otp
+            record_otp(user_id=user_id, draft_id=draft.id, action="requested")
+        except Exception:  # pragma: no cover
+            pass
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
     if otp.strip() != "123456":
         text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
         session.append("user", "Xác minh OTP")
         session.append("omni", text)
+        try:
+            from .audit_log import record_otp
+            record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+        except Exception:  # pragma: no cover
+            pass
         return OmniResponse(intent="transfer", text=text, draft=draft)
 
+    # OTP verified — log before execute so the audit trail captures
+    # the verify event even if execute throws.
+    try:
+        from .audit_log import record_otp
+        record_otp(user_id=user_id, draft_id=draft.id, action="verified")
+    except Exception:  # pragma: no cover
+        pass
     return _execute_and_record(user_id, draft, otp_used=True)
 
 
@@ -1760,6 +1780,25 @@ def _execute_and_record(
     )
     session.append("omni", text)
 
+    # File-based audit trail — SBV-style "5-year immutable record".
+    # The service module documents that transfer execution should
+    # land in audit.log but the call site was orphaned. Wrap in
+    # try/except so a disk-full / permissions failure can never roll
+    # back the transfer the user already saw confirmed.
+    try:
+        from .audit_log import record_transfer_executed
+
+        record_transfer_executed(
+            user_id=user_id,
+            draft_id=draft.id,
+            amount=tx.amount,
+            recipient_name=draft.recipient.display_name,  # type: ignore[union-attr]
+            source_account_id=draft.source_account_id or "",
+            category=draft.category,
+        )
+    except Exception:  # pragma: no cover — audit must never break chat
+        pass
+
     # Retrain the next-recipient suggester so the sidebar reflects this
     # transfer immediately. Lightweight — fully trained on 35 rows in ~50ms.
     try:
@@ -1789,6 +1828,14 @@ def cancel_draft(user_id: str, draft_id: str) -> OmniResponse:
     text = "Đã huỷ giao dịch."
     session.append("user", "Huỷ giao dịch")
     session.append("omni", text)
+    # Audit trail — same fail-open pattern as the execute path. The
+    # service module documents that cancel events belong in the log
+    # but the call site was orphaned.
+    try:
+        from .audit_log import record_cancel
+        record_cancel(user_id=user_id, draft_id=draft_id)
+    except Exception:  # pragma: no cover — audit must never break chat
+        pass
     return OmniResponse(intent="transfer", text=text)
 
 
