@@ -1822,3 +1822,89 @@ def test_confirm_matches_common_vn_acks(text: str) -> None:
 )
 def test_confirm_negative_lookahead_doesnt_eat_questions(text: str) -> None:
     assert not _is_confirm(text), text
+
+
+# ---------------------------------------------------------------------------
+# Backward word-order + preposition strip + honorific fall-through
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Verb first, amount first, recipient last — the order judges
+        # actually type. Pre-fix the rule extractor's bare-token-amount
+        # regex matched "chuyển" as recipient and dropped the real name.
+        ("chuyển 5tr Nam", "Nam"),
+        ("chuyển 2 triệu mẹ", "mẹ"),
+        ("gửi 300k sếp", "sếp"),
+        ("chuyển 2tr Hùng", "Hùng"),
+        ("chuyển 1tr Minh", "Minh"),
+        ("trả 500k bố", "bố"),
+        # "sang" / "qua" prepositions weren't in the strip list, so
+        # "gửi sang Minh 300k" leaked the preposition into the resolver
+        # query as "sang Minh" → 0 candidates.
+        ("gửi sang Minh 300k", "Minh"),
+        ("chuyển qua bạn thân 500k", "bạn thân"),
+    ],
+)
+def test_backward_word_order_extracts_recipient(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text == expected_recipient, (text, e.recipient_text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Verbs and amount-context nouns must NOT be picked up as
+        # recipients by the bare-token-amount pattern.
+        "chuyển 5tr",
+        "gửi 300k",
+        "lương 5tr",
+        "tiền nhà 3tr",
+        "ngân sách 1tr",
+    ],
+)
+def test_bare_token_denylist_blocks_verb_and_context_nouns(text: str) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text is None, (text, e.recipient_text)
+
+
+def test_resolver_honorific_falls_through_to_name_lookup() -> None:
+    """Pre-fix, "cô Lan" routed via the alias heuristic to alias-only
+    lookup and returned 0 candidates even though stripping "cô" and
+    token-matching "Lan" would have surfaced ambiguity between the two
+    Lans the user has. Heuristic now only biases ordering — alias
+    lookup runs first; name lookup runs second when alias is empty."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    r = resolve_recipient("cô Lan", contacts)
+    names = sorted(c.contact.display_name for c in r)
+    # Demo seed has two contacts named Lan (Nguyễn Thị Lan + Phạm Thị
+    # Lan). Resolver should return both so the chat asks which one.
+    assert len(r) >= 2, names
+    assert all("Lan" in n for n in names)
+
+
+def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
+    """When the LLM explicitly tags ``recipient_kind="alias"`` we must
+    NOT fall through to name lookup — the user said "bạn thân", not a
+    name, and silently picking by name token is the very class of bug
+    PR #15 closed. Keep that path locked."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    # "Hùng" exists as both a token in display names AND as label/alias.
+    # When tagged kind="alias" but the surface has no alias match, must
+    # return [] rather than silently picking the name-token match.
+    r = resolve_recipient("không tồn tại", contacts, kind="alias")
+    assert r == []

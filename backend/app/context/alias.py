@@ -105,17 +105,11 @@ def resolve_recipient(
     query = _fold(surface)
     query_stripped = _strip_relational(query)
 
-    # When the LLM didn't say, but the surface looks alias-shaped, treat
-    # it as an alias query so the user's "bạn thân" → empty rather than
-    # falling into name-token noise.
-    if kind is None and _looks_like_alias_kind(query):
-        kind = "alias"
-
     matches: list[ResolvedRecipient] = []
 
-    # When kind is explicitly "alias", DO NOT fall through to name lookups.
-    # User said "bạn thân" → if no alias matches, return []; the chat asks
-    # again rather than guessing a random name.
+    # When kind is explicitly "alias" (LLM-confirmed), DO NOT fall through
+    # to name lookups. User said "bạn thân" → if no alias matches, return
+    # []; the chat asks again rather than guessing a random name.
     if kind == "alias":
         return _lookup_in_aliases(query, query_stripped, contacts)
 
@@ -123,7 +117,14 @@ def resolve_recipient(
         return _lookup_in_names(query, query_stripped, contacts)
 
     # kind is None — try alias-first, then name. No semantic fallback.
-    # That eliminates the noise class on "bạn thân" / "grabfood" / "cho Nam".
+    # The previous behaviour promoted alias-shaped surfaces ("cô Lan",
+    # "anh Minh") to a hard kind="alias" via _looks_like_alias_kind and
+    # blocked the name fall-through entirely. That made "cô Lan" return
+    # 0 even though stripping "cô" + token-matching "Lan" would have
+    # surfaced ambiguity between the two Lans in the user's book.
+    # Alias-first ordering still keeps "bạn thân" / "mẹ" routed correctly;
+    # the fall-through only kicks in when no alias matches, and name
+    # lookup is strict exact/token (no embedding noise).
     matches = _lookup_in_aliases(query, query_stripped, contacts)
     if matches:
         return matches
