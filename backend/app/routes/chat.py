@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -213,14 +214,34 @@ def delete_chat_session(
     return {"ok": True}
 
 
-_CONFIRMED_DRAFT_RESPONSES: dict[str, OmniResponse] = {}
+from collections import OrderedDict as _OD
+_CONFIRMED_DRAFTS_MAX = 4096
+_CONFIRMED_DRAFT_RESPONSES: "_OD[str, OmniResponse]" = _OD()
+_CONFIRMED_DRAFT_LOCK = threading.Lock()
 """Idempotency cache: ``{user_id}:{draft_id}`` → first successful response.
 
 Prevents double-fire from double-clicks / network retries on the
-confirm button. Bounded by the natural draft lifetime — each draft_id
-is consumed once then never reused (orchestrator clears the session
-draft after confirm), so the cache stays small in practice. A wider
-LRU bound is in TODO but not load-bearing for the demo."""
+confirm button. Each draft_id is consumed once then never reused
+(orchestrator clears the session draft after confirm), but a process
+that lives for weeks across thousands of users would still accumulate
+entries. ``OrderedDict`` + bounded eviction caps it at the most recent
+4096 confirmed drafts; the lock makes the eviction thread-safe so
+concurrent confirms can't corrupt the dict ordering."""
+
+
+def _confirmed_get(key: str) -> "OmniResponse | None":
+    with _CONFIRMED_DRAFT_LOCK:
+        resp = _CONFIRMED_DRAFT_RESPONSES.get(key)
+        if resp is not None:
+            _CONFIRMED_DRAFT_RESPONSES.move_to_end(key)
+        return resp
+
+
+def _confirmed_set(key: str, resp: "OmniResponse") -> None:
+    with _CONFIRMED_DRAFT_LOCK:
+        _CONFIRMED_DRAFT_RESPONSES[key] = resp
+        if len(_CONFIRMED_DRAFT_RESPONSES) > _CONFIRMED_DRAFTS_MAX:
+            _CONFIRMED_DRAFT_RESPONSES.popitem(last=False)
 
 _INFLIGHT_CONFIRMS: set[str] = set()
 """Draft cache keys whose confirm handler is currently executing.
@@ -248,7 +269,7 @@ def confirm(
     # replay the cached response instead of re-executing the transfer.
     # Stops the demo-classic "user double-clicked → two debits" failure.
     cache_key = f"{user_id}:{draft_id}"
-    cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
+    cached = _confirmed_get(cache_key)
     if cached is not None:
         return cached
 
@@ -276,7 +297,7 @@ def confirm(
     # cache when the response carries no draft (transfer landed) or
     # the draft has no ``awaiting_otp`` flag.
     if resp.draft is None or not getattr(resp.draft, "awaiting_otp", False):
-        _CONFIRMED_DRAFT_RESPONSES[cache_key] = resp
+        _confirmed_set(cache_key, resp)
     return resp
 
 
@@ -291,7 +312,7 @@ def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
         )
     # Confirm already finished — replay the idempotent confirm response
     # instead of pretending the cancel succeeded.
-    cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
+    cached = _confirmed_get(cache_key)
     if cached is not None:
         return cached
     return cancel_draft(user_id, draft_id)
