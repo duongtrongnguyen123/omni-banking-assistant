@@ -64,6 +64,15 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
     # hang thang" are queries about existing patterns, not commands to make
     # a new one. Schedule keeps its imperative cues.
+    #
+    # Also includes schedule-management verbs (tạm dừng / huỷ / dừng / xem
+    # lịch). Pre-fix, "tạm dừng lịch chuyển mẹ" contained "chuyen" and the
+    # Tier-1 transfer keyword later in the list would match, opening a
+    # transfer draft (with predicted ~500k amount) for the user who
+    # actually wanted to PAUSE a recurring schedule. Critical safety bug
+    # — one click away from sending money to mẹ. Routing to the recurring
+    # (read) handler shows the user their schedules so they can act
+    # safely instead of getting a transfer card.
     ("recurring", [
         "khoan dinh ky", "cac khoan dinh ky", "khoan tu dong",
         "khoan nao tu dong", "khoan nao dinh ky", "khoan nao tra deu",
@@ -73,6 +82,13 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "liet ke lich", "xem lich tu dong", "lich tu dong",
         "liet ke khoan", "liet ke cac khoan",  # "liệt kê các khoản trả tự động"
         "khoan dinh ky cua toi", "khoan dinh ky cua minh",
+        # Schedule-management — see comment above.
+        "tam dung lich", "tam ngung lich",
+        "huy lich",      # "huỷ lịch", "huỷ lịch chuyển mẹ"
+        "dung lich",     # "dừng lịch"
+        "ngung lich",
+        "xem lich chuyen", "xem cac lich", "danh sach lich",
+        "lich chuyen cua",
     ]),
     ("schedule", [
         "dat lich", "len lich", "lap lich",

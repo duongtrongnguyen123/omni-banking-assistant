@@ -1981,6 +1981,71 @@ def test_modify_amount_preserves_recipient() -> None:
     assert edit.draft.amount == 5_000_000
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "tạm dừng lịch chuyển mẹ",
+        "huỷ lịch chuyển mẹ",
+        "dừng lịch",
+        "xem lịch chuyển",
+    ],
+)
+def test_schedule_management_does_not_open_transfer(text: str) -> None:
+    """CRITICAL safety: pre-fix, "tạm dừng lịch chuyển mẹ" tripped the
+    Tier-1 ``chuyen`` transfer keyword, the predictor filled a
+    history-median ~500k, and the chat opened a one-click confirm card
+    to send mẹ that money. The user wanted to PAUSE a recurring
+    schedule. Route schedule-management verbs to ``recurring`` so the
+    user sees their schedule list and can act safely instead."""
+    intent, _ = classify(text)
+    assert intent == "recurring", (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Modifier verbs after a draft — must NOT be matched as
+        # recipient_text. Pre-fix the bare-recipient pattern read
+        # "cộng thêm" / "thêm" / "giảm" / "tăng" as recipient and the
+        # modify path then cleared the existing recipient on the
+        # failed alias lookup.
+        "cộng thêm 500k",
+        "thêm 200k",
+        "giảm 300k",
+        "tăng 1tr",
+        "bớt 100k",
+    ],
+)
+def test_amount_modifier_verbs_dont_steal_recipient(text: str) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text is None, (text, e.recipient_text)
+    # Amount should still parse — modifier verb only blocks the
+    # recipient match, not the amount.
+    assert e.amount is not None, (text, e.amount)
+
+
+def test_additive_modifier_preserves_recipient_on_modify_draft() -> None:
+    """Sequence: ``chuyển mẹ 1tr`` then ``cộng thêm 500k``. Pre-fix
+    "cộng thêm" was matched as recipient_text, the modify path cleared
+    mẹ, and the draft showed 500k → unspecified recipient. Now mẹ
+    survives the turn. The amount math (1tr + 500k = 1.5tr) is NOT
+    implemented — the user sees the new 500k amount on the card and
+    can correct it; the safety fix here is the recipient survival."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.recipient is not None
+    first_name = first.draft.recipient.display_name
+
+    edit = handle_message("u_an", "cộng thêm 500k")
+    assert edit.draft is not None
+    assert edit.draft.recipient is not None
+    assert edit.draft.recipient.display_name == first_name
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a

@@ -261,6 +261,16 @@ _BARE_RECIPIENT_DENYLIST = {
     # recipient — the user wanted only the amount changed.
     "doi", "doi thanh", "doi sang", "sua", "sua thanh", "thanh",
     "sang", "ve",
+    # Additive / subtractive amount modifiers — "cộng thêm 500k" /
+    # "thêm 500k" / "giảm 200k" / "bớt 100k" / "tăng 1tr". Same class
+    # of bug as the modify verbs above: pre-fix the rule extractor read
+    # "cộng thêm" as ``recipient_text`` and the modify path cleared the
+    # existing recipient on the failed alias lookup. Now they go in
+    # the denylist so the recipient survives the turn. Note: the
+    # additive math (1tr + 500k = 1.5tr) is NOT implemented here —
+    # the user still sees the new amount on the card and can correct.
+    "cong", "cong them", "them", "tang",
+    "giam", "bot", "tru",
 }
 
 # Backward word-order: "<verb> <amount> <recipient>" — judges write this
