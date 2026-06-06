@@ -90,8 +90,34 @@ def predict_amount(
         and abs(t.created_at.day - target_dom) <= _DAY_OF_MONTH_TOLERANCE
     ]
 
+    # Overall (per-contact) median — used both as Strategy 2 fallback and
+    # as the outlier-guard reference for Strategy 1.
+    overall_med = int(median(t.amount for t in txs))
+
     if len(similar) >= 2:
         med = int(median(t.amount for t in similar))
+        # CRITICAL outlier guard. When the similar-window median lands
+        # ≥ 5× away from the per-contact overall median, the small
+        # window is picking up rare outlier transactions rather than
+        # typical behaviour. User report: Vũ Hoàng Nam had 5 historical
+        # tx with overall median 150k, but the day-±3 window happened
+        # to contain 2 outlier large transfers (10M + 20M) → predictor
+        # surfaced 15M as "the usual amount" while the safety layer
+        # simultaneously warned "lần này gấp 100× trung vị". Two
+        # contradictory numbers on the same card. Fall back to the
+        # overall median so the predictor and the anomaly detector
+        # agree.
+        if med > overall_med * 5 or (
+            overall_med > 0 and med * 5 < overall_med
+        ):
+            rounded = _round_to_nice(overall_med)
+            return {
+                "amount": rounded,
+                "confidence": 0.6,
+                "rationale": (
+                    f"theo mức bạn thường chuyển ({len(txs)} lần gần đây)"
+                ),
+            }
         rounded = _round_to_nice(med)
         rationale = (
             f"theo {len(similar)} lần bạn từng chuyển vào quanh ngày "
@@ -104,8 +130,7 @@ def predict_amount(
         }
 
     # Strategy 2: overall median for this contact.
-    med = int(median(t.amount for t in txs))
-    rounded = _round_to_nice(med)
+    rounded = _round_to_nice(overall_med)
     rationale = f"theo mức bạn thường chuyển ({len(txs)} lần gần đây)"
     return {
         "amount": rounded,
