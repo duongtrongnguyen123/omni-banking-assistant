@@ -760,6 +760,9 @@ def _dispatch_intent(
     if nlu.intent == "receive_qr":
         return _handle_receive_qr(user_id, nlu)
 
+    if nlu.intent == "recap":
+        return _handle_recap(user_id)
+
     if nlu.intent == "smalltalk":
         # Pick the fallback line by the type of smalltalk the user wrote
         # — judges who say "cảm ơn" deserve a "không có chi" not a
@@ -1131,6 +1134,91 @@ def _handle_receive_qr(user_id: str, nlu: NLUResult) -> OmniResponse:
             "payload": payload,
             "png_base64": png_b64,
         },
+    )
+
+
+def _handle_recap(user_id: str) -> OmniResponse:
+    """Surface the user's CURRENT session state so questions like
+    "tôi vừa nói gì" / "lúc nãy số tiền bao nhiêu" / "đang chuyển cho
+    ai" stop falling through to the generic history fallback.
+
+    Priority:
+      1. An active TRANSFER draft → describe its slots verbatim (amount,
+         recipient, description if set).
+      2. An active SCHEDULE / CONTACT / BUDGET / GOAL draft → describe it.
+      3. The most recent COMPLETED transaction in the last 24h → summarise.
+      4. Nothing relevant → polite "không có giao dịch nào đang chờ".
+    """
+    session = session_for(user_id)
+    draft = session.current_draft
+    if draft is not None:
+        # Build a deterministic Vietnamese recap of the active draft.
+        parts: list[str] = ["Bạn đang chuẩn bị giao dịch:"]
+        if draft.amount is not None:
+            parts.append(f"• Số tiền: {format_vnd(draft.amount)}")
+        else:
+            parts.append("• Số tiền: chưa rõ")
+        if draft.recipient is not None:
+            parts.append(
+                f"• Người nhận: {draft.recipient.display_name} "
+                f"({draft.recipient.bank})"
+            )
+        elif draft.candidates:
+            names = ", ".join(c.display_name for c in draft.candidates[:3])
+            parts.append(f"• Người nhận: chọn 1 trong {names}")
+        else:
+            parts.append("• Người nhận: chưa rõ")
+        if draft.description:
+            parts.append(f"• Nội dung: {draft.description}")
+        if draft.awaiting_otp:
+            parts.append("• Trạng thái: đang chờ OTP")
+        text = "\n".join(parts)
+        return OmniResponse(intent="recap", text=text, draft=draft)
+
+    sched = session.current_schedule_draft
+    if sched is not None:
+        text = (
+            f"Bạn đang đặt lịch chuyển {format_vnd(sched.amount)} cho "
+            f"{sched.recipient.display_name} — {sched.cron_label}."
+        )
+        return OmniResponse(intent="recap", text=text, schedule_draft=sched)
+
+    contact = session.current_contact_draft
+    if contact is not None:
+        return OmniResponse(
+            intent="recap",
+            text=(
+                f"Bạn đang lưu danh bạ: {contact.display_name} · "
+                f"{contact.bank} · STK {contact.account_number}."
+            ),
+            contact_draft=contact,
+        )
+
+    # No active draft — show the most recent completed transfer (last 24h).
+    txs = get_store().transactions_of(user_id, status="completed")
+    if txs:
+        last = max(txs, key=lambda t: t.created_at)
+        from datetime import timedelta as _td
+
+        if now() - last.created_at <= _td(hours=24):
+            contact_obj = get_store().get_contact(last.contact_id)
+            who = contact_obj.display_name if contact_obj else "—"
+            return OmniResponse(
+                intent="recap",
+                text=(
+                    f"Giao dịch gần nhất: đã chuyển {format_vnd(last.amount)} "
+                    f"cho {who} lúc "
+                    f"{last.created_at.strftime('%H:%M %d/%m')}. "
+                    f"Bạn cần làm gì tiếp?"
+                ),
+            )
+
+    return OmniResponse(
+        intent="recap",
+        text=(
+            "Hiện chưa có giao dịch nào đang chờ. "
+            "Bạn gõ 'chuyển cho mẹ 2 triệu' để bắt đầu nhé."
+        ),
     )
 
 

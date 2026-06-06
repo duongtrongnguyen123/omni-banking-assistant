@@ -38,6 +38,12 @@ Intent = Literal[
     # account (+ optional amount + memo) as a VietQR-style payload and
     # return the base64 PNG so the chat can render it inline.
     "receive_qr",
+    # "tôi vừa nói gì", "lúc nãy tôi bảo là bao nhiêu", "đang chuyển
+    # cho ai", "tóm tắt giúp tôi". Surfaces the current active draft
+    # (or the most recent completed transaction) so the user doesn't
+    # have to remember what they typed two turns ago. User report:
+    # "2-3 câu hỏi nó quên context".
+    "recap",
     "smalltalk",
     "unknown",
 ]

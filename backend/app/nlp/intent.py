@@ -77,6 +77,29 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "stk de nhan", "stk để nhận",
         "stk nhan tien", "stk nhận tiền",
     ]),
+    # recap — "tôi vừa nói gì", "lúc nãy tôi bảo bao nhiêu", "đang
+    # chuyển bao nhiêu cho ai", "tóm tắt", "recap". Surfaces the active
+    # draft instead of falling to history (which returned past tx and
+    # missed the actual question the user asked). Pinned ABOVE history
+    # so "lúc nãy ... bao nhiêu" doesn't get caught by history's
+    # temporal regex.
+    ("recap", [
+        "vua noi gi", "vừa nói gì",
+        "vua bao gi", "vừa bảo gì",
+        "luc nay toi noi", "lúc nãy tôi nói",
+        "luc nay toi bao", "lúc nãy tôi bảo",
+        "luc nay bao nhieu", "lúc nãy bao nhiêu",
+        "vua roi toi noi", "vừa rồi tôi nói",
+        "dang chuyen bao nhieu", "đang chuyển bao nhiêu",
+        "dang chuyen cho ai", "đang chuyển cho ai",
+        "minh dang chuyen", "mình đang chuyển",
+        "toi vua lam gi", "tôi vừa làm gì",
+        "minh vua lam gi", "mình vừa làm gì",
+        "tom tat", "tóm tắt",
+        "recap",
+        "nhac lai", "nhắc lại",
+        "giao dich hien tai", "giao dịch hiện tại",
+    ]),
     # insights (proactive analytics) — before history so "tieu nhieu hon
     # thang truoc" routes here, not to plain history.
     ("insights", [
