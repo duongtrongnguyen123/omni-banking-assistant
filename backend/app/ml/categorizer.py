@@ -587,17 +587,46 @@ def _tfidf_predict(folded: str) -> tuple[str, float]:
 _TFIDF_FLOOR = 0.18
 
 
+# LLM fallback threshold. When the rule pipeline returns a confidence
+# strictly below this OR routes to "other", call the LLM as a second
+# pass. Tuned so:
+#   - 0.5 floor catches the noisy stage-2 zone (sim 0.18-0.5) where
+#     TF-IDF is genuinely uncertain
+#   - The 0.7+ stage-1 strong-keyword wins still short-circuit (fast path)
+# Set ``OMNI_CATEGORIZE_LLM=0`` to disable the fallback entirely (useful
+# for offline demos, tests, and cost-sensitive deployments).
+_LLM_FALLBACK_THRESHOLD = 0.5
+
+
+def _llm_should_fire(rule_cat: str, rule_conf: float) -> bool:
+    """Decide whether the LLM fallback is worth calling.
+
+    Fires when: rule confidence < threshold, OR rule routed to ``other``
+    (covers the case where TF-IDF abstained). Skipped when the env flag
+    explicitly disables LLM categorisation, to keep test/offline runs
+    deterministic.
+    """
+    import os
+
+    if os.environ.get("OMNI_CATEGORIZE_LLM", "1") == "0":
+        return False
+    return rule_cat == "other" or rule_conf < _LLM_FALLBACK_THRESHOLD
+
+
 def categorize(description: str) -> tuple[str, float]:
     """Map a free-text description to one of `CATEGORIES`.
 
     Returns ``(category, confidence)``. Confidence is in [0, 1]:
     - ≥0.7 means stage-1 keyword rule fired with a strong weight.
-    - 0.3–0.7 means stage-2 TF-IDF cosine match.
-    - <0.3 means we fell through to "other".
+    - 0.5–0.7 means stage-2 TF-IDF cosine match (rule kept).
+    - <0.5 OR "other": stage-3 LLM fallback runs. If the LLM is
+      meaningfully more confident than the rule (or the rule was
+      abstaining), the LLM result wins; else the rule answer stays.
+    - <0.3 (LLM also abstained or unavailable): "other".
 
     Empty / whitespace-only / overly noisy inputs ("ok", "asdf") route to
-    "other" with low confidence; the orchestrator can decide to leave the
-    existing label untouched in that case.
+    "other" with low confidence and DO NOT call the LLM — judges typing
+    placeholder text shouldn't burn API quota.
     """
     if not description or not description.strip():
         return "other", 0.0
@@ -605,7 +634,8 @@ def categorize(description: str) -> tuple[str, float]:
     folded = _fold(description)
     tokens = _tokens(description)
 
-    # Noise filter — single short token with no letters is unclassifiable.
+    # Noise filter — single short token with no letters is unclassifiable
+    # AND not worth sending to the LLM.
     if len(folded) < 2:
         return "other", 0.0
 
@@ -617,18 +647,36 @@ def categorize(description: str) -> tuple[str, float]:
     # Stage 2: TF-IDF nearest cosine.
     cat, sim = _tfidf_predict(folded)
     if sim < _TFIDF_FLOOR:
-        # If stage-1 gave a *weak* hit (0.5–0.7), prefer it over the TF-IDF
-        # abstention — Vietnamese banking notes are short, and a partial
-        # keyword match still beats "other".
+        # Stage-1 weak hit (0.5–0.7) beats the TF-IDF abstention — short
+        # VN notes still benefit from a partial keyword match over "other".
         if kw is not None:
-            return kw[0], kw[1]
-        return "other", float(sim)
+            rule_cat, rule_conf = kw[0], kw[1]
+        else:
+            rule_cat, rule_conf = "other", float(sim)
+    elif kw is not None and kw[0] == cat:
+        # Weak stage-1 agrees with stage-2 → boost.
+        rule_cat, rule_conf = cat, min(1.0, sim + kw[1] * 0.3)
+    else:
+        rule_cat, rule_conf = cat, float(sim)
 
-    # If a weak stage-1 hit agrees with stage 2, boost the confidence.
-    if kw is not None and kw[0] == cat:
-        return cat, min(1.0, sim + kw[1] * 0.3)
+    # Stage 3: LLM fallback for the genuinely-uncertain zone. The LLM
+    # is allowed to override IFF (a) the rule was abstaining as
+    # ``other``, or (b) the LLM is at least 0.1 more confident than
+    # the rule. Otherwise the deterministic rule answer wins — keeps
+    # demo behaviour reproducible and avoids unnecessary swaps.
+    if _llm_should_fire(rule_cat, rule_conf):
+        try:
+            from ..nlp.llm import llm_categorize
 
-    return cat, float(sim)
+            llm_result = llm_categorize(description)
+        except Exception:  # pragma: no cover — fail-safe to rule answer
+            llm_result = None
+        if llm_result is not None:
+            llm_cat, llm_conf = llm_result
+            if rule_cat == "other" or llm_conf >= rule_conf + 0.1:
+                return llm_cat, llm_conf
+
+    return rule_cat, rule_conf
 
 
 __all__ = ["categorize", "CATEGORIES"]
