@@ -2939,3 +2939,76 @@ textarea:focus-visible,
   border-top: 1px solid var(--line, #eee);
   padding-top: 8px;
 }
+
+/* ---- alignment fixes (user report: số dư / danh bạ thụt vào, không xuống dòng) ---- */
+
+/* Balance — make the total + per-account amounts robust against long numbers */
+.bal-card__total {
+  white-space: nowrap;
+}
+.bal-card__accounts li {
+  /* allow the left (bank + masked STK) to shrink with ellipsis instead of
+     forcing the right amount off the card. ``min-width: 0`` on the left
+     enables flex children to actually shrink past their content. */
+  min-width: 0;
+  align-items: flex-start;
+}
+.bal-card__accounts li > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.bal-account__bank {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+}
+.bal-account__num {
+  white-space: nowrap;
+}
+.bal-account__amount {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 124px;       /* fit "1.962.000.000đ" at the current font size */
+}
+
+/* History rows — same pattern: amount + date on the right shouldn't wrap */
+.hist-list__item {
+  gap: 10px;
+  min-width: 0;
+}
+.hist-list__item > div:first-child {
+  min-width: 0; flex: 1 1 auto; overflow: hidden;
+}
+.hist-list__name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-list__desc {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-list__amount { white-space: nowrap; flex-shrink: 0; }
+.hist-list__date  { white-space: nowrap; flex-shrink: 0; }
+
+/* Contact picker — long names / labels were causing the row to look
+   indented because the chip column pushed the main text away. Lock the
+   main column to shrink with ellipsis. */
+.picker__main { min-width: 0; }
+.picker__name {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.picker__meta {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Disambiguation candidate row in chat — long contact + bank name combos
+   wrapped mid-word and looked indented. Lock to ellipsis. */
+.candidate-row { min-width: 0; }
+.candidate-row > div { min-width: 0; }
+.candidate-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.candidate-bank {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
