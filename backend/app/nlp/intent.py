@@ -213,6 +213,19 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         # safe — they don't appear inside transfer or history commands.
         "chao em", "chao anh", "chao chi", "chao co ", "chao chu ",
         "chao bac", "chao moi nguoi", "chao ban",
+        # "How are you?" — canonical opening smalltalk that pre-fix
+        # fell to "unknown" because no keyword matched.
+        "khoe khong", "khỏe không", "co khoe khong", "có khoẻ không",
+        "the nao roi", "thế nào rồi",
+        # Help-shaped smalltalk that's NOT a transfer / data query —
+        # "Omni có thể giúp gì", "Omni làm được gì". Routed to
+        # smalltalk so the static help block fires (handler picks the
+        # help reply for these).
+        "co the giup gi", "có thể giúp gì", "lam duoc gi", "làm được gì",
+        "biet gi ve", "biết gì về",
+        # Authorship / about — "Ai làm ra Omni?", "Omni của ai?"
+        "ai lam ra", "ai làm ra", "ai tao ra", "ai tạo ra",
+        "do ai phat trien", "do ai phát triển",
     ]),
 ]
 

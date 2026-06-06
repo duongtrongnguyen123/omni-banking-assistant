@@ -76,9 +76,12 @@ _CRON_DAY_OF_MONTH = re.compile(
     r"(?:mùng|mung|ngày|ngay)\s*(\d{1,2})\s*(?:hàng|hang|mỗi|moi)\s*tháng",
     re.IGNORECASE,
 )
-_CRON_MONTHLY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*tháng", re.IGNORECASE)
-_CRON_WEEKLY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*tuần", re.IGNORECASE)
-_CRON_DAILY = re.compile(r"(?:hàng|hang|mỗi|moi)\s*ng[àa]y", re.IGNORECASE)
+# Both "hàng" and "hằng" are common VN spellings for "every / each".
+# Judges who type "hằng tháng" pre-fix got the missing-fields prompt
+# because only "hàng" was matched.
+_CRON_MONTHLY = re.compile(r"(?:hàng|hằng|hang|mỗi|moi)\s*tháng", re.IGNORECASE)
+_CRON_WEEKLY = re.compile(r"(?:hàng|hằng|hang|mỗi|moi)\s*tuần", re.IGNORECASE)
+_CRON_DAILY = re.compile(r"(?:hàng|hằng|hang|mỗi|moi)\s*ng[àa]y", re.IGNORECASE)
 
 # Day-of-week extraction for weekly schedules. Maps Vietnamese forms
 # ("thứ 2" / "thứ hai" / "Chủ nhật") to cron DOW (0=Sun, 1=Mon, …, 6=Sat).

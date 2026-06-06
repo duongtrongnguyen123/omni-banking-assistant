@@ -527,17 +527,22 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         session.append("omni", resp.text)
         return resp
 
-    # Missing-slot fill: when the assistant just asked "Bạn muốn chuyển X
-    # cho ai?" and the user types a short bare name as the next turn
-    # ("Nam"), the rule classifier sees a single token / no verb / no
-    # digit → intent=unknown → user gets "Mình chưa rõ ý bạn". Slot-fill
-    # that: if there's an active draft missing the recipient AND the
-    # message looks like a bare name (short, no command keywords), feed
-    # it into _modify_transfer_draft with recipient_text=text so the
-    # resolver can take a shot.
+    # Missing-slot fill OR mid-draft recipient swap: when the assistant
+    # just asked "Bạn muốn chuyển X cho ai?" and the user types a short
+    # bare name as the next turn ("Nam"), the rule classifier sees a
+    # single token / no verb / no digit → intent=unknown → user gets
+    # "Mình chưa rõ ý bạn". Slot-fill that.
+    #
+    # Also fires when the draft DOES have a recipient already but the
+    # user types a different bare name — the resolver had matched the
+    # user's original surface to an unintended contact (e.g. user typed
+    # "abc" → matched seed "Công ty ABC" → confirm card shows ABC) and
+    # the user is now naming the real recipient. Without this branch,
+    # the bare "Nam" reply fell through to NLU and got "chưa rõ ý"
+    # despite an active draft sitting in session — visible
+    # "không giữ ngữ cảnh" UX bug.
     if (
         session.current_draft is not None
-        and session.current_draft.recipient is None
         and nlu.intent in ("unknown", "transfer", "smalltalk")
         and _looks_like_bare_recipient(text)
     ):
@@ -769,6 +774,15 @@ def _modify_transfer_draft(
         cat, conf = categorize_description(e.description)
         draft.category = cat if (cat != "other" and conf >= 0.5) else None
 
+    # Track the resolved candidates so the safety engine can raise the
+    # right flag for an ambiguous-recipient slot-fill. Pre-fix this
+    # function passed ``recipient_candidates=[]`` to ``evaluate()`` so
+    # when the user typed bare "Minh" (3 Minh contacts in seed) the
+    # safety rule fell to ``missing_recipient`` ("Bạn muốn chuyển X
+    # cho ai?") instead of ``ambiguous_recipient`` (with the disambig
+    # candidate list). User got a dead-end "ai?" prompt despite there
+    # being 3 candidates loaded on draft.candidates.
+    eval_candidates: list = []
     if e.recipient_text:
         candidates = resolve_recipient(e.recipient_text, contacts, kind=e.recipient_kind)
         if len(candidates) == 1:
@@ -777,6 +791,7 @@ def _modify_transfer_draft(
         elif len(candidates) > 1:
             draft.recipient = None
             draft.candidates = [c.contact for c in candidates]
+            eval_candidates = candidates
         else:
             # Resolver found nobody for the new surface form. The old
             # code silently kept the previous draft.recipient, which
@@ -792,7 +807,7 @@ def _modify_transfer_draft(
     # Re-evaluate safety on the modified draft.
     draft.flags = evaluate(
         amount=draft.amount,
-        recipient_candidates=[],
+        recipient_candidates=eval_candidates,
         recipient=draft.recipient,
         transactions=txs,
         account=account,

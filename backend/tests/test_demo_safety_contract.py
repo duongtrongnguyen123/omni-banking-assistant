@@ -2445,6 +2445,62 @@ def test_slot_fill_accepts_bare_label_with_digit() -> None:
     assert t2.draft.amount == 2_000_000
 
 
+def test_ambiguous_slot_fill_surfaces_ambiguous_recipient_flag() -> None:
+    """Slot-fill with a bare name that matches multiple contacts must
+    raise ``ambiguous_recipient`` (and a disambiguation prompt), not
+    ``missing_recipient``. Pre-fix the modify-draft path passed
+    ``recipient_candidates=[]`` to ``evaluate()`` so the safety rule
+    fell back to "Bạn muốn chuyển X cho ai?" instead of "Có nhiều
+    người trùng tên: ...". User saw a dead-end "ai?" prompt despite
+    the draft carrying multiple candidates."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển 2tr")
+    resp = handle_message("u_an", "Minh")
+    assert resp.draft is not None
+    assert resp.draft.recipient is None
+    assert len(resp.draft.candidates) >= 2
+    flag_codes = [f.code for f in resp.draft.flags]
+    assert "ambiguous_recipient" in flag_codes, flag_codes
+    assert "missing_recipient" not in flag_codes, flag_codes
+
+
+def test_bare_name_swaps_recipient_on_filled_draft() -> None:
+    """Pre-fix the slot-fill heuristic only fired when ``draft.recipient
+    is None``. So when the resolver matched the user's original surface
+    to an unintended contact (e.g. "abc" → Công ty ABC) and the user
+    typed a different bare name in the next turn, the message fell
+    through to NLU → intent=unknown → "Mình chưa rõ ý bạn". Visible
+    "context dropped" UX bug — user could not redirect the transfer.
+    The branch now also fires when a recipient IS set; the new name
+    swaps in."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    t1 = handle_message("u_an", "chuyển 2tr cho abc")
+    assert t1.draft is not None
+    assert t1.draft.recipient is not None
+
+    t2 = handle_message("u_an", "Nam")
+    assert t2.draft is not None
+    assert t2.draft.recipient is not None
+    assert t2.draft.recipient.display_name == "Vũ Hoàng Nam"
+    assert t2.draft.amount == 2_000_000
+
+
+def test_bare_name_after_complete_draft_does_not_break_confirm() -> None:
+    """Companion safety: ``ok`` / ``xác nhận`` after a complete draft
+    must NOT be hijacked by the bare-name branch. The confirm regex
+    runs first and short-circuits the handler."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 2tr")
+    resp = handle_message("u_an", "ok")
+    assert "OTP" in resp.text or "otp" in resp.text.lower()
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a
