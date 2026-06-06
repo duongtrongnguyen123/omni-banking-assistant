@@ -1,9 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type VoiceButtonProps = {
   onTranscript: (text: string) => void;
   disabled?: boolean;
 };
+
+/**
+ * Imperative handle exposed by `<VoiceButton>` via `ref`.
+ *
+ * Lets the parent stop a listening session it didn't start — e.g. when
+ * the user submits the chat form, the mic should release immediately
+ * instead of continuing to capture audio and overwrite the cleared
+ * input on the next `onresult` event.
+ */
+export interface VoiceButtonHandle {
+  /** Stop recognition if currently listening. Safe to call when idle. */
+  stop: () => void;
+  /** True while the browser is actively listening. */
+  isListening: () => boolean;
+}
 
 /**
  * Resolves the browser's Speech Recognition constructor.
@@ -15,10 +38,12 @@ function getRecognitionCtor(): SpeechRecognitionConstructor | undefined {
   return window.SpeechRecognition ?? window.webkitSpeechRecognition;
 }
 
-export function VoiceButton({ onTranscript, disabled }: VoiceButtonProps) {
+export const VoiceButton = forwardRef<VoiceButtonHandle, VoiceButtonProps>(
+  function VoiceButton({ onTranscript, disabled }, ref) {
   const RecognitionCtor = useMemo(() => getRecognitionCtor(), []);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [listening, setListening] = useState(false);
+  const listeningRef = useRef(false);
   const [supported, setSupported] = useState<boolean>(!!RecognitionCtor);
 
   // If the API isn't available, log once and hide the button entirely.
@@ -36,12 +61,28 @@ export function VoiceButton({ onTranscript, disabled }: VoiceButtonProps) {
     const rec = recognitionRef.current;
     if (rec) {
       try {
-        rec.stop();
+        // `abort()` ends recognition immediately and suppresses any
+        // pending final-result event, so a stop triggered by Send
+        // can't race in and overwrite the freshly cleared input.
+        rec.abort();
       } catch {
         // already stopped — safe to ignore
       }
     }
+    listeningRef.current = false;
+    setListening(false);
   }, []);
+
+  // Imperative handle so the parent (App.tsx) can stop listening when
+  // the user submits the form, clears the input, etc.
+  useImperativeHandle(
+    ref,
+    () => ({
+      stop,
+      isListening: () => listeningRef.current,
+    }),
+    [stop],
+  );
 
   // Stop recognition when the tab loses focus (saves battery, avoids
   // capturing audio while user is elsewhere).
@@ -96,11 +137,13 @@ export function VoiceButton({ onTranscript, disabled }: VoiceButtonProps) {
     };
 
     rec.onend = () => {
+      listeningRef.current = false;
       setListening(false);
       recognitionRef.current = null;
     };
 
     rec.onstart = () => {
+      listeningRef.current = true;
       setListening(true);
     };
 
@@ -114,6 +157,7 @@ export function VoiceButton({ onTranscript, disabled }: VoiceButtonProps) {
       // eslint-disable-next-line no-console
       console.warn("[VoiceButton] failed to start recognition:", err);
       recognitionRef.current = null;
+      listeningRef.current = false;
       setListening(false);
     }
   }, [RecognitionCtor, onTranscript]);
@@ -164,6 +208,7 @@ export function VoiceButton({ onTranscript, disabled }: VoiceButtonProps) {
       </svg>
     </button>
   );
-}
+  },
+);
 
 export default VoiceButton;

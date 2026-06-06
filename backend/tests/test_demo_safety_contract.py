@@ -951,6 +951,434 @@ def test_cron_label_renders_correct_vn_day() -> None:
     assert _cron_label("0 9 * * *") == "mỗi ngày"
 
 
+# ---------------------------------------------------------------------------
+# Month-year reference routes to history, not transfer (Tier-3 fallback bug)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Month / year — original coverage.
+        "tháng 5 năm 2026",
+        "tháng 5/2026",
+        "thang 4",
+        "tháng 12 năm 2025",
+        # Year only.
+        "năm 2026",
+        "năm 2026 tiêu bao nhiêu",
+        # Quarter.
+        "quý 1",
+        "quý 2 năm 2026",
+        # Day / slash-date.
+        "ngày 15/5",
+        "15/5/2026",
+        "15/5",
+        # N-period-gần-đây.
+        "6 tháng gần đây",
+        "3 tuần qua",
+        # Bare temporal phrases.
+        "tuần này",
+        "tuần trước tiêu bao nhiêu",
+        "hôm qua tiêu gì",
+        "năm nay",
+        "năm ngoái",
+        "đầu năm",
+        "cuối năm",
+        "đầu tháng",
+        "cuối tháng",
+    ],
+)
+def test_temporal_reference_routes_history(text: str) -> None:
+    """Temporal references — month, year, quarter, day, week, hôm/đầu/
+    cuối — must route to history, not transfer. The Tier-3 bare-digit
+    fallback used to grab "năm 2026" / "15/5" / "tháng 5 năm 2026" as
+    transfers (because the year is a digit) and bare phrases like "tuần
+    này" / "năm ngoái" fell to "unknown". Judges asking about a
+    specific period would see a confused transfer draft or generic
+    fallback instead of a history aggregate."""
+    intent, _ = classify(text)
+    assert intent == "history", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Same-class negatives — must still route correctly.
+        ("Chuyển 2 triệu cho mẹ", "transfer"),
+        ("Gửi mẹ 5 triệu", "transfer"),
+        # Transfer with temporal phrase — Tier-1 "chuyển" wins first.
+        ("chuyển mẹ 2 triệu đầu tháng", "transfer"),
+        ("gửi anh Hùng 500k tuần này", "transfer"),
+        # Schedule with temporal phrase — Tier-1 "đặt lịch" wins first.
+        ("đặt lịch chuyển mẹ 2tr đầu tháng", "schedule"),
+        ("số dư", "balance"),
+        ("Lưu Lê Mai STK 0123987654 Vietcombank", "add_contact"),
+    ],
+)
+def test_month_year_check_does_not_eat_other_intents(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
+# ---------------------------------------------------------------------------
+# Colloquial balance phrasings — "còn bao nhiêu tiền", "cạn ví", "lương về"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "còn bao nhiêu tiền",
+        "còn nhiều tiền không",
+        "hết tiền chưa",
+        "hết sạch tiền",
+        "cạn ví",
+        "tiền nong còn không",
+        "tiền nong còn ko",
+        "tiền còn không",
+        "lương về chưa",
+        "lương về rồi chưa",
+    ],
+)
+def test_colloquial_balance_phrasings_route_to_balance(text: str) -> None:
+    """The Tier-1 substring "so du" / "balance" matched only the literal
+    "số dư" / "balance" question. A judge typing "còn bao nhiêu tiền" or
+    "cạn ví" used to fall to the Tier-2 history match ("bao nhieu") and
+    get a month aggregate instead of the actual balance — the most
+    visible mis-routing in the demo. These are all idiomatic Vietnamese
+    "do I still have money?" phrasings that judges actually use."""
+    intent, _ = classify(text)
+    assert intent == "balance", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Negatives — must still route correctly.
+        ("tháng này tiêu nhiều tiền", "history"),
+        ("tháng này hết bao nhiêu", "history"),
+        ("gửi mẹ 2 triệu", "transfer"),
+        ("số dư", "balance"),
+    ],
+)
+def test_colloquial_balance_does_not_eat_other_intents(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
+# ---------------------------------------------------------------------------
+# Help intent — VN "how do I / what can you do" phrasings reach _HELP_TEXT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Exact commands.
+        "/help", "help", "menu", "trợ giúp", "hướng dẫn",
+        # "How do I" — Tier-2 transfer keyword "chuyển" used to steal
+        # this; help check now runs before NLU.
+        "làm sao chuyển tiền",
+        "làm sao để chuyển tiền",
+        "làm cách nào để xem số dư",
+        # "What can you do" — used to fall through to "unknown".
+        "omni làm gì được",
+        "omni có thể làm gì",
+        "có thể làm gì",
+        "bạn làm được gì",
+        "omni biết làm gì",
+        # Guide / instructions.
+        "hướng dẫn sử dụng",
+        "cách dùng",
+        "cách sử dụng",
+        "làm thế nào",
+        # Direct help asks.
+        "giúp mình với",
+        "giúp với",
+        "help me",
+        "giúp đỡ",
+    ],
+)
+def test_help_phrasings_emit_help_text(text: str) -> None:
+    """The judge's first question is almost always "what can you do?"
+    or "how do I X?". Pre-fix these fell to either an empty transfer
+    draft ("Bạn muốn chuyển bao nhiêu cho ai?") or the robotic "Mình
+    chưa rõ ý bạn..." guess-correction page. The help check now runs
+    BEFORE the NLU classifier so Tier-2 transfer/history keywords
+    inside the help question ("làm sao **chuyển** tiền") can't steal
+    the routing."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, text)
+    s.clear_draft()
+    # The deterministic help text starts with "Mình có thể giúp bạn:"
+    # and lists the capability bullets. Pin a single high-signal token
+    # that appears in every help response.
+    assert "Mình có thể giúp bạn" in r.text, (text, r.text[:100])
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Polite prefix "giúp mình" before a real intent must NOT eat
+        # the routing — the user is asking for X, not for help generally.
+        ("giúp mình kiểm tra số dư", "balance"),
+        ("chuyển mẹ 2 triệu", "transfer"),
+        ("tháng này tiêu bao nhiêu", "history"),
+        ("số dư", "balance"),
+    ],
+)
+def test_help_check_does_not_eat_other_intents(
+    text: str, expected: str
+) -> None:
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, text)
+    s.clear_draft()
+    assert r.intent == expected, (text, r.intent, r.text[:100])
+
+
+# ---------------------------------------------------------------------------
+# Smalltalk subtypes — thanks / farewell / greeting each get their own reply
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # English + VN thanks variants — all routed to smalltalk.
+        "cảm ơn", "cám ơn omni", "thank you", "thanks",
+        # Farewells.
+        "tạm biệt", "bye", "goodbye",
+        # Greetings.
+        "chào em", "chào anh", "chào omni", "chào", "chào!",
+        "xin chào", "hi", "hello",
+    ],
+)
+def test_smalltalk_phrasings_route_to_smalltalk(text: str) -> None:
+    """The most common Vietnamese + English chat openers / closers all
+    route to smalltalk. Used to fall to "unknown" → "Mình chưa rõ ý
+    bạn..." (a robotic guess-correction reply that's bad demo vibe)."""
+    intent, _ = classify(text)
+    assert intent == "smalltalk", text
+
+
+@pytest.mark.parametrize(
+    "text,must_contain",
+    [
+        # Thanks → "không có chi"; NOT a re-greeting.
+        ("cảm ơn", "Không có chi"),
+        ("thank you", "Không có chi"),
+        ("thanks", "Không có chi"),
+        # Farewell → "hẹn gặp lại"; NOT a re-greeting.
+        ("tạm biệt", "Hẹn gặp lại"),
+        ("bye", "Hẹn gặp lại"),
+        ("goodbye", "Hẹn gặp lại"),
+        # Greeting → "Chào bạn".
+        ("xin chào", "Chào bạn"),
+        ("chào em", "Chào bạn"),
+        ("hi", "Chào bạn"),
+    ],
+)
+def test_smalltalk_reply_branches_by_subtype(text: str, must_contain: str) -> None:
+    """Pre-fix the smalltalk handler ignored what the user actually said
+    and replied "Chào bạn! Mình là Omni..." for thanks AND farewell —
+    a robotic feel that judges noticed immediately. The deterministic
+    fallback now branches on the user text before calling the LLM, so
+    even under 429 the reply stays human."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, text)
+    s.clear_draft()
+    assert r.intent == "smalltalk", text
+    assert must_contain in r.text, (text, r.text)
+
+
+# ---------------------------------------------------------------------------
+# First-person pronoun guard — "mình"/"tôi" must not be mistaken for "Minh"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Each of these was previously misrouted to an "Bạn muốn chuyển
+        # bao nhiêu cho Minh nào (giữa ...)" prompt because diacritic-
+        # stripping "mình" → "minh" matched the contact alias.
+        "ai gửi tiền cho mình",
+        "ai chuyển tiền cho mình",
+        "có ai vừa chuyển cho mình không",
+        "gửi mình 200k",
+        "chuyển cho mình 500k",
+        "trả tôi 100k",
+        "cho tôi 50k",
+    ],
+)
+def test_self_pronoun_not_extracted_as_recipient(text: str) -> None:
+    """The diacritic-bearing first-person pronouns must NOT survive the
+    recipient extractor — otherwise "ai gửi tiền cho mình" turns into a
+    confused transfer draft offering to send Minh money. The contact
+    "Minh" (no `ì`) still resolves; only the pronoun form is dropped.
+
+    We assert on the extracted entity, not the full response, so the
+    test stays sharp even if the orchestrator's downstream phrasing
+    changes."""
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.recipient_text is None, (
+        f"{text!r} → extracted {e.recipient_text!r}; should be dropped"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The contact "Minh" (no diacritic) must STILL resolve as a
+        # recipient — otherwise we've thrown the baby out with the
+        # bathwater.
+        "gửi Minh 200k",
+        "chuyển cho Minh 500k",
+        "gửi minh 200k",  # lowercase no-diacritic = ambiguous, defer to name
+    ],
+)
+def test_contact_minh_still_resolves(text: str) -> None:
+    from app.nlp.entities import extract
+    e = extract(text)
+    assert e.recipient_text is not None, (
+        f"{text!r} dropped the real contact name"
+    )
+    # Both "Minh" and "minh" survive (diacritic-fold equal); we don't
+    # care about case here.
+    assert e.recipient_text.lower() == "minh"
+
+
+# ---------------------------------------------------------------------------
+# Fine-grained history periods — hôm nay, hôm qua, tuần này/trước, năm
+# nay/ngoái. Previously every temporal phrase except "tháng trước" fell into
+# either "this_month" (the default) or "recent_30d", so "hôm nay tiêu bao
+# nhiêu" returned a month aggregate. The fix maps each phrase to its own
+# window in get_history().
+# ---------------------------------------------------------------------------
+
+
+def test_history_period_today_is_today_only() -> None:
+    """The period label echoes back as "hôm nay" — confirms the window
+    didn't silently widen to this_month."""
+    from app.banking.service import get_history
+    h = get_history(user_id=USER, period="today")
+    assert h["period"] == "today"
+    # End is exclusive; window must be ≤ 24h so we never accidentally
+    # roll yesterday's spending into today's count.
+    from datetime import datetime
+    start = datetime.fromisoformat(h["start"])
+    end = datetime.fromisoformat(h["end"])
+    assert (end - start).total_seconds() == 86400
+
+
+def test_history_period_this_week_is_seven_days() -> None:
+    from app.banking.service import get_history
+    h = get_history(user_id=USER, period="this_week")
+    assert h["period"] == "this_week"
+    from datetime import datetime
+    start = datetime.fromisoformat(h["start"])
+    end = datetime.fromisoformat(h["end"])
+    assert (end - start).total_seconds() == 7 * 86400
+
+
+def test_history_period_this_year_starts_jan_1() -> None:
+    from app.banking.service import get_history
+    h = get_history(user_id=USER, period="this_year")
+    from datetime import datetime
+    start = datetime.fromisoformat(h["start"])
+    end = datetime.fromisoformat(h["end"])
+    assert start.month == 1 and start.day == 1
+    assert end.month == 1 and end.day == 1
+    assert end.year == start.year + 1
+
+
+@pytest.mark.parametrize(
+    "phrase,expected_period",
+    [
+        ("hôm nay", "today"),
+        ("hom nay", "today"),
+        ("hôm qua", "yesterday"),
+        ("hom qua", "yesterday"),
+        ("tuần này", "this_week"),
+        ("tuan nay", "this_week"),
+        ("tuần trước", "last_week"),
+        ("tuan truoc", "last_week"),
+        ("năm nay", "this_year"),
+        ("nam nay", "this_year"),
+        ("năm ngoái", "last_year"),
+        ("nam ngoai", "last_year"),
+        ("tháng trước", "last_month"),  # baseline — still works
+    ],
+)
+def test_temporal_phrase_maps_to_correct_period(
+    phrase: str, expected_period: str
+) -> None:
+    """Each temporal phrase must map to its specific window. Critically:
+    "hôm qua" must NOT keep mapping to recent_30d (last 30 days) — that
+    silent broadening was the original bug that hid in tháng-trước's
+    shadow because tests only ever pinned the tháng-trước path."""
+    from app.services.orchestrator import _period_from_temporal
+    assert _period_from_temporal(phrase) == expected_period
+
+
+# ---------------------------------------------------------------------------
+# "Lặp lại?" only fires when draft.amount actually matches the referenced tx
+# ---------------------------------------------------------------------------
+
+
+def test_temporal_reference_explicit_different_amount_does_not_say_repeat() -> None:
+    """When the user says "gửi mẹ 5 triệu như tháng trước" and tháng trước
+    was 3.000.000đ, the reply must NOT say "Lặp lại?" — that would imply
+    we're about to repeat the 3M figure, which would either confuse the
+    judge or get a silent over-confirm. The fix surfaces the diff
+    ("tháng trước bạn gửi 3tr — lần này 5tr") and asks "Xác nhận?"."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, "Gửi cho mẹ 5 triệu như tháng trước")
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.amount == 5_000_000
+    assert "Lặp lại?" not in r.text
+    assert "5.000.000đ" in r.text
+    # The prior amount surfaces in the diff so the user can spot a typo.
+    assert "Tháng trước" in r.text
+
+
+def test_temporal_reference_matching_amount_still_says_repeat() -> None:
+    """The classic "Gửi mẹ 3 triệu như tháng trước" (amount matches the
+    prior tx) keeps the short "Lặp lại?" framing — the demo's flagship
+    "intent over wording" moment."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, "Gửi cho mẹ 3 triệu như tháng trước")
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.amount == 3_000_000
+    assert "Lặp lại?" in r.text
+
+
+def test_temporal_reference_no_amount_fills_and_says_repeat() -> None:
+    """"Gửi mẹ như tháng trước" with no explicit amount fills from
+    history and asks "Lặp lại?" — the draft amount equals the prior tx
+    by construction."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, "Gửi cho mẹ như tháng trước")
+    s.clear_draft()
+    assert r.draft is not None
+    assert r.draft.amount == 3_000_000
+    assert "Lặp lại?" in r.text
+
+
 def test_budget_overshoot_details_payload_shape() -> None:
     """The budget_overshoot warn ships a ``details`` dict that the
     frontend's "why" panel renders as a category / spent / projected /
@@ -1020,6 +1448,45 @@ def test_alias_resolver_strips_possessive_tail(
     assert expected in names, (
         f"{surface!r} should resolve to {expected!r}; got {names}"
     )
+
+
+@pytest.mark.parametrize(
+    "surface,expected",
+    [
+        # Exact full-name match must short-circuit before RAG/embedding
+        # fallback. Otherwise multi-token names fall through to the
+        # semantic stage and surface many "similar-looking" candidates
+        # (reported bug: "chuyển cho Vũ Thị Hạnh 2 nghìn" → 16 candidates).
+        ("Vũ Thị Hạnh", "Vũ Thị Hạnh"),
+        ("Nguyễn Thị Lan", "Nguyễn Thị Lan"),
+        ("Trần Hoàng Minh", "Trần Hoàng Minh"),
+        # Case-insensitive / diacritic-insensitive variants should also
+        # short-circuit on exact display-name fold.
+        ("vũ thị hạnh", "Vũ Thị Hạnh"),
+        ("VU THI HANH", "Vũ Thị Hạnh"),
+    ],
+)
+def test_alias_resolver_exact_full_name_returns_single_candidate(
+    surface: str, expected: str
+) -> None:
+    """Regression: an exact display-name match must yield exactly one
+    candidate, regardless of whether the embedding model is loaded.
+    Prior to the fix, names not present as an alias (e.g. "Vũ Thị
+    Hạnh" — aliases are only "chị hạnh"/"hạnh") fell through to step
+    5 (RAG/lexical) which could return a wide set of plausible names
+    from the same demographic. The orchestrator then surfaced all of
+    them as disambiguation candidates — the screenshot bug.
+    """
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of(USER)
+    matches = resolve_recipient(surface, contacts)
+    names = [m.contact.display_name for m in matches]
+    assert len(matches) == 1, (
+        f"{surface!r} should match exactly one contact; got {names}"
+    )
+    assert names[0] == expected
 
 
 # ---------------------------------------------------------------------------

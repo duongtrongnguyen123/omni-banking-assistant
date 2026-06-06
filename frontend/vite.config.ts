@@ -11,7 +11,11 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       host: true, // listen on all interfaces (LAN + tunnel)
-      allowedHosts: true, // accept any Host header (e.g. *.trycloudflare.com)
+      // Cloudflare quick-tunnel / ngrok / generic — combine main's
+      // permissive allowlist with the documented explicit suffixes so
+      // judges and teammates can hit the dev server from outside the
+      // LAN without bumping config per session.
+      allowedHosts: true,
       proxy: {
         "/api": apiTarget,
         "/health": apiTarget,

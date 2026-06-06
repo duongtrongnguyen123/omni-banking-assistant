@@ -120,3 +120,32 @@ CREATE TABLE IF NOT EXISTS savings_goals (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_goals_user ON savings_goals(user_id);
+
+-- Durable chat history. Unlike the ephemeral session store (TTL-bounded,
+-- capped at ~20 messages, used only for in-flight drafts + short NLU
+-- context), this is the permanent archive that powers the left-hand
+-- "conversations" sidebar. One row per conversation; one row per turn.
+-- There is no sign-in yet, so rows are namespaced only by ``user_id``
+-- (the demo user). ON DELETE CASCADE drops a conversation's messages
+-- when the conversation row is deleted.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    title       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_chat_sessions_user
+    ON chat_sessions(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    role        TEXT NOT NULL,          -- 'user' | 'omni'
+    content     TEXT NOT NULL,
+    intent      TEXT,                   -- resolved intent for omni turns
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_chat_messages_session
+    ON chat_messages(session_id, created_at);

@@ -119,7 +119,17 @@ interface Props {
    *  resolves it to a contact-picker modal then POST /transactions/split. */
   onSplitBill?: (amount: number, description: string) => void;
   disabled?: boolean;
+  /** True while a confirm/cancel HTTP request for THIS draft is still
+   *  travelling. Locks both Huỷ and Xác nhận so the user can't fire a
+   *  cancel that races a confirm. Closes the SAFETY bug from user
+   *  feedback "nhập opt rồi nhấn huỷ nhưng mà sao vẫn chuyển?". */
+  inFlight?: boolean;
   actionable?: boolean;
+  /** Draft was cancelled (not executed). Suppresses the success
+   *  celebration animation and the compact "Đã chuyển X · Y" receipt
+   *  that otherwise renders on the actionable→inactionable transition.
+   *  Falls to the neutral "Giao dịch này đã đóng." status. */
+  cancelled?: boolean;
 }
 
 export const TransactionCard = ({
@@ -130,7 +140,9 @@ export const TransactionCard = ({
   onModifyAmount,
   onSplitBill,
   disabled,
+  inFlight = false,
   actionable = true,
+  cancelled = false,
 }: Props) => {
   const [editingAmount, setEditingAmount] = useState(false);
   const [pendingAmount, setPendingAmount] = useState("");
@@ -147,13 +159,21 @@ export const TransactionCard = ({
 
   useEffect(() => {
     if (wasActionable.current && !actionable) {
+      // Suppress the "Đã chuyển" celebration animation on cancel. The
+      // actionable→inactionable transition fires for any reason a card
+      // stops being live (executed, cancelled, raced past) — only
+      // execute should look celebratory.
+      if (cancelled) {
+        wasActionable.current = actionable;
+        return;
+      }
       // Fire celebratory state, then auto-collapse to a compact receipt.
       setJustConfirmed(true);
       const t = window.setTimeout(() => setCollapsed(true), 4000);
       return () => window.clearTimeout(t);
     }
     wasActionable.current = actionable;
-  }, [actionable]);
+  }, [actionable, cancelled]);
   const blocked = draft.flags.some((f) => f.severity === "block");
   const hardBlocked = draft.flags.some(
     (f) => f.severity === "block" && f.code !== "insufficient_balance",
@@ -168,12 +188,24 @@ export const TransactionCard = ({
   const selectedBalanceBlocks =
     !!selectedAccount && draft.amount != null && draft.amount > selectedAccount.balance;
   const canSubmit =
-    actionable && !disabled && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
+    actionable && !disabled && !inFlight && !hardBlocked && !selectedBalanceBlocks && draft.amount != null && r != null;
 
   const handleConfirm = () => {
-    // Auth (OTP + optional 8D face scan) is handled by the App-level
+    // Defend at the handler — the button's ``disabled`` attr should
+    // already block this, but a fast double-click can land both events
+    // in the same React batch before re-render. Drop the second one.
+    if (inFlight) return;
+    // Auth (OTP + optional 8D face scan) is now handled by the App-level
     // overlay that fills the phone frame — the card just kicks it off.
     onConfirm(sourceAccountId || undefined);
+  };
+
+  const handleCancel = () => {
+    // Once a confirm is travelling we refuse to fire a cancel that
+    // would arrive AFTER the transfer is written. Backend has the
+    // matching guard in routes/chat.py.
+    if (inFlight) return;
+    onCancel();
   };
 
   // Surface the step-up reason as a hero banner so the safety layer is
@@ -189,6 +221,7 @@ export const TransactionCard = ({
         (f) =>
           f.severity === "warn" &&
           (f.code === "new_recipient_large_amount" ||
+            f.code === "large_amount" ||
             f.code === "amount_above_average" ||
             f.code === "fraud_risk_high" ||
             f.code === "transfer_velocity_high"),
@@ -441,6 +474,7 @@ export const TransactionCard = ({
                         (f) =>
                           f.code === "amount_above_average" ||
                           f.code === "fraud_risk_high" ||
+                          f.code === "large_amount" ||
                           f.code === "new_recipient_large_amount",
                       )}
                     />
@@ -617,8 +651,9 @@ export const TransactionCard = ({
           <div className="tx-actions">
             <button
               className="btn btn--ghost"
-              onClick={onCancel}
-              disabled={disabled}
+              onClick={handleCancel}
+              disabled={disabled || inFlight}
+              title={inFlight ? "Đang xử lý — không thể huỷ" : undefined}
             >
               Huỷ
             </button>
@@ -626,7 +661,7 @@ export const TransactionCard = ({
               <button
                 className="btn btn--ghost"
                 onClick={onEdit}
-                disabled={disabled}
+                disabled={disabled || inFlight}
               >
                 Sửa
               </button>
@@ -635,14 +670,21 @@ export const TransactionCard = ({
               className={`btn ${draft.requires_step_up ? "btn--warn" : "btn--primary"}`}
               onClick={handleConfirm}
               disabled={!canSubmit}
+              aria-busy={inFlight}
               data-onboarding="confirm"
             >
-              Xác nhận
+              {inFlight ? "Đang xử lý…" : "Xác nhận"}
             </button>
           </div>
         </>
       ) : (
-        <div className="tx-status">Giao dịch này đã được xử lý.</div>
+        // Inactionable = no actionable draft beats this one in the
+        // message list. Could mean: executed, cancelled, or replaced by
+        // a newer draft. We don't have enough context here to say
+        // "thành công" — historically that wording bit a user during the
+        // biometric-fail-then-exit race ("hiện đã chuyển" but transfer
+        // never executed). Use neutral wording instead.
+        <div className="tx-status">Giao dịch này đã đóng.</div>
       )}
     </div>
   );

@@ -75,6 +75,7 @@ check → intent dispatch → response composition.
 | + | a11y | WCAG 2.1 AA, focus ring, `prefers-reduced-motion`, jest-axe harness | `frontend/src/lib/axe.ts`, `docs/a11y-audit.md` |
 | + | Demo resilience | `OMNI_OFFLINE_DEMO=1` + telemetry overlay + scenario recorder + canonical JSONL replay | `backend/app/routes/demo.py`, `docs/offline-demo.md` |
 | + | Redis sessions | `OMNI_SESSION_BACKEND={memory,redis,fake-redis}` + draft/session TTLs | `backend/app/context/session_store.py`, `docs/persistence.md` |
+| + | Chat history | Durable SQLite conversation archive + left-drawer sidebar (list / reopen / new / delete), titled from first message. Separate from the ephemeral session store | `backend/app/db/chat_log.py`, `backend/app/routes/chat.py`, `frontend/src/components/ChatHistory.tsx` |
 | + | ATM finder | 15-seed mock with Haversine + NLU "ATM gần nhất" | `backend/app/banking/atm.py`, `backend/app/routes/atm.py` |
 | + | VietQR codec | Custom TLV encode/decode + jsQR camera scan (47 kB lazy chunk) | `backend/app/banking/qr.py`, `frontend/src/components/QrScanButton.tsx` |
 | + | Onboarding | 4-step tutorial overlay + skills discovery (13 chips × 5 categories) | `frontend/src/components/TutorialOverlay.tsx` |

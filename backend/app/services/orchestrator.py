@@ -158,7 +158,30 @@ _CANCEL_RE = re.compile(
     re.IGNORECASE,
 )
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
-_HELP_RE = re.compile(r"^\s*(/help|help|trợ giúp|tro giup|hướng dẫn|huong dan|menu)\s*$", re.IGNORECASE)
+_HELP_RE = re.compile(
+    # Exact-phrase commands (preserved from origin, plus optional ?!.).
+    r"^\s*(?:/help|help|trợ\s+giúp|tro\s+giup|hướng\s+dẫn|huong\s+dan|menu)\s*[?!.]*\s*$"
+    # "How do I / how to do" — judges asking how to use the assistant.
+    # Substring-safe in a banking app: "làm sao" only appears in
+    # help-shaped questions, never in a transfer / history command.
+    r"|\b(?:làm|lam)\s+(?:sao|thế\s+nào|the\s+nao|cách\s+nào|cach\s+nao)\b"
+    # "What can you do" — "omni làm gì", "bạn có thể làm gì", "có thể
+    # làm gì". The "<subject> + làm gì" shape is unambiguous.
+    # Allows "biết làm gì" / "có thể làm gì" / "làm được gì" — anything
+    # between the subject and the final "gì" that's still a help shape.
+    r"|\b(?:omni|bạn|ban)\s+(?:có\s+thể\s+|co\s+the\s+)?(?:biết\s+|biet\s+)?(?:làm|lam)(?:\s+(?:được|duoc))?\s+gì\b"
+    r"|\b(?:omni|bạn|ban)\s+(?:biết|biet)\s+gì\b"
+    r"|\b(?:có\s+thể|co\s+the)\s+(?:làm|lam)\s+gì\b"
+    # "Guide / instructions / how to use".
+    r"|\b(?:hướng\s+dẫn|huong\s+dan)\b"
+    r"|\b(?:cách|cach)\s+(?:dùng|dung|sử\s+dụng|su\s+dung)\b"
+    # Bare help asks — anchored to avoid eating "giúp mình kiểm tra số
+    # dư" (which is a balance query with a polite prefix).
+    r"|^\s*giúp\s+(?:mình|tôi|minh|toi)?\s*(?:với|voi|ơi|oi)?\s*[?!.]*\s*$"
+    r"|^\s*giúp\s+(?:đỡ|do)\s*[?!.]*\s*$"
+    r"|^\s*help\s+me\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
 
 
 _HELP_TEXT = (
@@ -276,7 +299,22 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     folded = normalize_alias(temporal_ref)
     if "thang truoc" in folded or "lan truoc" in folded:
         return "last_month"
-    if "tuan truoc" in folded or "hom qua" in folded or "vua roi" in folded:
+    # Single-day windows. "hôm qua" used to fall into recent_30d (last
+    # 30 days), which silently broadened "tôi tiêu gì hôm qua" into a
+    # month total. Scope it to yesterday.
+    if "hom nay" in folded:
+        return "today"
+    if "hom qua" in folded:
+        return "yesterday"
+    if "tuan nay" in folded:
+        return "this_week"
+    if "tuan truoc" in folded:
+        return "last_week"
+    if "nam nay" in folded:
+        return "this_year"
+    if "nam ngoai" in folded:
+        return "last_year"
+    if "vua roi" in folded:
         return "recent_30d"
     return "this_month"
 
@@ -498,7 +536,22 @@ def _dispatch_intent(
         return _handle_atm_finder(user_id, nlu)
 
     if nlu.intent == "smalltalk":
-        fallback = "Chào bạn! Mình là Omni — sẵn sàng giúp bạn chuyển tiền, xem số dư hay tra lịch sử."
+        # Pick the fallback line by the type of smalltalk the user wrote
+        # — judges who say "cảm ơn" deserve a "không có chi" not a
+        # robotic re-greeting; "tạm biệt" / "bye" gets a sign-off line.
+        # The LLM (when reachable) still does the variable phrasing; the
+        # fallback only fires when both providers are 429 / offline.
+        from ..nlp.entities import normalize_alias
+        _folded = normalize_alias(nlu.raw_text or "")
+        if any(t in _folded for t in ("cam on", "cám ơn", "thank")):
+            fallback = "Không có chi! Cần gì bạn cứ nhắn mình nhé."
+        elif any(
+            t in _folded
+            for t in ("tam biet", "tạm biệt", "bye", "goodbye", "good night")
+        ):
+            fallback = "Hẹn gặp lại bạn! Có việc gì cứ gọi Omni nhé."
+        else:
+            fallback = "Chào bạn! Mình là Omni — sẵn sàng giúp bạn chuyển tiền, xem số dư hay tra lịch sử."
         text = llm_phrase(
             nlu.raw_text,
             {
@@ -867,8 +920,14 @@ def _handle_history(
             fell_back = True
 
     period_label = {
+        "today": "hôm nay",
+        "yesterday": "hôm qua",
+        "this_week": "tuần này",
+        "last_week": "tuần trước",
         "this_month": "tháng này",
         "last_month": "tháng trước",
+        "this_year": "năm nay",
+        "last_year": "năm ngoái",
         "recent_30d": "30 ngày gần đây",
         "all_time": "tất cả thời gian",
     }.get(period, period)
@@ -1907,6 +1966,28 @@ def confirm_draft(
     draft.awaiting_otp = True
     session.set_draft(draft)
 
+    # --- OTP preflight ---
+    # When OTP + biometric arrive together, validate OTP first so a wrong
+    # code stops immediately instead of making the user complete a face scan.
+    if "otp" in draft.auth_required and "otp" not in draft.auth_completed and otp is not None:
+        if not otp.strip() or otp.strip() != "123456":
+            text = "OTP chưa đúng. Bạn kiểm tra và nhập lại mã xác minh nhé."
+            session.append("user", "Xác minh OTP")
+            session.append("omni", text)
+            try:
+                from .audit_log import record_otp
+                record_otp(user_id=user_id, draft_id=draft.id, action="failed")
+            except Exception:  # pragma: no cover
+                pass
+            return OmniResponse(intent="transfer", text=text, draft=draft)
+        try:
+            from .audit_log import record_otp
+            record_otp(user_id=user_id, draft_id=draft.id, action="verified")
+        except Exception:  # pragma: no cover
+            pass
+        draft.auth_completed.append("otp")
+        session.set_draft(draft)
+
     # --- Biometric (8D face scan) ---
     if (
         "biometric" in draft.auth_required
@@ -2250,9 +2331,20 @@ def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
         return warn.message + " Bạn xác nhận mình mới thực hiện nhé."
 
     if referenced_tx is not None and draft.recipient is not None and draft.amount is not None:
+        # "Lặp lại?" only makes sense when the draft amount actually matches
+        # the prior transaction. If the user said "gửi mẹ 5 triệu như tháng
+        # trước" but tháng trước was 3tr, asking "Lặp lại?" against a 5tr
+        # draft is misleading — surface the diff and confirm the explicit
+        # amount instead.
+        if draft.amount == referenced_tx.amount:
+            return (
+                f"Tháng trước bạn gửi {format_vnd(referenced_tx.amount)} cho "
+                f"{draft.recipient.display_name} ({draft.recipient.bank}). Lặp lại?"
+            )
         return (
             f"Tháng trước bạn gửi {format_vnd(referenced_tx.amount)} cho "
-            f"{draft.recipient.display_name} ({draft.recipient.bank}). Lặp lại?"
+            f"{draft.recipient.display_name} — lần này {format_vnd(draft.amount)}. "
+            f"Xác nhận chuyển nhé?"
         )
 
     if draft.recipient is not None and draft.amount is not None:

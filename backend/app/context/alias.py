@@ -67,6 +67,17 @@ def resolve_recipient(
 
     matches: list[ResolvedRecipient] = []
 
+    # 0) Exact display-name match (highest precision short-circuit).
+    #    "Vũ Thị Hạnh" should resolve to that one contact even when no
+    #    alias exists for the full string. Without this, multi-token
+    #    full names fall through to RAG (step 5) and may surface a wide
+    #    set of semantically similar names — exactly the reported bug.
+    for c in contacts:
+        if _fold(c.display_name) == query or _fold(c.display_name) == query_stripped:
+            matches.append(ResolvedRecipient(contact=c, matched_from="exact"))
+    if matches:
+        return _dedupe(matches)
+
     # 1) Direct alias match (high precision)
     for c in contacts:
         for alias in c.aliases:

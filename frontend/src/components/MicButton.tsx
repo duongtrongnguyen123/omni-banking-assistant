@@ -1,4 +1,18 @@
+import { forwardRef, useImperativeHandle } from "react";
 import { useRecorder } from "../hooks/useRecorder";
+
+/**
+ * Imperative handle so the parent (chat form) can cancel an in-flight
+ * recording when the user submits the message — otherwise the recorder
+ * keeps capturing audio after Gửi and the next transcript clobbers the
+ * cleared input.
+ */
+export interface MicButtonHandle {
+  /** Cancel any in-progress recording without uploading. Safe when idle. */
+  stop: () => void;
+  /** True if the mic is currently capturing audio. */
+  isRecording: () => boolean;
+}
 
 const MicIcon = ({ off = false }: { off?: boolean }) => (
   <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -67,7 +81,10 @@ const fmt = (ms: number) => {
   return `${min}:${sec}`;
 };
 
-export const MicButton = ({ disabled, onText }: Props) => {
+export const MicButton = forwardRef<MicButtonHandle, Props>(function MicButton(
+  { disabled, onText },
+  ref,
+) {
   const { status, error, elapsedMs, start, stop, cancel } = useRecorder({
     onText,
   });
@@ -75,6 +92,20 @@ export const MicButton = ({ disabled, onText }: Props) => {
   const unsupported = status === "unsupported";
   const recording = status === "recording";
   const processing = status === "processing" || status === "requesting";
+
+  // Parent calls .stop() to release the mic on Gửi. We `cancel` rather
+  // than `stop` so a half-uttered phrase isn't uploaded as a stale
+  // transcript on top of the message that's already being sent.
+  useImperativeHandle(
+    ref,
+    () => ({
+      stop: () => {
+        if (recording) cancel();
+      },
+      isRecording: () => recording,
+    }),
+    [recording, cancel],
+  );
 
   const click = () => {
     if (unsupported) return;
@@ -133,4 +164,4 @@ export const MicButton = ({ disabled, onText }: Props) => {
       </button>
     </div>
   );
-};
+});

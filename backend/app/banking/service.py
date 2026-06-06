@@ -235,6 +235,30 @@ def get_history(
     elif period == "last_month":
         prev = ref_now.replace(day=1) - timedelta(days=1)
         start, end = _month_window(prev)
+    elif period == "today":
+        start = ref_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+    elif period == "yesterday":
+        today_start = ref_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = today_start - timedelta(days=1)
+        end = today_start
+    elif period == "this_week":
+        # ISO Monday-start week. ``weekday()`` is 0 = Monday.
+        today_start = ref_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = today_start - timedelta(days=today_start.weekday())
+        end = start + timedelta(days=7)
+    elif period == "last_week":
+        today_start = ref_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        this_week_start = today_start - timedelta(days=today_start.weekday())
+        start = this_week_start - timedelta(days=7)
+        end = this_week_start
+    elif period == "this_year":
+        start = ref_now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = start.replace(year=start.year + 1)
+    elif period == "last_year":
+        this_year_start = ref_now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        start = this_year_start.replace(year=this_year_start.year - 1)
+        end = this_year_start
     else:
         start = ref_now - timedelta(days=30)
         end = ref_now + timedelta(days=1)

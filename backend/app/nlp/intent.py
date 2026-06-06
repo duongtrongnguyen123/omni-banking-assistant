@@ -82,6 +82,21 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ("balance", [
         "so du", "kiem tra so du", "xem so du", "balance",
         "tai khoan con", "con bao nhieu trong tai khoan",
+        # Common Vietnamese colloquialisms — "do I still have money?"
+        # All of these are high-precision: as substrings they rarely
+        # appear inside an unrelated history / transfer command.
+        "con bao nhieu tien",      # "còn bao nhiêu tiền"
+        "con nhieu tien",          # "còn nhiêu tiền" (casual)
+        "het tien chua",           # "hết tiền chưa"
+        "het sach tien",           # "hết sạch tiền"
+        "het sach vi",             # "hết sạch ví"
+        "can vi",                  # "cạn ví" — out of money slang
+        "can sach vi",             # "cạn sạch ví"
+        "tien nong con",           # "tiền nong còn (không)"
+        "tien con khong",          # "tiền còn không"
+        "tien con ko",             # casual
+        "luong ve chua",           # "lương về chưa" — payday check
+        "luong ve roi",            # "lương về rồi (chưa)"
     ]),
     ("history", [
         "lich su", "thong ke", "sao ke", "bao cao chi tieu",
@@ -113,11 +128,21 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ]),
     ("smalltalk", [
         "xin chao", "chao omni", "hello", "cam on",
+        # English thanks variants — judges who switch language mid-flow
+        # shouldn't fall to the generic "chưa rõ ý" fallback.
+        "thank you", "thanks",
         # Farewells + casual variants — judges who say goodbye to the
         # assistant shouldn't get the safe "unknown" fallback that
         # invites them to "thử chuyển cho mẹ 2 triệu".
         "tam biet", "bye omni", "bye bye", "goodbye", "tạm biệt",
         "good morning", "good evening", "chao buoi sang",
+        # Vietnamese greetings with salutation forms — "chào em" / "chào
+        # anh" / "chào chị" / "chào cô / chú / bác / mọi người / bạn".
+        # The bare "chao" substring is intentionally NOT here because it
+        # would false-positive inside common words. Two-token forms are
+        # safe — they don't appear inside transfer or history commands.
+        "chao em", "chao anh", "chao chi", "chao co ", "chao chu ",
+        "chao bac", "chao moi nguoi", "chao ban",
     ]),
 ]
 
@@ -159,11 +184,58 @@ _MED: list[tuple[Intent, list[str]]] = [
 
 # Word-boundary smalltalk fallback — kept out of the Tier-2 substring loop
 # so "hi" inside "hiện" / "nghi" / "chi" can't steal the routing from
-# insights / history / transfer.
-_SMALLTALK_HI_RE = re.compile(r"\b(?:hi|hey)\b", re.IGNORECASE)
+# insights / history / transfer. Same word-boundary discipline applies
+# to bare "chào" / "bye" — they would substring-match inside countless
+# Vietnamese words ("chào" appears in "chào hỏi", "khẩu chào"; "bye"
+# can hide in URLs).  Matched as whole words/anchored phrases here.
+_SMALLTALK_HI_RE = re.compile(
+    r"\b(?:hi|hey|bye)\b"
+    r"|^\s*ch[àa]o\s*[!?.]?\s*$",   # bare "chào" / "chao" only
+    re.IGNORECASE,
+)
 
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
+
+# Date / temporal references that should route to history.
+#
+# Two flavours:
+#
+#  * Numeric anchors (tháng/năm/ngày/quý + digit, or bare DD/MM[/YYYY]
+#    slash dates). These have to win against the Tier-3 ``\d`` fallback
+#    that defaults any digit-bearing message to "transfer".
+#
+#  * Bare temporal words ("tuần này", "tuần trước", "hôm qua", "năm nay",
+#    "năm ngoái", "đầu/cuối tháng/năm"). Without a digit they end up at
+#    "unknown"; routing them to history makes the period filter Just Work.
+#
+# Conservative: any tier that matches first (transfer keyword, balance,
+# add_contact, schedule, etc.) still wins because these checks run AFTER
+# the keyword tiers and the smalltalk regex.
+_HISTORY_DATE_RE = re.compile(
+    r"\bth[áa]ng\s+\d{1,2}(?:[/\s]\d{2,4}|\s+n[ăa]m\s+\d{4})?\b"
+    # "năm 2026"
+    r"|\bn[ăa]m\s+\d{4}\b"
+    # "quý 1" / "quý 2 năm 2026"
+    r"|\bqu[ýy]\s+\d(?:\s+n[ăa]m\s+\d{4})?\b"
+    # "ngày 15/5" / "ngày 15 tháng 5"
+    r"|\bng[àa]y\s+\d{1,2}(?:[/\s]\d{1,2}(?:[/\s]\d{2,4})?|\s+th[áa]ng\s+\d{1,2})\b"
+    # Bare slash-date "15/5" or "15/5/2026"
+    r"|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b"
+    # "N tháng gần đây" / "N năm gần đây"
+    r"|\b\d{1,2}\s+(?:th[áa]ng|n[ăa]m|tu[ầa]n|ng[àa]y)\s+(?:gần|gan|qua|trước|truoc)\b",
+    re.IGNORECASE,
+)
+
+# Bare temporal phrases — no digit — that judges use as a standalone
+# history query.
+_HISTORY_TEMPORAL_RE = re.compile(
+    r"\b(?:tuần|tuan)\s+(?:này|nay|trước|truoc|qua)\b"
+    r"|\b(?:hôm|hom)\s+(?:nay|qua)\b"
+    r"|\b(?:n[ăa]m)\s+(?:nay|ngoái|ngoai|trước|truoc)\b"
+    r"|\b(?:đầu|dau|cuối|cuoi)\s+(?:tháng|thang|n[ăa]m|tu[ầa]n)\b",
+    re.IGNORECASE,
+)
 
 # Branch / ATM intent — substring matchers in the Tier-1 list miss
 # "chi nhánh BIDV gần nhất" / "atm acb o dau" because the bank token
@@ -214,6 +286,15 @@ def classify(text: str) -> tuple[Intent, float]:
     # routing from any intent. Matches whole words only.
     if _SMALLTALK_HI_RE.search(folded):
         return "smalltalk", 0.65
+
+    # Tier 2.6 — temporal references (month/year/week/day/quarter) are
+    # history queries, not transfers. Catches "tháng 5 năm 2026" /
+    # "thang 5/2026" / "quý 1" / "ngày 15/5" / "tuần này" / "năm ngoái" /
+    # "đầu tháng" before the Tier-3 bare-digit fallback steals them or the
+    # query falls to "unknown". Runs AFTER Tier 1/2 so a real transfer or
+    # schedule keyword wins first ("chuyển mẹ 2tr đầu tháng").
+    if _HISTORY_DATE_RE.search(text) or _HISTORY_TEMPORAL_RE.search(text):
+        return "history", 0.55
 
     # Tier 3 — bare digit means an unclassified transfer command.
     if re.search(r"\d", folded):

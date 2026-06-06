@@ -39,10 +39,18 @@ _TEMPORAL_PATTERNS = [
     r"thang\s+truoc",
     r"người\s+hôm\s+qua",
     r"nguoi\s+hom\s+qua",
+    r"hôm\s+nay",
+    r"hom\s+nay",
     r"hôm\s+qua",
     r"hom\s+qua",
+    r"tuần\s+này",
+    r"tuan\s+nay",
     r"tuần\s+trước",
     r"tuan\s+truoc",
+    r"năm\s+nay",
+    r"nam\s+nay",
+    r"năm\s+ngoái",
+    r"nam\s+ngoai",
     r"vừa\s+rồi",
     r"vua\s+roi",
 ]
@@ -241,6 +249,21 @@ _BARE_RECIPIENT_DENYLIST = {
     "thue", "phi", "no", "cuoc",
 }
 
+# First-person pronouns that judges naturally use ("gửi mình 200k",
+# "ai chuyển tiền cho mình", "trả tôi"). Without this guard, "mình"
+# diacritic-folds to "minh" → matches the contact "Minh" → confirm card
+# offers to send Minh money. Same trap for "tôi" → "toi".
+#
+# CRITICAL: compare against the *original* text (with diacritics) so
+# the contact name "Minh" (no `ì`) still resolves. The diacritic is the
+# only thing distinguishing pronoun from name.
+_SELF_PRONOUNS_DIACRITIC = {
+    "mình",   # most common
+    "tôi",
+    "tớ",
+    "tao",    # informal first person
+}
+
 # ATM finder — surface-form → canonical bank name. Both the short
 # (VCB, TCB, …) and full ("Vietcombank") forms are common in chat;
 # we normalise to the canonical bank label used in ``data/atms.json`` so
@@ -339,6 +362,17 @@ def extract(text: str) -> ExtractedEntities:
             folded = _strip_diacritics(candidate).strip()
             if folded and folded not in _BARE_RECIPIENT_DENYLIST:
                 out.recipient_text = candidate
+
+    # Self-pronoun guard. Compare against the still-diacritic-bearing
+    # recipient_text — "mình" vs "Minh" only differ by the dấu huyền.
+    # Folding before the compare would let the contact "Minh" be
+    # mistaken for the pronoun and vice-versa. Check the FIRST token
+    # so trailing question particles ("mình không", "tôi nhé") still
+    # trigger the drop.
+    if out.recipient_text:
+        first = out.recipient_text.strip().split()[0].lower()
+        if first in _SELF_PRONOUNS_DIACRITIC:
+            out.recipient_text = None
 
     m = _ACCOUNT_HINT_RE.search(text)
     if m:

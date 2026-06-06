@@ -112,13 +112,24 @@ def evaluate(
 
     # If we have a chosen recipient + amount, run anomaly + balance checks.
     if recipient and amount:
-        # New recipient + large amount
-        if not recipient.frequent and amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
+        # Any large transfer needs step-up auth. New recipients get a more
+        # specific warning below, but known contacts still need biometric for
+        # bank-grade high-value transfers.
+        if amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
             flags.append(
                 SafetyFlag(
-                    code="new_recipient_large_amount",
+                    code=(
+                        "new_recipient_large_amount"
+                        if not recipient.frequent
+                        else "large_amount"
+                    ),
                     severity="warn",
                     message=(
+                        "Số tiền trên 10.000.000đ — mình sẽ yêu cầu xác thực "
+                        "sinh trắc học thêm trước khi thực hiện."
+                    )
+                    if recipient.frequent
+                    else (
                         "Người nhận chưa từng giao dịch và số tiền lớn — "
                         "mình sẽ yêu cầu xác thực thêm để bảo vệ bạn."
                     ),
@@ -348,13 +359,16 @@ def evaluate(
 
 
 def requires_step_up(flags: list[SafetyFlag]) -> bool:
-    """Whether OTP / step-up auth is required to proceed."""
+    """Whether biometric step-up auth is required to proceed.
+
+    Omni's prototype policy is intentionally simple for the banking demo:
+    only transfers from 10M VND upward require face verification. Other warn
+    flags can still explain risk, but sub-10M transfers stay OTP-only.
+    """
     return any(
         f.code in (
             "new_recipient_large_amount",
-            "amount_above_average",
-            "fraud_risk_high",
-            "transfer_velocity_high",
+            "large_amount",
         )
         and f.severity == "warn"
         for f in flags
@@ -368,8 +382,8 @@ def is_blocked(flags: list[SafetyFlag]) -> bool:
 def auth_policy(flags: list[SafetyFlag]) -> list[str]:
     """Risk-based auth policy for MVP.
 
-    Normal transfer: OTP.
-    Warn-level risky transfer: OTP + mock biometric.
+    Normal / sub-10M transfer: OTP.
+    Large transfer (>=10M): OTP + biometric.
     Blocked transfer: no auth path until the user fixes the blocked state.
     """
     if is_blocked(flags):

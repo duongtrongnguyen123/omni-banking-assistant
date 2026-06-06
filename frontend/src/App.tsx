@@ -6,10 +6,12 @@ import type {
   BalanceResult,
   BiometricScanResult,
   ChatMessage,
+  ChatSession,
   Contact,
   OmniResponse,
   TransactionDraft,
 } from "./types";
+import { ChatHistory } from "./components/ChatHistory";
 import { ContactPicker } from "./components/ContactPicker";
 import { BiometricFaceScan } from "./components/BiometricFaceScan";
 import { Message } from "./components/Message";
@@ -20,7 +22,7 @@ import { OmniAvatar } from "./components/OmniAvatar";
 import { QuickScenarios } from "./components/QuickScenarios";
 import { SkillsCard } from "./components/SkillsCard";
 import { TutorialOverlay } from "./components/TutorialOverlay";
-import { VoiceButton } from "./components/VoiceButton";
+import { VoiceButton, type VoiceButtonHandle } from "./components/VoiceButton";
 import { ReceiveCard } from "./components/ReceiveCard";
 import { QrScanButton } from "./components/QrScanButton";
 import { SuggestionStrip } from "./components/SuggestionStrip";
@@ -71,9 +73,29 @@ const WELCOME: ChatMessage = {
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  // Persisted-conversation history (left drawer).
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  // Mirror of currentSessionId for use inside stable callbacks without
+  // re-creating them on every conversation switch.
+  const sessionIdRef = useRef<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [closedDraftIds, setClosedDraftIds] = useState<Set<string>>(new Set());
+  // Drafts whose confirm/cancel HTTP request is in flight. Locks the
+  // matching TransactionCard's Huỷ button so user can't fire a cancel
+  // that races a confirm — the SAFETY bug from user feedback "nhập opt
+  // rồi nhấn huỷ nhưng mà sao vẫn chuyển?". Cleared in the request's
+  // finally block.
+  const [inFlightDraftIds, setInFlightDraftIds] = useState<Set<string>>(new Set());
+  // Cancelled drafts are also in closedDraftIds (so they stop being
+  // actionable), but Message+TransactionCard need to distinguish cancel
+  // from execute so the success celebration ("Đã chuyển X · Y") doesn't
+  // fire on a cancel — verifier audit, user feedback "ấn huỷ … vẫn
+  // hiện là đã chuyển khoản được rồi".
+  const [cancelledDraftIds, setCancelledDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   // Bumped after every executed transfer so the suggestion strip re-ranks.
@@ -94,10 +116,15 @@ export default function App() {
   } | null>(null);
   const [authStage, setAuthStage] = useState<"otp" | "biometric">("otp");
   const [authOtp, setAuthOtp] = useState("");
+  const [authOtpError, setAuthOtpError] = useState("");
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readStoredTtsPref());
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Lets `send()` and other code paths stop voice recognition when the
+  // user is done dictating (e.g. clicked Gửi), so the mic doesn't keep
+  // listening and overwrite the cleared input on the next onresult.
+  const voiceRef = useRef<VoiceButtonHandle | null>(null);
 
   // Power-user state.
   const [slashOpen, setSlashOpen] = useState(false);
@@ -111,6 +138,27 @@ export default function App() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  // Phone-only mode: hide the pitch sidebar so the demo looks like a
+  // real banking app instead of a presentation slide. Persisted per
+  // browser so judges can toggle once and the choice survives reload.
+  const [showSidebar, setShowSidebar] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("omni.sidebar.visible") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "omni.sidebar.visible",
+        showSidebar ? "1" : "0",
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [showSidebar]);
 
   useEffect(() => {
     try {
@@ -218,10 +266,105 @@ export default function App() {
     }
   };
 
+  // Keep the ref in lockstep with the state so stable callbacks read the
+  // live conversation id.
+  useEffect(() => {
+    sessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const list = await api.chatSessions();
+      setSessions(list);
+    } catch {
+      /* sidebar is best-effort — never block chat on a list failure */
+    }
+  }, []);
+
+  const adoptSession = useCallback((id: string | null) => {
+    if (id) {
+      sessionIdRef.current = id;
+      setCurrentSessionId(id);
+    }
+  }, []);
+
+  const startNewChat = useCallback(() => {
+    setMessages([WELCOME]);
+    setCurrentSessionId(null);
+    sessionIdRef.current = null;
+    setClosedDraftIds(new Set());
+    setClosedScheduleDraftIds(new Set());
+    setHistoryIdx(null);
+    setHistoryOpen(false);
+  }, []);
+
+  const loadSession = useCallback(async (id: string) => {
+    try {
+      const { messages: stored } = await api.chatSessionMessages(id);
+      const mapped: ChatMessage[] = stored.map((m) => ({
+        id: m.id,
+        role: m.role,
+        text: m.content,
+      }));
+      setMessages(mapped.length ? mapped : [WELCOME]);
+      setCurrentSessionId(id);
+      sessionIdRef.current = id;
+      setClosedDraftIds(new Set());
+      setClosedScheduleDraftIds(new Set());
+      setHistoryIdx(null);
+      setHistoryOpen(false);
+    } catch {
+      /* ignore — keep the current view on a load failure */
+    }
+  }, []);
+
+  const removeSession = useCallback(
+    async (id: string) => {
+      try {
+        await api.deleteChatSession(id);
+      } catch {
+        /* ignore */
+      }
+      if (sessionIdRef.current === id) {
+        startNewChat();
+      }
+      void refreshSessions();
+    },
+    [refreshSessions, startNewChat],
+  );
+
+  // On first paint, load the saved conversation list and re-open the most
+  // recent one so the user lands back where they left off.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSessionsLoading(true);
+      try {
+        const list = await api.chatSessions();
+        if (cancelled) return;
+        setSessions(list);
+        if (list.length > 0) {
+          await loadSession(list[0].id);
+        }
+      } catch {
+        /* offline / fresh DB — stay on the welcome screen */
+      } finally {
+        if (!cancelled) setSessionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSession]);
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || busy) return;
+      // Release the mic before doing anything else — if the user
+      // dictated this message, we don't want recognition to keep
+      // running and clobber the now-empty input via a late onresult.
+      voiceRef.current?.stop();
       appendUser(trimmed);
       const pendingId = appendOmniPending();
       setInput("");
@@ -230,7 +373,11 @@ export default function App() {
       setHistoryIdx(null);
       setBusy(true);
       try {
-        const resp = await api.chat(trimmed);
+        const { response: resp, sessionId } = await api.chat(
+          trimmed,
+          sessionIdRef.current,
+        );
+        adoptSession(sessionId);
         if (resp.draft) {
           setClosedDraftIds((prev) => {
             const next = new Set(prev);
@@ -252,13 +399,15 @@ export default function App() {
           }
         }
         resolveOmni(pendingId, resp);
+        // Reflect the new title / preview / ordering in the sidebar.
+        void refreshSessions();
       } catch (e) {
         failOmni(pendingId, e);
       } finally {
         setBusy(false);
       }
     },
-    [busy],
+    [busy, adoptSession, refreshSessions],
   );
 
   const sendDraftAction = async (
@@ -269,10 +418,24 @@ export default function App() {
     appendUser(actionLabel);
     const pendingId = appendOmniPending();
     setBusy(true);
+    if (closeDraftId) {
+      setInFlightDraftIds((prev) => {
+        const next = new Set(prev);
+        next.add(closeDraftId);
+        return next;
+      });
+    }
     try {
       const resp = await action();
       if (closeDraftId && !resp.draft) {
         setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
+        // Mirror the cancel side into a dedicated set so TransactionCard
+        // can suppress the success celebration animation on cancel.
+        // Distinguished from confirm via actionLabel exactly like the
+        // confirmedTransfers counter below.
+        if (actionLabel === "Huỷ") {
+          setCancelledDraftIds((prev) => new Set(prev).add(closeDraftId));
+        }
         // Transfer was executed (or cancelled) — re-rank the suggestion
         // strip so the freshly-paid contact moves up or out.
         if (resp.intent === "transfer") {
@@ -301,6 +464,14 @@ export default function App() {
       failOmni(pendingId, e);
     } finally {
       setBusy(false);
+      if (closeDraftId) {
+        setInFlightDraftIds((prev) => {
+          if (!prev.has(closeDraftId)) return prev;
+          const next = new Set(prev);
+          next.delete(closeDraftId);
+          return next;
+        });
+      }
     }
   };
 
@@ -352,6 +523,7 @@ export default function App() {
     setPendingAuth({ draftId, draft, sourceAccountId });
     setAuthStage(needsOtp ? "otp" : "biometric");
     setAuthOtp("");
+    setAuthOtpError("");
   };
 
   const cleanAuthOtp = authOtp.replace(/\D/g, "").slice(0, 6);
@@ -359,6 +531,11 @@ export default function App() {
   // OTP stage "Tiếp tục": advance to the face scan if required, else submit.
   const submitOtp = () => {
     if (!pendingAuth) return;
+    if (cleanAuthOtp !== "123456") {
+      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      return;
+    }
+    setAuthOtpError("");
     if (pendingAuth.draft.auth_required?.includes("biometric")) {
       setAuthStage("biometric");
       return;
@@ -373,6 +550,11 @@ export default function App() {
   // Face scan verified → submit OTP + scan together.
   const finishBiometric = (scan: BiometricScanResult) => {
     if (!pendingAuth) return;
+    if (cleanAuthOtp !== "123456") {
+      setAuthStage("otp");
+      setAuthOtpError("OTP chưa đúng. Nhập mã demo 123456 để tiếp tục.");
+      return;
+    }
     const { draftId, sourceAccountId } = pendingAuth;
     const otp = cleanAuthOtp;
     setPendingAuth(null);
@@ -498,6 +680,12 @@ export default function App() {
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
+    // If the user wipes the field while voice was filling it, treat
+    // that as "I'm done dictating" — release the mic so the next
+    // onresult doesn't repopulate the input behind their back.
+    if (value === "" && voiceRef.current?.isListening()) {
+      voiceRef.current.stop();
+    }
     setInput(value);
     setHistoryIdx(null);
     const caret = e.target.selectionStart ?? value.length;
@@ -606,7 +794,7 @@ export default function App() {
     }
     if (!balancePeek) {
       try {
-        const b = await api.chat("số dư");
+        const { response: b } = await api.chat("số dư", sessionIdRef.current);
         if (b.balance) setBalancePeek(b.balance);
       } catch {
         /* ignore */
@@ -661,13 +849,32 @@ export default function App() {
   );
 
   return (
-    <div className="page">
+    <div className={`page${showSidebar ? "" : " page--phone-only"}`}>
+      <button
+        type="button"
+        className="sidebar-toggle"
+        onClick={() => setShowSidebar((v) => !v)}
+        aria-pressed={showSidebar}
+        title={showSidebar ? "Ẩn thông tin demo" : "Hiện thông tin demo"}
+      >
+        {showSidebar ? "←" : "i"}
+      </button>
       <TelemetryOverlay />
       <MetricsCard />
       <AbTestCard />
       <div className="phone">
         <TutorialOverlay userMessageCount={messages.filter((m) => m.role === "user").length} draftVisible={actionableDraftIds.size > 0} />
         <ToastStack />
+        <ChatHistory
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          loading={sessionsLoading}
+          onSelect={loadSession}
+          onNew={startNewChat}
+          onDelete={removeSession}
+        />
         <DemoRecorder />
         {/*
           Visually-hidden live region. Announces transient AT-only
@@ -679,6 +886,20 @@ export default function App() {
         </div>
         <div className="phone__statusbar" aria-hidden="true">9:41</div>
         <header className="phone__header">
+          <button
+            type="button"
+            className="phone__history-btn"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Mở lịch sử trò chuyện"
+            aria-haspopup="dialog"
+            title="Lịch sử trò chuyện"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <path d="M3 4v4h4" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+          </button>
           <OmniAvatar size={40} />
           <div className="phone__title">
             <div className="phone__brand">OMNI</div>
@@ -687,27 +908,6 @@ export default function App() {
             </div>
           </div>
           <PrivacyBadge />
-          <button
-            type="button"
-            className="phone__receive-btn"
-            onClick={() => setReceiveOpen(true)}
-            aria-label="Mở mã QR nhận tiền"
-            title="Nhận tiền"
-          >
-            Nhận tiền
-          </button>
-          {ttsSupported && (
-            <button
-              type="button"
-              className={`phone__tts-btn ${ttsEnabled ? "phone__tts-btn--on" : ""}`}
-              onClick={() => setTtsEnabled((v) => !v)}
-              aria-label={ttsEnabled ? "Tắt giọng đọc" : "Bật giọng đọc"}
-              aria-pressed={ttsEnabled}
-              title={ttsEnabled ? "Đang đọc to (vi-VN)" : "Đọc to câu trả lời"}
-            >
-              <span aria-hidden="true">{ttsEnabled ? "🔊" : "🔇"}</span>
-            </button>
-          )}
           <ExportMenu />
           <div className="user-pill" aria-label="Người dùng An">AN</div>
         </header>
@@ -816,6 +1016,8 @@ export default function App() {
               }}
               busy={busy}
               actionableDraftIds={actionableDraftIds}
+              cancelledDraftIds={cancelledDraftIds}
+              inFlightDraftIds={inFlightDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
               ttsEnabled={ttsEnabled}
             />
@@ -896,6 +1098,7 @@ export default function App() {
             }}
           >
             <VoiceButton
+              ref={voiceRef}
               onTranscript={(t) => setInput(t)}
               disabled={busy}
             />
@@ -1001,20 +1204,27 @@ export default function App() {
                 <input
                   className="otp-input auth-card__otp"
                   value={cleanAuthOtp}
-                  onChange={(e) =>
-                    setAuthOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
+                  onChange={(e) => {
+                    setAuthOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
+                    setAuthOtpError("");
+                  }}
                   inputMode="numeric"
                   maxLength={6}
                   placeholder="••••••"
                   autoFocus
                 />
+                {authOtpError && (
+                  <div className="auth-card__error" role="alert">
+                    {authOtpError}
+                  </div>
+                )}
                 <div className="auth-card__actions">
                   <button
                     className="btn btn--ghost"
                     onClick={() => {
                       setPendingAuth(null);
                       setAuthOtp("");
+                      setAuthOtpError("");
                     }}
                     disabled={busy}
                   >
@@ -1035,7 +1245,23 @@ export default function App() {
               <BiometricFaceScan
                 open
                 challengeId={`${pendingAuth.draftId}:${cleanAuthOtp || "no-otp"}`}
-                onClose={() => setPendingAuth(null)}
+                onClose={() => {
+                  // Closing the bio scan overlay means: cancel the
+                  // transfer outright. Race window: a finishBiometric()
+                  // call may have already fired runConfirm seconds ago.
+                  // Even so, hitting cancel here clears the backend
+                  // draft — if the in-flight confirm hadn't reached
+                  // _execute_and_record yet, it now refuses ("Không
+                  // tìm thấy giao dịch chờ xác nhận"). Belt + braces.
+                  const draftId = pendingAuth?.draftId;
+                  setPendingAuth(null);
+                  setAuthOtp("");
+                  setAuthOtpError("");
+                  setAuthStage("otp");
+                  if (draftId) {
+                    onCancel(draftId);
+                  }
+                }}
                 onVerified={(scan) => finishBiometric(scan)}
               />
             )}
@@ -1072,6 +1298,7 @@ export default function App() {
         )}
       </div>
 
+      {showSidebar && (
       <aside className="sidebar" aria-label="Bảng giới thiệu và kịch bản demo">
         <h1 className="sidebar__brand">
           Omni <span>AI Assistant</span>
@@ -1102,6 +1329,7 @@ export default function App() {
           <HealthStatus />
         </div>
       </aside>
+      )}
     </div>
   );
 }
