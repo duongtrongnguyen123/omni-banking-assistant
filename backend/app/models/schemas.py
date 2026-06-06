@@ -149,6 +149,12 @@ class SafetyFlag(BaseModel):
         # ``draft.category``. Soft warn — never gates the transfer; the
         # user already opted in to the limit when they set the budget.
         "budget_overshoot",
+        # ≥ VELOCITY_N transfers in VELOCITY_WINDOW_SEC seconds — catches
+        # the "fraud burst" pattern (account compromise → drain in 1
+        # minute). Soft warn → OTP step-up, never auto-block, because
+        # legitimate bursts happen (paying multiple people right after
+        # payday) and a hard block enrages real users.
+        "transfer_velocity_high",
         "ok",
     ]
     severity: Literal["info", "warn", "block"]

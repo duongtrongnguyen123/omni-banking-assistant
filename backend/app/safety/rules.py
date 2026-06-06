@@ -34,6 +34,14 @@ NEW_RECIPIENT_LARGE_THRESHOLD = 10_000_000  # 10M VND
 _PER_CONTACT_MIN_SAMPLES = 3
 _MODIFIED_Z_THRESHOLD = 3.5
 
+# Velocity check — "≥N transfers in W seconds" is the classic fraud-burst
+# signature for compromised accounts (attacker drains in 1-2 minutes).
+# Soft warn, never auto-block, because legitimate bursts exist (sending
+# 4-5 transfers right after payday). 3 in 60s is conservative enough
+# that demo runs won't false-positive.
+_VELOCITY_N = 3
+_VELOCITY_WINDOW_SEC = 60
+
 
 def _per_contact_baseline(
     transactions: list[Transaction], contact_id: str
@@ -269,6 +277,51 @@ def evaluate(
         except Exception:  # pragma: no cover — defensive
             pass
 
+    # Velocity check — count completed transfers in the last
+    # _VELOCITY_WINDOW_SEC seconds. Catches the classic
+    # account-compromise pattern (attacker drains in 1-2 minutes) and
+    # the "demo double-confirm" footgun. Soft warn (OTP step-up),
+    # never auto-block.
+    if user_id and amount is not None:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+        cutoff = _dt.now(_tz.utc) - _td(seconds=_VELOCITY_WINDOW_SEC)
+        recent_count = sum(
+            1
+            for t in transactions
+            if t.status == "completed" and t.created_at >= cutoff
+        )
+        if recent_count >= _VELOCITY_N:
+            flags.append(
+                SafetyFlag(
+                    code="transfer_velocity_high",
+                    severity="warn",
+                    message=(
+                        f"Bạn vừa chuyển {recent_count} lần trong "
+                        f"{_VELOCITY_WINDOW_SEC} giây. Mình tạm dừng "
+                        "để xác minh OTP nhé."
+                    ),
+                    details={
+                        "kind": "velocity",
+                        "recent_count": recent_count,
+                        "window_sec": _VELOCITY_WINDOW_SEC,
+                        "threshold": _VELOCITY_N,
+                    },
+                )
+            )
+
+    # Persistent audit trail — every non-empty flag set lands in
+    # ``backend/logs/audit-YYYY-MM-DD.log`` (JSONL) so an auditor / SBV
+    # compliance team can reconstruct decisions post-hoc. Fail-open: a
+    # disk error never blocks the live transfer path.
+    if user_id and flags:
+        try:
+            from ..services.audit_log import record_safety_decision
+
+            record_safety_decision(user_id=user_id, draft_id=None, flags=flags)
+        except Exception:  # pragma: no cover
+            pass
+
     # Push toast for anomaly warnings so the user sees the heads-up
     # even if the chat scroll has moved past the safety message. Only
     # fires when we know which user this is (the orchestrator passes
@@ -301,6 +354,7 @@ def requires_step_up(flags: list[SafetyFlag]) -> bool:
             "new_recipient_large_amount",
             "amount_above_average",
             "fraud_risk_high",
+            "transfer_velocity_high",
         )
         and f.severity == "warn"
         for f in flags
