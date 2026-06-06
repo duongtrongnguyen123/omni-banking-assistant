@@ -184,9 +184,13 @@ _CANCEL_RE = re.compile(
     r"huỷ|huy|cancel|hủy|no|stop|bỏ|bo|đừng|dung|khoan|"
     # "không" — cancel UNLESS followed by "thay đổi" / "có gì" / "vấn đề" /
     # "ổn" / "sao" / "phải" / "ai" / "việc gì" → those are reassurances,
-    # not cancellations.
-    r"không(?!\s+(?:thay\s+đổi|thay\s+doi|có\s+gì|co\s+gi|vấn\s+đề|van\s+de|ổn|on|sao|phải|phai|ai|việc\s+gì|viec\s+gi))|"
-    r"khong(?!\s+(?:thay\s+doi|co\s+gi|van\s+de|on|sao|phai|ai|viec\s+gi))|"
+    # not cancellations. ALSO: "không, X" where X is anything that
+    # ISN'T itself a cancel word ("không, bố" / "không, 5tr cho mẹ") is
+    # a CORRECTION not a cancel — negative lookahead blocks the cancel
+    # match so the pivot routes via slot-fill. But "không, huỷ đi" /
+    # "không, bỏ" still cancel because the follow-up IS a cancel word.
+    r"không(?!\s*,\s*(?!huỷ|huy|hủy|cancel|bỏ|bo|đừng|dung|thôi|thoi|stop)\S)(?!\s+(?:thay\s+đổi|thay\s+doi|có\s+gì|co\s+gi|vấn\s+đề|van\s+de|ổn|on|sao|phải|phai|ai|việc\s+gì|viec\s+gi))|"
+    r"khong(?!\s*,\s*(?!huy|huỷ|hủy|cancel|bỏ|bo|đừng|dung|thôi|thoi|stop)\S)(?!\s+(?:thay\s+doi|co\s+gi|van\s+de|on|sao|phai|ai|viec\s+gi))|"
     # "thôi" — cancel UNLESS followed by "cứ thế" / "vậy đi" / "ok" /
     # "thế" → those mean "just go with it", not cancel.
     r"thôi(?!\s+(?:cứ|cu|vậy|vay|thế|the|ok|được|duoc))|"
@@ -537,6 +541,31 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
     except Exception:
         pass
 
+    # CRITICAL OTP-LOCK guard. When the draft is awaiting OTP, the only
+    # legitimate text turns are: numeric OTP code, cancel ("huỷ"), or
+    # confirm-repeat ("xác nhận lại"). A round-9 stress reproduced an
+    # exploit: after "chuyển mẹ 50tr → ok" (awaiting_otp=True), typing
+    # "bố" silently swapped the recipient to Lê Văn Hùng while keeping
+    # awaiting_otp=True and the same draft_id — user's OTP went toward
+    # a transfer to bố instead of mẹ. Closes by refusing ANY modify-
+    # path mutation on an awaiting-OTP draft; the user is told to
+    # cancel and restart if they want a different recipient/amount.
+    if (
+        session.current_draft is not None
+        and session.current_draft.awaiting_otp
+        and _OTP_RE.match(text) is None
+        and not _is_confirm(text)
+        and not _is_cancel(text)
+    ):
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                "Giao dịch đang chờ xác minh OTP. Bạn nhập mã OTP để hoàn tất, "
+                "hoặc gõ \"huỷ\" để bắt đầu lại nếu muốn đổi người nhận / số tiền."
+            ),
+            draft=session.current_draft,
+        )
+
     # Fresh-transfer guard: if the user types a NEW verb-led command
     # ("chuyển tiền cho t", "gửi 500k cho ai đó"), don't carry over the
     # previous draft's amount / recipient. Pre-fix, judges who finished
@@ -597,12 +626,43 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         # contacts. _strip_relational handles family prefixes
         # (anh/chị/em/…); these are pure money-flow words.
         import re as _re
+        recipient_surface = text
+        # Strip leading interjections / fillers / hesitation markers in
+        # a loop until no more change — user pivots stack: "à mà bố" /
+        # "ờ nhầm bố" / "à không bố" all share this shape. Without the
+        # loop a single sub stops after the first match and the
+        # resolver sees "mà bố" → 0 → recipient erased on PR #24 swap.
+        # "không" / "khong" is a leading discourse particle here only —
+        # the bare "không" cancel case was already caught by _is_cancel
+        # in the continuation path above; if we reach the slot-fill
+        # branch with "không, X" / "à không X", "không" is a negation
+        # prefix to the correction ("no, [I meant] X"), not a cancel.
+        _LEADING_FILLER_RE = _re.compile(
+            r"^\s*(?:à|ờ|ơ|nhầm|nham|mà|ma|ờm|umm?|không|khong)\b[\s,.!]*",
+            _re.IGNORECASE,
+        )
+        for _ in range(5):  # bounded to avoid pathological inputs
+            new = _LEADING_FILLER_RE.sub("", recipient_surface).lstrip()
+            if new == recipient_surface:
+                break
+            recipient_surface = new
+        # Strip leading money-flow prepositions / verbs.
         recipient_surface = _re.sub(
-            r"^\s*(?:cho|tới|toi|đến|den|gửi|gui|sang|qua)\s+",
+            r"^\s*(?:cho|tới|toi|đến|den|gửi|gui|sang|qua|đổi\s+sang|doi\s+sang)\s+",
             "",
-            text,
+            recipient_surface,
             flags=_re.IGNORECASE,
-        ).strip()
+        )
+        # Strip trailing softener / commit particles. User says
+        # "bố thôi" / "bố nhé" / "bố ạ" / "bố chứ" — the trailing token
+        # is not part of the name. Same for "bố đi" / "bố nha".
+        recipient_surface = _re.sub(
+            r"\s+(?:thôi|thoi|nhé|nhe|nha|nhi|ạ|a|chứ|chu|đi|di|đó|do|ơi|oi)\s*[!.?]*\s*$",
+            "",
+            recipient_surface,
+            flags=_re.IGNORECASE,
+        )
+        recipient_surface = recipient_surface.strip(" ,.;-?!\"'“”‘’:")
         # If stripping took everything (user typed just "cho"), fall back
         # to the original — we'd rather show a clarification than silently
         # turn it into a name lookup of empty string.
