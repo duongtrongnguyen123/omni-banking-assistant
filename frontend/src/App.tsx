@@ -72,6 +72,9 @@ export default function App() {
   // Counts confirmed transfers this session — gates the "Lặp lại lần
   // trước" CTA so it only appears once there's something to repeat.
   const [confirmedTransfers, setConfirmedTransfers] = useState(0);
+  // Last confirmed transfer's amount — used by the "Cùng số tiền, người
+  // khác" CTA to prefill the chat input with "chuyển <amount> cho ".
+  const [lastConfirmedAmount, setLastConfirmedAmount] = useState<number | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readStoredTtsPref());
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -282,12 +285,22 @@ export default function App() {
     }
   };
 
-  const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) =>
+  const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) => {
+    // Capture the amount before the draft disappears so the "Cùng số
+    // tiền, người khác" CTA can prefill the chat input after the
+    // transfer lands.
+    for (const m of messages) {
+      if (m.response?.draft?.id === draftId && m.response.draft.amount != null) {
+        setLastConfirmedAmount(m.response.draft.amount);
+        break;
+      }
+    }
     sendDraftAction(
       () => api.confirm(draftId, otp, sourceAccountId),
       "Xác minh OTP",
       draftId,
     );
+  };
 
   const onCancel = (draftId: string) =>
     sendDraftAction(() => api.cancel(draftId), "Huỷ", draftId);
@@ -676,6 +689,14 @@ export default function App() {
           visible={confirmedTransfers > 0}
           busy={busy}
           onClick={() => send("Lặp lại giao dịch vừa rồi")}
+          onSameAmountDifferentRecipient={
+            lastConfirmedAmount != null
+              ? () => {
+                  setInput(`chuyển ${lastConfirmedAmount} cho `);
+                  inputRef.current?.focus();
+                }
+              : undefined
+          }
         />
 
         <QuickAmountChips

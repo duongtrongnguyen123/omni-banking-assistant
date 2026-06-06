@@ -963,10 +963,17 @@ textarea:focus-visible,
 /* -------- Floating "Lặp lại lần trước" CTA -------- */
 
 .repeat-cta {
-  display: flex; justify-content: center;
+  display: flex; justify-content: center; gap: 6px; flex-wrap: wrap;
   padding: 6px 14px 0;
   background: linear-gradient(180deg, transparent 0%, #fff 60%);
   pointer-events: none;
+}
+.repeat-cta__btn--ghost {
+  border-color: var(--line); color: var(--muted);
+  box-shadow: none; font-weight: 600;
+}
+.repeat-cta__btn--ghost:hover:not(:disabled) {
+  border-color: var(--orange); background: white; color: var(--orange);
 }
 .repeat-cta__btn {
   pointer-events: auto;
