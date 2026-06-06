@@ -115,6 +115,11 @@ export const Message = ({
             draft={r.draft}
             onConfirm={(otp, sourceAccountId) => onConfirm(r.draft!.id, otp, sourceAccountId)}
             onCancel={() => onCancel(r.draft!.id)}
+            onEdit={
+              onPrefill
+                ? () => onPrefill("đổi sang ")
+                : undefined
+            }
             disabled={busy}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
           />
