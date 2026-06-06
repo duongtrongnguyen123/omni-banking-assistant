@@ -260,12 +260,17 @@ _CATEGORY_HISTORY_RE = re.compile(
     r"|tiền\s+học|tien\s+hoc|học\s+phí|hoc\s+phi"
     r")\b"
     # Anchored to either a leading "tiêu/chi" verb OR a trailing
-    # temporal / aggregation cue. This keeps "tiền nhà tôi vừa trả"
-    # (a transfer reference) out of history while still catching the
-    # retrospective forms judges actually type.
+    # temporal / aggregation / amount-range cue. This keeps "tiền nhà
+    # tôi vừa trả" (a transfer reference) out of history while still
+    # catching the retrospective forms judges actually type.
     r"(?:"
     r"\s+(?:tháng|thang|tuần|tuan|năm|nam|hôm|hom|ngày|ngay|bao\s+nhi|gần\s+đây|gan\s+day)"
     r"|.*\b(?:bao\s+nhi|tổng|tong|trung\s+bình|trung\s+binh)\b"
+    # Amount-range filters — "ăn uống dưới 200k" / "shopping trên 1tr" /
+    # "cà phê từ 50k đến 200k". These are history filter queries, not
+    # transfer commands. Pre-fix the Tier-3 bare-digit fallback ate
+    # them as transfer + missing_recipient.
+    r"|\s+(?:dưới|duoi|trên|tren|nhỏ\s+hơn|nho\s+hon|lớn\s+hơn|lon\s+hon|từ|tu)\b"
     r")",
     re.IGNORECASE,
 )
@@ -337,6 +342,22 @@ _ATM_FINDER_RE = re.compile(
 )
 
 
+# When a Tier-1 smalltalk keyword fires inside a longer message that ALSO
+# carries an imperative ("Chào Omni, chuyển mẹ 2tr nhé" / "Hello chuyển
+# bố 500k"), the greeting must not pre-empt the command — the user thinks
+# they queued a transfer and walks away. This guard detects clear
+# command-verb / data-query cues; when present, the Tier-1 smalltalk
+# match is suppressed and the loop falls through to transfer/history/etc.
+_COMMAND_VERB_RE = re.compile(
+    r"\b(?:chuyen|gui|tra|nap|thanh\s+toan|"
+    r"so\s+du|balance|"
+    r"dat\s+lich|len\s+lich|lich\s+su|giao\s+dich|"
+    r"atm|chi\s+nhanh|"
+    r"ngan\s+sach|tiet\s+kiem)\b",
+    re.IGNORECASE,
+)
+
+
 def classify(text: str) -> tuple[Intent, float]:
     folded = _ascii_fold(text)
     folded = re.sub(r"\s+", " ", folded)
@@ -365,9 +386,17 @@ def classify(text: str) -> tuple[Intent, float]:
         return "history", 0.75
 
     # Tier 1 — first match wins, no scoring needed.
+    # Exception: when smalltalk matches inside a longer message that
+    # also carries a command verb ("Chào Omni, chuyển mẹ 2tr"), defer
+    # to the imperative — see _COMMAND_VERB_RE above. Breaking the
+    # inner kw loop lets the outer intent loop move on to the next
+    # intent (transfer below smalltalk in _HIGH).
+    has_command_verb = bool(_COMMAND_VERB_RE.search(folded))
     for intent, kws in _HIGH:
         for kw in kws:
             if kw in folded:
+                if intent == "smalltalk" and has_command_verb:
+                    break
                 return intent, 0.85
 
     # Tier 2 — first match wins again, but scoring kept for telemetry.

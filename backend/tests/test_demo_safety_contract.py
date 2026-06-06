@@ -2121,6 +2121,77 @@ def test_additive_modifier_preserves_recipient_on_modify_draft() -> None:
     assert edit.draft.recipient.display_name == first_name
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # CRITICAL safety: greeting prefix must not eat the imperative.
+        # Pre-fix the message was classified as smalltalk and the
+        # transfer instruction was silently dropped — user thought
+        # they queued a transfer and walked away.
+        ("Chào Omni, chuyển mẹ 2tr nhé", "transfer"),
+        ("cảm ơn Omni, chuyển bố 500k", "transfer"),
+        ("hello chuyển 100k cho mẹ", "transfer"),
+        ("chào Omni, số dư", "balance"),
+        ("cảm ơn Omni, đặt lịch chuyển mẹ 2tr mùng 1", "schedule"),
+        # Bare greetings must still route to smalltalk.
+        ("chào omni", "smalltalk"),
+        ("xin chào", "smalltalk"),
+        ("cảm ơn", "smalltalk"),
+        ("tạm biệt", "smalltalk"),
+    ],
+)
+def test_greeting_prefix_does_not_swallow_command(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, (text, intent)
+
+
+@pytest.mark.parametrize(
+    "text,expected_recipient",
+    [
+        # Trailing politeness particles must not glue to the recipient
+        # surface form. Pre-fix the prep regex captured "mẹ giúp tôi"
+        # and the resolver returned 0.
+        ("chuyển 5tr cho mẹ giúp tôi", "mẹ"),
+        ("chuyển 5tr cho mẹ nhé", "mẹ"),
+        ("chuyển 5tr cho mẹ đi", "mẹ"),
+        ("chuyển 5tr cho mẹ ạ", "mẹ"),
+        ("chuyển 5tr cho mẹ nha", "mẹ"),
+        # Leading "do me a favour" auxiliary between verb and recipient.
+        ("chuyển giúp mẹ 200k", "mẹ"),
+        ("gửi giùm bố 500k", "bố"),
+        ("chuyển hộ mẹ 1tr", "mẹ"),
+        # Leading filler interjection.
+        ("ê chuyển 5tr cho mẹ giúp tôi", "mẹ"),
+    ],
+)
+def test_filler_and_particle_strip_keeps_recipient(
+    text: str, expected_recipient: str
+) -> None:
+    from app.nlp.entities import extract
+
+    e = extract(text)
+    assert e.recipient_text == expected_recipient, (text, e.recipient_text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "khoản ăn uống dưới 200k",
+        "ăn uống dưới 200k tháng này",
+        "shopping trên 1tr",
+        "cà phê từ 50k đến 200k",
+    ],
+)
+def test_category_amount_range_routes_to_history(text: str) -> None:
+    """Pre-fix ``khoản ăn uống dưới 200k`` fell to the Tier-3 bare-digit
+    transfer fallback and opened a 200k-to-unknown draft. Category +
+    range cue is a history filter, not a transfer command."""
+    intent, _ = classify(text)
+    assert intent == "history", (text, intent)
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a

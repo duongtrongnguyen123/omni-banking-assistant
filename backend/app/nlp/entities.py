@@ -206,6 +206,21 @@ _STOP_LOOKAHEAD = (
     r"|ít\s+tiền|it\s+tien"    # "chuyển ny ít tiền" — qualifier, not part of name
     r"|một\s+ít|mot\s+it|vài\s+|vai\s+"
     r"|chút\s|chut\s"
+    # Trailing politeness / filler particles. "cho mẹ giúp tôi" /
+    # "cho mẹ nhé" / "cho mẹ đi" / "cho mẹ ạ" — pre-fix the prep regex
+    # ate the trailing particles as part of the recipient surface ("mẹ
+    # giúp tôi") and the resolver returned 0. Stop the capture at
+    # these tokens; ``_clean_recipient`` already trims punctuation.
+    r"|giúp\b|giup\b"          # "chuyển cho mẹ giúp tôi" → "mẹ"
+    r"|giùm\b|gium\b"          # "chuyển cho mẹ giùm" → "mẹ"
+    r"|hộ\b|ho\s"              # "chuyển cho mẹ hộ" — bounded so "hồ" doesn't false-trip
+    r"|nhé\b|nhe\b"            # trailing softener
+    r"|nha\b"
+    r"|nhi\b"                  # "cho mẹ nhỉ?"
+    r"|ạ\b"
+    r"|đi\b|di\b"              # "cho mẹ đi" — imperative softener
+    r"|đó\b|do\b"              # "cho mẹ đó"
+    r"|ơi\b|oi\b"              # vocative
     r"|$"
     r"|[,.?!\n]"
 )
@@ -357,10 +372,13 @@ def _clean_recipient(s: str) -> str:
     # Strip leading prepositions/verbs that aren't part of the name. The
     # set covers all Vietnamese money-flow words plus the directional
     # particles "sang"/"qua" that appear in "gửi sang Minh" /
-    # "chuyển qua bạn thân". Without those, the resolver tries to match
-    # "sang Minh" or "qua bạn thân" verbatim and returns 0.
+    # "chuyển qua bạn thân", AND the "do me a favour" auxiliaries
+    # "giúp / giùm / hộ" that appear between verb and recipient in
+    # "chuyển giúp mẹ 200k" / "gửi giùm bố 500k". Without those, the
+    # resolver tries to match "giúp mẹ" verbatim and returns 0.
     s = re.sub(
-        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen|sang|qua)\s+",
+        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen|sang|qua|"
+        r"giúp|giup|giùm|gium|hộ|ho)\s+",
         "",
         s,
         flags=re.IGNORECASE,
