@@ -50,7 +50,16 @@ _NUM = r"(\d+(?:[.,]\d+)?)"
 # end-of-string still match, so "1tr5" and "5tr500" keep working.
 _PRIMARY_RE = re.compile(
     rf"{_NUM}\s*(?P<unit>{_UNIT_ALT})(?![A-Za-zÀ-ỹĂăÂâĐđÊêÔôƠơƯư])\s*"
-    rf"(?:(?P<rest>\d+)\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
+    # CRITICAL guard (round 6 S5): "100k 2 lần cho mẹ" used to swallow
+    # the trailing "2" as a sub-unit concatenation and produce 100.002đ
+    # — money-loss-class wrong-amount. The rest group now refuses to
+    # match when the digits are followed by a non-amount Vietnamese
+    # word (lần / tháng / ngày / giờ / phút / tuần / năm / người), so
+    # "5tr500" and "100k500" still work but "100k 2 lần" stops at the
+    # 100k and the "2 lần" stays out of the amount.
+    rf"(?:(?P<rest>\d+)"
+    r"(?!\s+(?:lần|lan|tháng|thang|ngày|ngay|giờ|gio|phút|phut|giây|giay|tuần|tuan|năm|nam|người|nguoi|lượt|luot))"
+    rf"\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
     re.IGNORECASE,
 )
 

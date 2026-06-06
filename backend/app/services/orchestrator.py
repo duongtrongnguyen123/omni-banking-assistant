@@ -138,10 +138,19 @@ _CONFIRM_RE = re.compile(
     # the slangy ok-variants judges actually type (okela / okie / oce).
     r"^(?:xac nhan|xacnhan|ok|okay|oki|okie|okela|oce|okê|oke|"
     r"đồng ý|dong y|y|yes|confirm|duyệt|duyet|"
-    r"ừ|ừm|ư|um|ờ|ờm|"
+    r"ừ|ừm|ư|um|uh|ờ|ờm|"
     r"dạ|da|vâng|vang|"
-    r"chuẩn|chuan)\b"
+    r"chuẩn|chuan|"
+    # Additional VN confirmations judges actually type:
+    # "tất nhiên" (of course), "chắc chắn" (definitely), bare "có"
+    # (yes). The bare "có" must be word-bounded so it doesn't match
+    # "có gì" / "có thể" (question/modal continuations).
+    r"tất nhiên|tat nhien|chắc chắn|chac chan)\b"
     r"|^xác nhận"
+    # Bare "có" alone — must not be followed by question / modal words
+    # ("có thể", "có gì", "có không", "có nên"). Bare "có" with
+    # optional punctuation is a confirm.
+    r"|^có(?!\s+(?:thể|the|gì|gi|nên|nen|không|khong|ko|sao|chuyện|chuyen|ai|cách|cach))\b"
     # "đúng" / "phải" — "right/correct/yes" confirm, but NOT when
     # followed by an action / question verb that would make the
     # sentence a question. "đúng" / "phải làm gì" must NOT route to
@@ -164,8 +173,25 @@ _CONFIRM_RE = re.compile(
 # the original list. ``khong`` already covered "không, …" via word-boundary;
 # the leading punctuation case ("không, huỷ đi") is matched too because
 # ``\b`` succeeds before the comma.
+#
+# CRITICAL guards (round 6): "không thay đổi gì cả" / "không có gì thay
+# đổi" mean "no change, proceed" — they were silently cancelling valid
+# draft confirms. "thôi cứ thế đi" / "thôi vậy đi" mean "just go with
+# it" — same trap. Negative lookahead blocks these phrases from the
+# cancel routing while keeping bare "không" / "thôi" as cancel.
 _CANCEL_RE = re.compile(
-    r"^(huỷ|huy|cancel|hủy|không|khong|no|stop|bỏ|bo|thôi|thoi|đừng|dung|khoan)\b",
+    r"^(?:"
+    r"huỷ|huy|cancel|hủy|no|stop|bỏ|bo|đừng|dung|khoan|"
+    # "không" — cancel UNLESS followed by "thay đổi" / "có gì" / "vấn đề" /
+    # "ổn" / "sao" / "phải" / "ai" / "việc gì" → those are reassurances,
+    # not cancellations.
+    r"không(?!\s+(?:thay\s+đổi|thay\s+doi|có\s+gì|co\s+gi|vấn\s+đề|van\s+de|ổn|on|sao|phải|phai|ai|việc\s+gì|viec\s+gi))|"
+    r"khong(?!\s+(?:thay\s+doi|co\s+gi|van\s+de|on|sao|phai|ai|viec\s+gi))|"
+    # "thôi" — cancel UNLESS followed by "cứ thế" / "vậy đi" / "ok" /
+    # "thế" → those mean "just go with it", not cancel.
+    r"thôi(?!\s+(?:cứ|cu|vậy|vay|thế|the|ok|được|duoc))|"
+    r"thoi(?!\s+(?:cu|vay|the|ok|duoc))"
+    r")\b",
     re.IGNORECASE,
 )
 _OTP_RE = re.compile(r"^\s*(\d{4,6})\s*$")
