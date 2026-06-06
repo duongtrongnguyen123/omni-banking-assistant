@@ -488,6 +488,11 @@ export const TransactionCard = ({
                   score?: number;
                   threshold?: number;
                   n_train?: number;
+                  category_label?: string;
+                  monthly_limit_vnd?: number;
+                  spent_vnd?: number;
+                  projected_vnd?: number;
+                  overshoot_vnd?: number;
                 }
               | null
               | undefined;
@@ -502,6 +507,14 @@ export const TransactionCard = ({
               d?.kind === "fraud_model" &&
               typeof d.score === "number" &&
               typeof d.threshold === "number";
+            // Budget overshoot detail block — judges who set a budget then
+            // breach it shouldn't have to do mental arithmetic; render the
+            // limit / spent / projected / overshoot triangle.
+            const showBudgetWhy =
+              d?.kind === "budget_overshoot" &&
+              typeof d.monthly_limit_vnd === "number" &&
+              typeof d.spent_vnd === "number" &&
+              typeof d.projected_vnd === "number";
             return (
               <div key={i} className={`tx-flag tx-flag--${f.severity}`}>
                 <div>
@@ -538,6 +551,26 @@ export const TransactionCard = ({
                         <strong>{d!.n_train}</strong> giao dịch của bạn.
                       </div>
                     )}
+                  </div>
+                )}
+                {showBudgetWhy && (
+                  <div className="tx-flag__why">
+                    <div>
+                      Đã chi tháng này:{" "}
+                      <strong>{formatVND(d!.spent_vnd!)}</strong> / Hạn mức{" "}
+                      <strong>{formatVND(d!.monthly_limit_vnd!)}</strong>
+                      {d!.category_label ? ` · ${d!.category_label}` : ""}
+                    </div>
+                    <div>
+                      Sau giao dịch:{" "}
+                      <strong>{formatVND(d!.projected_vnd!)}</strong>
+                      {typeof d!.overshoot_vnd === "number" && (
+                        <>
+                          {" · "}Vượt{" "}
+                          <strong>{formatVND(d!.overshoot_vnd!)}</strong>
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
