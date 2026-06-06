@@ -4,7 +4,7 @@ import threading
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..context.session import session_for
 from ..db import chat_log
@@ -24,7 +24,20 @@ from ..services.orchestrator import (
     start_split_bill,
 )
 from ._ratelimit import enforce_user_rate_limit
+from ._sanitize import sanitize_text
 from .deps import current_user
+
+# Per-field length caps. Tuned per surface:
+#   * chat message — 4000 chars, comfortably above any genuine VN prompt.
+#   * session id / contact id / source id — 256 chars (UUIDs are 36).
+#   * rename title — 120 chars (matches the Field max_length below).
+#   * otp code — 16 chars, ample for digit + separator pastes.
+#   * description — 280 chars, microblog-shaped.
+_MAX_MESSAGE_LEN = 4000
+_MAX_ID_LEN = 256
+_MAX_TITLE_LEN = 120
+_MAX_OTP_LEN = 16
+_MAX_DESC_LEN = 280
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -57,14 +70,39 @@ class ChatRequest(BaseModel):
     # `X-Chat-Session-Id` response header.
     session_id: str | None = None
 
+    @field_validator("message")
+    @classmethod
+    def _clean_message(cls, v: str) -> str:
+        return sanitize_text(v, max_len=_MAX_MESSAGE_LEN)
+
+    @field_validator("session_id")
+    @classmethod
+    def _clean_session_id(cls, v: str | None) -> str | None:
+        return None if v is None else sanitize_text(v, max_len=_MAX_ID_LEN)
+
 
 class RenameSessionRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def _clean_title(cls, v: str) -> str:
+        return sanitize_text(v, max_len=_MAX_TITLE_LEN)
 
 
 class SelectCandidateRequest(BaseModel):
     contact_id: str
     session_id: str | None = None
+
+    @field_validator("contact_id")
+    @classmethod
+    def _clean_contact_id(cls, v: str) -> str:
+        return sanitize_text(v, max_len=_MAX_ID_LEN)
+
+    @field_validator("session_id")
+    @classmethod
+    def _clean_session_id(cls, v: str | None) -> str | None:
+        return None if v is None else sanitize_text(v, max_len=_MAX_ID_LEN)
 
 
 class BiometricPose(BaseModel):
@@ -117,9 +155,29 @@ class ConfirmTransactionRequest(BaseModel):
     biometric_scan: BiometricScanResult | None = None
     session_id: str | None = None
 
+    @field_validator("otp")
+    @classmethod
+    def _clean_otp(cls, v: str | None) -> str | None:
+        return None if v is None else sanitize_text(v, max_len=_MAX_OTP_LEN)
+
+    @field_validator("source_account_id")
+    @classmethod
+    def _clean_source_account_id(cls, v: str | None) -> str | None:
+        return None if v is None else sanitize_text(v, max_len=_MAX_ID_LEN)
+
+    @field_validator("session_id")
+    @classmethod
+    def _clean_session_id(cls, v: str | None) -> str | None:
+        return None if v is None else sanitize_text(v, max_len=_MAX_ID_LEN)
+
 
 class ActionSessionRequest(BaseModel):
     session_id: str | None = None
+
+    @field_validator("session_id")
+    @classmethod
+    def _clean_session_id(cls, v: str | None) -> str | None:
+        return None if v is None else sanitize_text(v, max_len=_MAX_ID_LEN)
 
 
 @router.post("/chat", response_model=OmniResponse)
@@ -560,6 +618,23 @@ class SplitBillRequest(BaseModel):
     total_amount: int = Field(gt=0)
     description: str = ""
     recipient_ids: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator("description")
+    @classmethod
+    def _clean_description(cls, v: str) -> str:
+        # Description is optional and may be empty — sanitize only when
+        # non-empty so an empty string doesn't trip the "no content" branch.
+        if not v:
+            return ""
+        try:
+            return sanitize_text(v, max_len=_MAX_DESC_LEN)
+        except ValueError:
+            return ""
+
+    @field_validator("recipient_ids")
+    @classmethod
+    def _clean_recipient_ids(cls, v: list[str]) -> list[str]:
+        return [sanitize_text(x, max_len=_MAX_ID_LEN) for x in v]
 
 
 @router.post("/transactions/split", response_model=OmniResponse)
