@@ -253,6 +253,14 @@ _BARE_RECIPIENT_DENYLIST = {
     "tien an", "ngan sach", "han muc", "muc tieu", "tiet kiem",
     "thue", "phi", "no", "cuoc",
     "chuyen", "gui", "tra", "nap", "send", "transfer",
+    # Modification verbs — "đổi thành 5tr" / "đổi sang 3tr" /
+    # "sửa thành 1tr" / "thành 5tr" are amount edits on an existing
+    # draft. Pre-fix the rule extractor matched "đổi thành" as
+    # recipient_text, which then forced ``_modify_transfer_draft`` into
+    # the "user named a new recipient" branch and CLEARED the existing
+    # recipient — the user wanted only the amount changed.
+    "doi", "doi thanh", "doi sang", "sua", "sua thanh", "thanh",
+    "sang", "ve",
 }
 
 # Backward word-order: "<verb> <amount> <recipient>" — judges write this

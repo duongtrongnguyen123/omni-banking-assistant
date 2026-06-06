@@ -1673,14 +1673,37 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             if chosen is None and not candidates:
                 chosen = store.get_contact(referenced_tx.contact_id)
 
+    # Sanity check on user-supplied amount. Zero and negatives are
+    # nonsense in a transfer context. Critically, DON'T let the
+    # predictor below "fix" them — silently swapping a user's "0đ" or
+    # "-5tr" for a median-from-history while the user typed an
+    # explicit (if absurd) number is the worst UX the stress test
+    # found (predictor wrote 750k over user-typed 100M). Clear the
+    # amount AND flag it as user-invalid so the predictor branch skips
+    # and the safety engine raises ``missing_amount`` for clarification.
+    user_invalid_amount = False
+    if amount is not None and amount <= 0:
+        amount = None
+        user_invalid_amount = True
+    # The amount-parser regexes don't include a sign, so "-5tr" parses
+    # to 5_000_000 with no marker. Detect a leading minus in the raw
+    # message and reject that too.
+    if amount is not None and re.search(r"-\s*\d", nlu.raw_text):
+        amount = None
+        user_invalid_amount = True
+
     # Smart amount prediction: when the user named a recipient but no
     # amount, look at their history with this contact and pre-fill the
     # draft with the most likely figure. This must run *before* `evaluate`
     # so the `missing_amount` flag isn't raised on a draft that does have
     # an amount (a predicted one). The user can still override the value
     # in the confirm card or by saying "đổi sang 3 triệu thôi".
+    #
+    # The ``user_invalid_amount`` guard above is critical: a user who
+    # typed "chuyển 0đ" doesn't want their median 750k auto-filled;
+    # they want to be told the amount is nonsense.
     prediction: Optional[dict] = None
-    if amount is None and chosen is not None:
+    if amount is None and not user_invalid_amount and chosen is not None:
         prediction = predict_amount(user_id, chosen.id)
         if prediction is not None:
             amount = prediction["amount"]
