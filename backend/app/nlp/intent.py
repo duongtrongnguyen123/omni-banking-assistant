@@ -90,6 +90,19 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "luc nay toi bao", "lúc nãy tôi bảo",
         "luc nay bao nhieu", "lúc nãy bao nhiêu",
         "vua roi toi noi", "vừa rồi tôi nói",
+        # "vừa rồi gửi cho ai" / "vừa rồi chuyển bao nhiêu" —
+        # post-confirmation recap probes. Without these, the Tier-2
+        # transfer keyword ("gui" / "chuyen") would catch them and
+        # the orchestrator would open a NEW transfer draft (predictor
+        # filling the amount from history). One mistap → wrong
+        # transfer. Pin to recap so the user gets a recap of the
+        # just-completed action instead. See fix/coreference PR.
+        "vua roi gui", "vừa rồi gửi",
+        "vua roi chuyen", "vừa rồi chuyển",
+        "vua nay gui", "vừa nãy gửi",
+        "vua nay chuyen", "vừa nãy chuyển",
+        "luc nay gui", "lúc nãy gửi",
+        "luc nay chuyen", "lúc nãy chuyển",
         "dang chuyen bao nhieu", "đang chuyển bao nhiêu",
         "dang chuyen cho ai", "đang chuyển cho ai",
         "minh dang chuyen", "mình đang chuyển",

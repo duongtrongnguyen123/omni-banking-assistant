@@ -538,8 +538,36 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
             session.append("omni", cont.text)
             return cont
 
+    # Snapshot the active draft (if any) so the NLU layer can treat
+    # pronouns / corrections / bare references in this turn as
+    # co-references against the in-flight transfer rather than silently
+    # re-resolving to the wrong contact or dropping recipient/amount.
+    # See `docs/llm-vs-rule.md` and the fix/coreference PR for the
+    # bug class this guards against (E2/B1/B2/F1/F2/F3/H1 + A2).
+    current_draft_snapshot: Optional[dict] = None
+    if session.current_draft is not None:
+        cd = session.current_draft
+        snap: dict = {}
+        if cd.recipient is not None:
+            snap["recipient_text"] = cd.recipient.display_name
+        elif cd.source_text:
+            # Fall back to the originally typed surface form if the
+            # resolver hasn't pinned a contact yet — still useful as
+            # the LLM antecedent.
+            snap["recipient_text"] = cd.source_text
+        if cd.amount is not None:
+            snap["amount"] = int(cd.amount)
+        if cd.description:
+            snap["description"] = cd.description
+        # Only attach a snapshot when at least one slot is filled —
+        # an empty draft adds no signal and just bloats the prompt.
+        if snap:
+            current_draft_snapshot = snap
+
     nlu_t0 = time.perf_counter()
-    nlu = understand(text, history=history_msgs)
+    nlu = understand(
+        text, history=history_msgs, current_draft=current_draft_snapshot
+    )
     nlu_ms = int((time.perf_counter() - nlu_t0) * 1000)
     bucket = get_telemetry()
     if bucket is not None:
@@ -825,6 +853,66 @@ def _dispatch_intent(
             "\"chuyển cho mẹ 2 triệu\" hoặc \"tháng này tiêu bao nhiêu?\""
         ),
     )
+
+
+# Co-reference cues that bind to the previous draft's AMOUNT slot.
+# When any of these appear in the user message and the message does NOT
+# itself carry a parsed amount, the orchestrator inherits the prior
+# draft's amount and suppresses the predictor. Diacritic-tolerant —
+# matched against the raw text (case-insensitive) AND against an
+# ASCII-folded copy so "cùng" and "cung" both fire.
+_AMOUNT_COREF_RE = re.compile(
+    r"\b(?:"
+    r"cùng\s+(?:số\s+tiền|amount|so\s+tien)"
+    r"|cung\s+(?:so\s+tien|amount)"
+    r"|vẫn\s+(?:thế|vậy|nhu\s+vay|như\s+vậy)"
+    r"|van\s+(?:the|vay|nhu\s+vay)"
+    r"|y\s+chang|y\s+nhu\s+cu|y\s+như\s+cũ"
+    r"|như\s+cũ|nhu\s+cu"
+    r"|giống\s+(?:lần\s+trước|hôm\s+trước|lúc\s+nãy)"
+    r"|giong\s+(?:lan\s+truoc|hom\s+truoc|luc\s+nay)"
+    r"|tương\s+tự|tuong\s+tu"
+    r"|same\s+amount"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_amount_coref_cue(text: str) -> bool:
+    """Does the message say "same amount as last time"?
+
+    Used by ``_handle_transfer`` to (a) inherit the previous draft's
+    amount instead of letting the predictor fill bố's median over the
+    user-implied 2tr, and (b) suppress the predictor entirely so a
+    follow-up "cùng số tiền cho bố" never silently swaps in an
+    unintended number.
+    """
+    if not text:
+        return False
+    return bool(_AMOUNT_COREF_RE.search(text))
+
+
+def _last_known_draft_amount(user_id: str) -> Optional[int]:
+    """Return the most recent draft amount for this user, if any.
+
+    Reads the live ``session.current_draft.amount`` first so an active
+    draft wins (most common case for "đổi sang bố" / "thêm cho bố").
+    Falls back to the most recent confirmed transaction's amount so
+    "cùng số tiền cho bố" still works one turn after a confirmation
+    has cleared the draft.
+    """
+    s = session_for(user_id)
+    if s.current_draft is not None and s.current_draft.amount:
+        return int(s.current_draft.amount)
+    # Last completed tx as a fallback antecedent. Cheap query —
+    # already cached on the in-memory store.
+    try:
+        txs = get_store().transactions_of(user_id, status="completed", limit=1)
+        if txs and txs[0].amount:
+            return int(txs[0].amount)
+    except Exception:  # noqa: BLE001 — best-effort lookup, never fatal
+        pass
+    return None
 
 
 _BARE_RECIPIENT_COMMANDS = {
@@ -2117,6 +2205,20 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         amount = None
         user_invalid_amount = True
 
+    # Co-reference / "same amount" guard. When the user explicitly
+    # references the previous draft's amount ("cùng số tiền cho bố",
+    # "vẫn vậy", "như cũ", "tương tự") the correct fill is the prior
+    # draft's amount, NOT the predictor's median-for-this-recipient.
+    # Bug A2: after "chuyển mẹ 2tr", "cùng số tiền cho bố" used to
+    # surface bố's median (5tr) instead of inheriting the 2tr the user
+    # just typed two turns ago. The predictor still runs when no coref
+    # cue is present so the existing "đề xuất từ lịch sử" UX is intact.
+    coref_amount_cue = _has_amount_coref_cue(nlu.raw_text)
+    if amount is None and not user_invalid_amount and coref_amount_cue:
+        prior_amount = _last_known_draft_amount(user_id)
+        if prior_amount is not None and prior_amount > 0:
+            amount = prior_amount
+
     # Smart amount prediction: when the user named a recipient but no
     # amount, look at their history with this contact and pre-fill the
     # draft with the most likely figure. This must run *before* `evaluate`
@@ -2127,8 +2229,18 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     # The ``user_invalid_amount`` guard above is critical: a user who
     # typed "chuyển 0đ" doesn't want their median 750k auto-filled;
     # they want to be told the amount is nonsense.
+    #
+    # ``coref_amount_cue`` ALSO suppresses the predictor: when the user
+    # says "cùng số tiền cho bố" we either inherit the prior draft's
+    # amount above OR fall to missing_amount — never silently
+    # substitute bố's median.
     prediction: Optional[dict] = None
-    if amount is None and not user_invalid_amount and chosen is not None:
+    if (
+        amount is None
+        and not user_invalid_amount
+        and not coref_amount_cue
+        and chosen is not None
+    ):
         prediction = predict_amount(user_id, chosen.id)
         if prediction is not None:
             amount = prediction["amount"]
