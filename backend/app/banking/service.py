@@ -7,8 +7,27 @@ from datetime import datetime, timedelta
 from statistics import mean
 from typing import Optional
 
+from ..config import get_settings
 from ..models.schemas import Contact, Schedule, Transaction
 from ..store import get_store, new_id, now
+
+
+def _cached(key: str, producer):
+    """Cache-aside cho kết quả truy vấn (dict nhỏ, đắt để tính trên 591k dòng).
+
+    Tắt cache => gọi thẳng producer. Redis sập => producer (fail-open).
+    """
+    settings = get_settings()
+    if not settings.cache_enabled:
+        return producer()
+    from .. import redis_client
+
+    cached = redis_client.get_cache(key)
+    if cached is not None:
+        return cached
+    value = producer()
+    redis_client.set_cache(key, value, settings.cache_ttl_seconds)
+    return value
 
 
 def execute_transfer(
@@ -42,13 +61,18 @@ def execute_transfer(
 
 
 def get_balance(user_id: str) -> dict:
-    store = get_store()
-    user = store.get_user(user_id)
-    return {
-        "display_name": user.display_name,
-        "accounts": [a.model_dump() for a in user.accounts],
-        "total": sum(a.balance for a in user.accounts),
-    }
+    from ..redis_client import user_balance_key
+
+    def _compute() -> dict:
+        store = get_store()
+        user = store.get_user(user_id)
+        return {
+            "display_name": user.display_name,
+            "accounts": [a.model_dump() for a in user.accounts],
+            "total": sum(a.balance for a in user.accounts),
+        }
+
+    return _cached(user_balance_key(user_id), _compute)
 
 
 def _month_window(ref: datetime) -> tuple[datetime, datetime]:
@@ -61,6 +85,20 @@ def _month_window(ref: datetime) -> tuple[datetime, datetime]:
 
 
 def get_history(
+    *,
+    user_id: str,
+    contact_id: Optional[str] = None,
+    period: str = "this_month",
+) -> dict:
+    from ..redis_client import user_summary_key
+
+    return _cached(
+        user_summary_key(user_id, contact_id, period),
+        lambda: _compute_history(user_id=user_id, contact_id=contact_id, period=period),
+    )
+
+
+def _compute_history(
     *,
     user_id: str,
     contact_id: Optional[str] = None,

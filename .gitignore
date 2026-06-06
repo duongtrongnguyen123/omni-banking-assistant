@@ -19,3 +19,5 @@ frontend/dist/
 
 # Large source-derived dataset — regenerate locally with data/transform_banking_dataset.py
 /data/generated/
+
+transactions_enriched_6m.csv
