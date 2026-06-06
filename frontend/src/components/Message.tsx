@@ -11,6 +11,8 @@ import { ScheduleDraftCard } from "./ScheduleDraftCard";
 import { BudgetDraftCard, GoalDraftCard } from "./BudgetDraftCard";
 import { RecurringList } from "./RecurringList";
 import { AtmCard } from "./AtmCard";
+import { MyAccountCard } from "./MyAccountCard";
+import { ReceiveQrCard } from "./ReceiveQrCard";
 import { HelpCard } from "./HelpCard";
 import { speak } from "../lib/tts";
 
@@ -153,6 +155,10 @@ export const Message = ({
           />
         )}
         {r?.atms && r.atms.length > 0 && <AtmCard atms={r.atms} />}
+        {r?.my_accounts && r.my_accounts.length > 0 && (
+          <MyAccountCard accounts={r.my_accounts} />
+        )}
+        {r?.receive_qr && <ReceiveQrCard qr={r.receive_qr} />}
         {r?.history && <HistoryCard history={r.history} />}
         {r?.balance && <BalanceCard balance={r.balance} />}
         {r?.schedule && <ScheduleCard schedule={r.schedule} />}

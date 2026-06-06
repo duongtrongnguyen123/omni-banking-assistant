@@ -284,9 +284,30 @@ export interface OmniResponse {
   recurring_patterns: RecurringPattern[] | null;
   budget_statuses?: BudgetStatus[] | null;
   atms?: AtmHit[] | null;
+  my_accounts?: MyAccount[] | null;
+  receive_qr?: ReceiveQrPayload | null;
   help_sections?: HelpSectionPayload[] | null;
   needs_disambiguation: boolean;
   telemetry?: TelemetryPayload | null;
+}
+
+export interface MyAccount {
+  id: string;
+  bank: string;
+  number: string;
+  masked: string;
+  holder_name: string;
+  primary: boolean;
+}
+
+export interface ReceiveQrPayload {
+  bank: string;
+  account: string;
+  holder_name: string;
+  amount: number | null;
+  description: string | null;
+  payload: string;
+  png_base64: string;
 }
 
 export interface HelpSectionPayload {
