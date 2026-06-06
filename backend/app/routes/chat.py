@@ -52,12 +52,30 @@ def chat(
             end_telemetry()
 
 
+_CONFIRMED_DRAFT_RESPONSES: dict[str, OmniResponse] = {}
+"""Idempotency cache: ``{user_id}:{draft_id}`` → first successful response.
+
+Prevents double-fire from double-clicks / network retries on the
+confirm button. Bounded by the natural draft lifetime — each draft_id
+is consumed once then never reused (orchestrator clears the session
+draft after confirm), so the cache stays small in practice. A wider
+LRU bound is in TODO but not load-bearing for the demo."""
+
+
 @router.post("/transactions/{draft_id}/confirm", response_model=OmniResponse)
 def confirm(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
 ) -> OmniResponse:
+    # Idempotency: if this user already successfully confirmed this draft,
+    # replay the cached response instead of re-executing the transfer.
+    # Stops the demo-classic "user double-clicked → two debits" failure.
+    cache_key = f"{user_id}:{draft_id}"
+    cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
+    if cached is not None:
+        return cached
+
     resp = confirm_draft(
         user_id,
         draft_id,
@@ -66,6 +84,12 @@ def confirm(
     )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
+    # Only cache fully-confirmed transfers — OTP prompts / re-confirm
+    # branches still need to be replayable for new input. Heuristic:
+    # cache when the response carries no draft (transfer landed) or
+    # the draft has no ``awaiting_otp`` flag.
+    if resp.draft is None or not getattr(resp.draft, "awaiting_otp", False):
+        _CONFIRMED_DRAFT_RESPONSES[cache_key] = resp
     return resp
 
 

@@ -49,8 +49,13 @@ logger = logging.getLogger(__name__)
 
 # Tuning knobs ---------------------------------------------------------------
 
-FRAUD_RISK_THRESHOLD = 0.7
-"""Score above which `fraud_risk_high` flag is raised."""
+FRAUD_RISK_THRESHOLD = 0.5
+"""Score above which `fraud_risk_high` flag is raised.
+
+Calibrated from public-dataset eval (BankSim 0.75 recall, PaySim 0.74
+recall both at threshold 0.5 → 0.95-band). Earlier 0.7 default dropped
+recall to ~0.13 — mis-calibrated and documented as such in
+``docs/eval-real-data.md`` since 2026-06-06."""
 
 MIN_TX_FOR_TRAINING = 50
 """Skip users with fewer than this many completed outgoing tx."""
