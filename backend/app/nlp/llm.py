@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -71,12 +72,36 @@ def _collect_keys(prefix: str, primary: str) -> list[str]:
     return out
 
 
+# Round-robin cursor over the Groq key pool. The 429-fallback walks the
+# provider list in order, so without rotation every request hammers key #1
+# first — burning its per-day token budget while 35 others sit idle, and
+# wasting a 429 round-trip on it once it's exhausted. Advancing a start
+# offset each call spreads load across the whole pool. Module-global +
+# lock so concurrent requests don't fight over it.
+_rr_cursor = 0
+_rr_lock = threading.Lock()
+
+
+def _rotate(keys: list[str]) -> list[str]:
+    """Return ``keys`` rotated by a per-call offset so the pool is used
+    round-robin rather than always starting at index 0."""
+    global _rr_cursor
+    if len(keys) <= 1:
+        return keys
+    with _rr_lock:
+        offset = _rr_cursor % len(keys)
+        _rr_cursor = (_rr_cursor + 1) % len(keys)
+    return keys[offset:] + keys[:offset]
+
+
 def _enabled_providers() -> list[_Provider]:
     """Priority order: Groq pool (1..N keys) → Gemini pool → done.
 
     Each API key registers as its own provider entry so the existing
     429 fallback in ``_call_llm`` walks through the pool transparently.
-    Burn a key → next one takes over without restart.
+    Burn a key → next one takes over without restart. The Groq pool is
+    rotated round-robin per call (see :func:`_rotate`) so load spreads
+    evenly instead of always starting at key #1.
 
     Offline-demo and privacy local-only modes return [] so the rule
     extractor handles every request.
@@ -89,7 +114,7 @@ def _enabled_providers() -> list[_Provider]:
         log.debug("privacy_mode=local-only — skipping LLM providers")
         return []
     out: list[_Provider] = []
-    groq_keys = _collect_keys("GROQ_API_KEY", s.groq_api_key)
+    groq_keys = _rotate(_collect_keys("GROQ_API_KEY", s.groq_api_key))
     for i, key in enumerate(groq_keys):
         out.append(
             _Provider(

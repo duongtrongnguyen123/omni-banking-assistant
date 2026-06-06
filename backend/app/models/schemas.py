@@ -185,6 +185,14 @@ class TransactionDraft(BaseModel):
     # extracted from the user's utterance. The UI surfaces this as a chip so
     # the user knows it's a suggestion they can override.
     predicted_amount: bool = False
+    # A history-based amount the assistant is OFFERING but has NOT applied to
+    # ``amount`` (which stays None → ``missing_amount`` → "bạn muốn chuyển
+    # bao nhiêu?"). The UI renders it as a tappable chip; only when the user
+    # taps it does the amount get set and the draft move to the pending /
+    # confirm state. Keeps the assistant from silently deciding a sum the
+    # user never stated. ``amount_prediction_reason`` /
+    # ``amount_prediction_confidence`` describe this suggestion too.
+    suggested_amount: Optional[int] = None
     # Short Vietnamese phrase explaining where the predicted amount came
     # from ("Median của 4 lần chuyển trong cùng dải ngày" / "Median của 12
     # lần chuyển cho người này"). Only set when ``predicted_amount`` is

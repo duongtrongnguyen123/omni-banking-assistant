@@ -85,6 +85,10 @@ export interface TransactionDraft {
   flags: SafetyFlag[];
   requires_step_up: boolean;
   predicted_amount?: boolean;
+  // A history-based amount the assistant OFFERS but did not apply to
+  // `amount` (which stays null → still asking). Rendered as a tappable
+  // chip; tapping it commits the amount and moves the draft to pending.
+  suggested_amount?: number | null;
   amount_prediction_reason?: string | null;
   amount_prediction_confidence?: number | null;
   recent_to_recipient?: Array<{

@@ -22,9 +22,31 @@ from ..services.orchestrator import (
     start_split_bill,
 )
 from ._ratelimit import enforce_user_rate_limit
-from .deps import current_user
+from .deps import current_session, current_user
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+
+def _archive_action(
+    session_id: str | None, user_id: str, user_text: str, resp: OmniResponse
+) -> None:
+    """Persist a draft-action turn (confirm / cancel / select) into the
+    durable conversation archive so it becomes part of the NLU context
+    window on later turns — e.g. so "mình vừa chuyển bao nhiêu?" works
+    even after a reload. Best-effort: archival must never break the flow.
+
+    Only meaningful, terminal outcomes are logged (the caller decides);
+    intermediate prompts like "nhập OTP" are skipped to keep the context
+    window clean. No-op when the client didn't send a conversation id."""
+    if not session_id:
+        return
+    try:
+        chat_log.append_message(session_id, user_id, "user", user_text)
+        chat_log.append_message(
+            session_id, user_id, "omni", resp.text, intent=resp.intent
+        )
+    except Exception:  # noqa: BLE001 — archival is non-critical
+        pass
 
 
 class ChatRequest(BaseModel):
@@ -105,7 +127,7 @@ def chat(
     if dev:
         begin_telemetry()
     try:
-        resp = handle_message(user_id, req.message)
+        resp = handle_message(user_id, req.message, session_id=session_id)
     finally:
         if dev:
             end_telemetry()
@@ -199,6 +221,7 @@ def confirm(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     # Idempotency: if this user already successfully confirmed this draft,
     # replay the cached response instead of re-executing the transfer.
@@ -233,11 +256,19 @@ def confirm(
     # the draft has no ``awaiting_otp`` flag.
     if resp.draft is None or not getattr(resp.draft, "awaiting_otp", False):
         _CONFIRMED_DRAFT_RESPONSES[cache_key] = resp
+    # Archive only the terminal outcome (transfer landed → no draft left),
+    # not the intermediate "nhập OTP" / re-confirm prompts.
+    if resp.draft is None:
+        _archive_action(session_id, user_id, "Xác nhận giao dịch", resp)
     return resp
 
 
 @router.post("/transactions/{draft_id}/cancel", response_model=OmniResponse)
-def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+def cancel(
+    draft_id: str,
+    user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
+) -> OmniResponse:
     cache_key = f"{user_id}:{draft_id}"
     # Confirm is mid-execute — refuse to clear the session under it.
     if cache_key in _INFLIGHT_CONFIRMS:
@@ -250,7 +281,9 @@ def cancel(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
     cached = _CONFIRMED_DRAFT_RESPONSES.get(cache_key)
     if cached is not None:
         return cached
-    return cancel_draft(user_id, draft_id)
+    resp = cancel_draft(user_id, draft_id)
+    _archive_action(session_id, user_id, "Huỷ giao dịch", resp)
+    return resp
 
 
 class SplitBillRequest(BaseModel):
@@ -282,6 +315,7 @@ def select(
     draft_id: str,
     req: SelectCandidateRequest,
     user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     resp = select_candidate(user_id, draft_id, req.contact_id)
     if resp.intent == "unknown":
@@ -291,20 +325,32 @@ def select(
                 "Phiên giao dịch vừa được làm mới. Bạn nhập lại câu chuyển tiền giúp mình nhé."
             ),
         )
+    _archive_action(session_id, user_id, "Chọn người nhận", resp)
     return resp
 
 
 @router.post("/contacts/{draft_id}/confirm", response_model=OmniResponse)
-def confirm_contact(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
+def confirm_contact(
+    draft_id: str,
+    user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
+) -> OmniResponse:
     resp = confirm_contact_draft(user_id, draft_id)
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
+    _archive_action(session_id, user_id, "Lưu danh bạ", resp)
     return resp
 
 
 @router.post("/contacts/{draft_id}/cancel", response_model=OmniResponse)
-def cancel_contact(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
-    return cancel_contact_draft(user_id, draft_id)
+def cancel_contact(
+    draft_id: str,
+    user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
+) -> OmniResponse:
+    resp = cancel_contact_draft(user_id, draft_id)
+    _archive_action(session_id, user_id, "Huỷ lưu danh bạ", resp)
+    return resp
 
 
 @router.post("/schedules/{draft_id}/confirm", response_model=OmniResponse)
@@ -312,6 +358,7 @@ def confirm_schedule(
     draft_id: str,
     req: ConfirmTransactionRequest | None = None,
     user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
 ) -> OmniResponse:
     resp = confirm_schedule_draft(
         user_id,
@@ -321,12 +368,22 @@ def confirm_schedule(
     )
     if resp.intent == "unknown":
         raise HTTPException(status_code=404, detail=resp.text)
+    # Archive only the terminal outcome (schedule created → no draft left),
+    # skipping the intermediate "nhập OTP" prompt.
+    if resp.schedule_draft is None:
+        _archive_action(session_id, user_id, "Xác nhận lịch định kỳ", resp)
     return resp
 
 
 @router.post("/schedules/{draft_id}/cancel", response_model=OmniResponse)
-def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> OmniResponse:
-    return cancel_schedule_draft(user_id, draft_id)
+def cancel_schedule(
+    draft_id: str,
+    user_id: str = Depends(current_user),
+    session_id: str | None = Depends(current_session),
+) -> OmniResponse:
+    resp = cancel_schedule_draft(user_id, draft_id)
+    _archive_action(session_id, user_id, "Huỷ đặt lịch", resp)
+    return resp
 
 
 @router.post("/session/reset")

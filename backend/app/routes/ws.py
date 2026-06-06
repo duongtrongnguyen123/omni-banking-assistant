@@ -38,14 +38,16 @@ async def ws_chat(ws: WebSocket) -> None:
     try:
         while True:
             raw = await ws.receive_text()
+            session_id = None
             try:
                 payload = json.loads(raw)
                 message = payload.get("message", "")
+                session_id = payload.get("session_id")
             except json.JSONDecodeError:
                 message = raw
             if not message:
                 continue
-            resp = handle_message(user_id, message)
+            resp = handle_message(user_id, message, session_id=session_id)
             await ws.send_text(resp.model_dump_json())
     except WebSocketDisconnect:
         return

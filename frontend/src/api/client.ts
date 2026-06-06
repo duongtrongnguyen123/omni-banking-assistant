@@ -13,6 +13,24 @@ import type {
 
 const HEADERS = { "Content-Type": "application/json", "x-user-id": "u_an" };
 
+// The conversation the user is currently in. Set from the chat response's
+// `X-Chat-Session-Id` header (and when switching conversations in the
+// sidebar). Replayed as a request header on the draft-action endpoints
+// (confirm / cancel / select) so those turns archive into the same
+// conversation that feeds the assistant's context window.
+let currentSessionId: string | null = null;
+
+export function setCurrentSessionId(id: string | null): void {
+  currentSessionId = id;
+}
+
+/** Request headers including the active conversation id, when known. */
+function authHeaders(): Record<string, string> {
+  return currentSessionId
+    ? { ...HEADERS, "X-Chat-Session-Id": currentSessionId }
+    : HEADERS;
+}
+
 // `?dev=1` enables the telemetry overlay path on the backend. We detect
 // it once at module load and forward as a query string on each /api/chat
 // call so the orchestrator populates `OmniResponse.telemetry`.
@@ -65,7 +83,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(path, {
       ...init,
-      headers: { ...HEADERS, ...(init?.headers ?? {}) },
+      headers: { ...authHeaders(), ...(init?.headers ?? {}) },
     });
   } catch {
     // Browser fetch only rejects on network failure / CORS preflight
@@ -145,7 +163,12 @@ export const api = {
       throw new ApiError(res.status, detail);
     }
     const response = (await res.json()) as OmniResponse;
-    return { response, sessionId: res.headers.get("X-Chat-Session-Id") };
+    const landedSession = res.headers.get("X-Chat-Session-Id");
+    // Remember which conversation this turn landed in so the follow-up
+    // draft-action calls (confirm / cancel / select) archive into the same
+    // conversation that feeds the assistant's context window.
+    if (landedSession) setCurrentSessionId(landedSession);
+    return { response, sessionId: landedSession };
   },
   chatSessions: () => jsonFetch<ChatSession[]>("/api/chat/sessions"),
   chatSessionMessages: (id: string) =>

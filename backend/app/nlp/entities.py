@@ -249,6 +249,25 @@ _BARE_RECIPIENT_DENYLIST = {
     "thue", "phi", "no", "cuoc",
 }
 
+# Leading tokens (diacritic-folded) that are money-movement verbs or
+# draft-edit particles, never the start of a recipient name. Without this
+# guard the bare "<name> <amount>" pattern reads the verb in a *follow-up*
+# edit as the recipient: "đổi sang 3 triệu" → who="đổi sang", "chuyển 3
+# triệu" → who="chuyển". Both then resolve to nobody and the modify path
+# wipes the real recipient — the assistant suddenly asks "chuyển cho ai?"
+# mid-edit. Reject the capture when its first token is one of these.
+_NON_NAME_LEADERS = {
+    "chuyen", "gui", "tra", "nap", "doi", "sang", "thanh",
+    "send", "transfer", "cho",
+}
+
+# Unambiguous money-movement verbs — never part of a Vietnamese personal
+# name, so a bare "<who> <amount>" capture that CONTAINS one anywhere is a
+# command/edit, not a name ("à thôi chỉ chuyển 10 triệu" → who="à thôi chỉ
+# chuyển"). Deliberately excludes "doi/sang/thanh" (those collide with real
+# names like "Sang"/"Thành"); they stay first-token-only via _NON_NAME_LEADERS.
+_MONEY_VERBS_ANYWHERE = {"chuyen", "gui", "tra", "nap", "send", "transfer"}
+
 # First-person pronouns that judges naturally use ("gửi mình 200k",
 # "ai chuyển tiền cho mình", "trả tôi"). Without this guard, "mình"
 # diacritic-folds to "minh" → matches the contact "Minh" → confirm card
@@ -360,7 +379,14 @@ def extract(text: str) -> ExtractedEntities:
         if m:
             candidate = _clean_recipient(m.group("who"))
             folded = _strip_diacritics(candidate).strip()
-            if folded and folded not in _BARE_RECIPIENT_DENYLIST:
+            toks = folded.split()
+            first_tok = toks[0] if toks else ""
+            if (
+                folded
+                and folded not in _BARE_RECIPIENT_DENYLIST
+                and first_tok not in _NON_NAME_LEADERS
+                and not any(t in _MONEY_VERBS_ANYWHERE for t in toks)
+            ):
                 out.recipient_text = candidate
 
     # Self-pronoun guard. Compare against the still-diacritic-bearing

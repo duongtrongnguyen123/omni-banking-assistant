@@ -319,14 +319,16 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     return "this_month"
 
 
-def handle_message(user_id: str, text: str) -> OmniResponse:
+def handle_message(
+    user_id: str, text: str, session_id: Optional[str] = None
+) -> OmniResponse:
     overall_t0 = time.perf_counter()
     # Capture the intent label even when the inner call raises — Prometheus
     # otherwise loses count of error-path latency. ``"error"`` is the
     # sentinel used for both unexpected exceptions and missing intents.
     intent_label = "error"
     try:
-        resp = _handle_message_inner(user_id, text)
+        resp = _handle_message_inner(user_id, text, session_id)
         intent_label = resp.intent or "unknown"
     finally:
         # Best-effort metric recording. The try/except inside .inc()/.observe()
@@ -382,14 +384,27 @@ def handle_message(user_id: str, text: str) -> OmniResponse:
     return resp
 
 
-def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
+def _handle_message_inner(
+    user_id: str, text: str, session_id: Optional[str] = None
+) -> OmniResponse:
     t0 = time.perf_counter()  # noqa: F841 — kept for ad-hoc latency probes
     text = text.strip()
     session = session_for(user_id)
-    # Snapshot history *before* we append the current turn so the LLM
-    # receives previous turns as context, with the current one as the new
-    # user message.
-    history_msgs = session.conversation_messages()
+    # Conversation context for the NLU + phrasing layers. When the request
+    # carries a durable conversation id, source it from the permanent
+    # archive (chat_log) scoped to that conversation: this is what the user
+    # actually sees on screen, survives reloads / restarts / TTL expiry,
+    # and never bleeds across conversations. The chat route appends the
+    # current turn to chat_log *after* we return, so what we read here is
+    # exactly the prior turns. Fall back to the ephemeral, user-scoped
+    # session history for clients that don't pass a session id (WebSocket,
+    # scripts, tests).
+    if session_id:
+        from ..db import chat_log
+
+        history_msgs = chat_log.recent_messages(session_id, user_id)
+    else:
+        history_msgs = session.conversation_messages()
 
     # /help is a synthetic intent — no NLU, no LLM, deterministic copy. The
     # frontend slash palette dispatches it; users can also type "help" /
@@ -537,10 +552,51 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         session.append("omni", resp.text)
         return resp
 
+    # Rule-path context rescue. A bare temporal follow-up after a history
+    # turn — "còn tháng trước?", "tháng này thì sao?" — carries no intent
+    # keyword, so the (context-blind) rule classifier returns "unknown"
+    # whenever the LLM is unavailable / rate-limited. The LLM would have
+    # inherited the prior intent + recipient; replicate that here so the
+    # assistant still remembers context on the fallback path.
+    _rule_history_followup_rescue(nlu, history_msgs)
+
     resp = _dispatch_intent(user_id, nlu, history_msgs)
     session.append("user", text)
     session.append("omni", resp.text)
     return resp
+
+
+def _rule_history_followup_rescue(
+    nlu: NLUResult, history_msgs: list[dict]
+) -> None:
+    """Mutate ``nlu`` in place: turn an unknown bare temporal follow-up into
+    a history query that inherits the previous turn's recipient.
+
+    Only fires when (a) the NLU came back ``unknown`` (so we never override
+    a real classification — including the LLM's), (b) the current message
+    actually references a time window, and (c) the immediately prior user
+    turn was itself a history query. Conservative by design: misclassifying
+    a transfer as history is read-only and harmless, but we still gate on
+    all three to avoid surprises."""
+    if nlu.intent != "unknown" or not nlu.entities.temporal_reference:
+        return
+    prev_user = next(
+        (m.get("content", "") for m in reversed(history_msgs) if m.get("role") == "user"),
+        None,
+    )
+    if not prev_user:
+        return
+    from ..nlp.entities import extract as _extract
+    from ..nlp.intent import classify as _classify
+
+    prev_intent, _ = _classify(prev_user)
+    if prev_intent != "history":
+        return
+    nlu.intent = "history"
+    if not nlu.entities.recipient_text:
+        prev_recipient = _extract(prev_user).recipient_text
+        if prev_recipient:
+            nlu.entities.recipient_text = prev_recipient
 
 
 def _dispatch_intent(
@@ -678,6 +734,11 @@ def _looks_like_modification(nlu: NLUResult, draft: TransactionDraft) -> bool:
         return True
     if e.description and e.description != draft.description:
         return True
+    # Source-account switch ("dùng tài khoản phụ") — only when it resolves
+    # to one of the draft's own accounts, so a recipient-side account hint
+    # doesn't spuriously route here.
+    if e.account_hint and _resolve_source_account(e.account_hint, draft.source_accounts):
+        return True
     if e.recipient_text:
         # Different name surface form
         if draft.recipient is None:
@@ -691,48 +752,137 @@ def _looks_like_modification(nlu: NLUResult, draft: TransactionDraft) -> bool:
     return False
 
 
+def _resolve_source_account(hint: Optional[str], accounts: list) -> Optional[str]:
+    """Resolve a chat reference to one of the *user's own* accounts (the
+    sender / "người gửi") → its id, or ``None`` if the hint doesn't clearly
+    name one. Handles "tài khoản phụ/chính", "tiết kiệm", "chính/main",
+    digit tails ("…7891"), and ordinals ("1"/"2"). Only matches against the
+    supplied account list so a recipient-account hint can't hijack it."""
+    if not hint or not accounts:
+        return None
+    folded = normalize_alias(hint)
+    digits = re.sub(r"\D", "", hint)
+    # Explicit digit tail — strongest signal.
+    if digits:
+        for a in accounts:
+            if a.number.endswith(digits) or digits in a.number:
+                return a.id
+    primary = next((a for a in accounts if getattr(a, "primary", False)), None)
+    secondary = next((a for a in accounts if not getattr(a, "primary", False)), None)
+    if any(k in folded for k in ("phu", "tiet kiem", "saving", "tk2", "thu 2", "thu hai")):
+        return secondary.id if secondary else None
+    if any(k in folded for k in ("chinh", "main", "tk1", "thu 1", "thu nhat")):
+        return primary.id if primary else None
+    return None
+
+
 def _modify_transfer_draft(
     user_id: str, draft: TransactionDraft, nlu: NLUResult
 ) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
     txs = store.transactions_of(user_id)
+    e = nlu.entities
+
+    # Source-account ("người gửi") switch — "dùng tài khoản phụ nhé",
+    # "chuyển từ tài khoản chính". Resolve against the draft's own account
+    # list so a recipient-side account_hint can't move the sender.
+    if e.account_hint:
+        switched = _resolve_source_account(e.account_hint, draft.source_accounts)
+        if switched is not None:
+            draft.source_account_id = switched
+
     account = (
         store.account_by_id(user_id, draft.source_account_id)
         if draft.source_account_id
         else store.primary_account(user_id)
     )
-    e = nlu.entities
 
-    if e.amount is not None and e.amount != draft.amount:
-        draft.amount = e.amount
-        # User just supplied an explicit amount — it's no longer predicted.
-        draft.predicted_amount = False
+    # Amount edit — but ONLY trust a sum the user actually typed THIS turn.
+    # The LLM's FOLLOW-UP rule re-emits the previous turn's amount, so
+    # ``e.amount`` is non-null even when the user said nothing about money;
+    # ``parse_amount`` over the raw text is the deterministic "did they type
+    # a number now?" gate. When they did, apply it; when they didn't, leave
+    # ``draft.amount`` untouched so the rest of the transaction is
+    # remembered (changing only the recipient must not wipe the sum).
+    from ..nlp.amount import parse_amount as _parse_amount_raw
+
+    parsed_now, _ = _parse_amount_raw(nlu.raw_text)
+    # "Did the user mention a number THIS turn?" — a parseable amount, or
+    # any bare digit (covers "chỉ 5 thôi" where the unit is dropped and the
+    # bare-amount continuation already resolved it into ``e.amount``). No
+    # digit at all ⇒ ``e.amount`` is an LLM-inherited leftover ⇒ ignore it.
+    typed_number = parsed_now is not None or bool(re.search(r"\d", nlu.raw_text))
+    if typed_number:
+        new_amount = e.amount if e.amount is not None else parsed_now
+        if new_amount is not None and new_amount != draft.amount:
+            draft.amount = new_amount
+            # User-typed → no longer a prediction/suggestion.
+            draft.predicted_amount = False
+            draft.suggested_amount = None
+            draft.amount_prediction_reason = None
+            draft.amount_prediction_confidence = None
     if e.description:
         draft.description = e.description
         # Description changed — re-categorise.
         cat, conf = categorize_description(e.description)
         draft.category = cat if (cat != "other" and conf >= 0.5) else None
 
+    recipient_changed = False
     if e.recipient_text:
         candidates = resolve_recipient(e.recipient_text, contacts)
+        # Does the raw message actually name a recipient ("cho / tới / gửi /
+        # đến <X>")? This separates a real recipient change from the rule
+        # extractor hallucinating one out of filler/verbs during an
+        # amount-only edit ("à thôi chỉ chuyển 10 triệu", "chỉ 10 triệu
+        # thôi"). The latter must NOT disturb the existing recipient — else
+        # Omni asks "chuyển cho ai?" mid-edit (the rate-limited-fallback bug).
+        # Require a NON-digit after the preposition: "cho 8 triệu" ("make
+        # it 8 million") is an amount edit, not "cho <name>".
+        named_explicitly = bool(
+            re.search(
+                r"\b(?:cho|tới|toi|gửi|gui|đến|den)\s+(?!\d)\S",
+                nlu.raw_text,
+                re.IGNORECASE,
+            )
+        )
         if len(candidates) == 1:
-            draft.recipient = candidates[0].contact
+            # Clean single match — honour the swap ("đổi sang chị Thảo").
+            new_recipient = candidates[0].contact
+            recipient_changed = (
+                draft.recipient is None or new_recipient.id != draft.recipient.id
+            )
+            draft.recipient = new_recipient
             draft.candidates = []
-        elif len(candidates) > 1:
+        elif named_explicitly:
+            # User explicitly named someone, but it's ambiguous (>1) or
+            # unknown (0). Surface that — don't keep the old recipient with
+            # the new amount (money-touching: "cho Bố" → "cho bạn thân").
+            recipient_changed = True
             draft.recipient = None
             draft.candidates = [c.contact for c in candidates]
-        else:
-            # Resolver found nobody for the new surface form. The old
-            # code silently kept the previous draft.recipient, which
-            # means a stale "chuyển cho Bố 5tr" lingered when the user
-            # then typed "chuyển cho bạn thân 2tr" → safety engine ran
-            # against Bố with the new amount. Money-touching: don't
-            # inherit the previous recipient when the user EXPLICITLY
-            # named someone else. Clear it; the safety eval below will
-            # then flag missing_recipient and the chat asks for clarity.
-            draft.recipient = None
-            draft.candidates = []
+        # else: no naming marker + not a clean match → treat as amount-only
+        # edit and PRESERVE the existing recipient.
+
+    # Remember the WHOLE transaction. Changing only the recipient must KEEP
+    # the amount the user already set — "chuyển cho mẹ 1tr" → "à thôi chuyển
+    # cho minh" should stay 1tr for Minh, not make the user re-enter it.
+    # We never auto-invent a NEW figure for the new recipient (that was the
+    # rejected "tự set 220.000đ" behaviour). Only when NO amount has been
+    # set at all do we OFFER a history-based suggestion for the (new)
+    # recipient via a tappable chip — ``amount`` stays None so it still
+    # asks "bao nhiêu", and only the user's tap commits the figure.
+    if recipient_changed and draft.amount is None:
+        draft.predicted_amount = False
+        draft.suggested_amount = None
+        draft.amount_prediction_reason = None
+        draft.amount_prediction_confidence = None
+        if draft.recipient is not None:
+            prediction = predict_amount(user_id, draft.recipient.id)
+            if prediction is not None:
+                draft.suggested_amount = prediction.get("amount")
+                draft.amount_prediction_reason = prediction.get("rationale")
+                draft.amount_prediction_confidence = prediction.get("confidence")
 
     # Re-evaluate safety on the modified draft.
     draft.flags = evaluate(
@@ -1619,6 +1769,45 @@ def _recent_to_recipient(
     ]
 
 
+_TRANSFER_VERB_RE = re.compile(
+    r"\b(?:chuyển|chuyen|gửi|gui|gởi|goi|nạp|nap|transfer|send)\b",
+    re.IGNORECASE,
+)
+
+
+def _msg_has_transfer_signal(nlu: NLUResult) -> bool:
+    """Did the CURRENT message actually carry a transfer cue, or is the
+    intent purely inherited from conversation history?
+
+    The LLM's FOLLOW-UP rule re-emits the previous turn's intent + amount +
+    recipient, so a vague "ờ cái kia" / "chắc vậy" with stale history comes
+    back as a fully-populated ``transfer`` — fabricating a draft (amount +
+    recipient) the user never stated this turn. This is the deterministic
+    backstop: a *fresh* transfer draft may only be built when the current
+    raw text contributes something concrete — a money-movement verb, a
+    typed amount, a temporal reference ("như tháng trước"), or a recipient
+    surface that genuinely appears in the text. Otherwise we ask instead of
+    inventing. Never trust ``e.amount`` / ``e.recipient_text`` alone here —
+    those can be inherited; verify against the raw text."""
+    raw = nlu.raw_text or ""
+    if _TRANSFER_VERB_RE.search(raw):
+        return True
+    from ..nlp.amount import parse_amount as _pa
+
+    if _pa(raw)[0] is not None:
+        return True
+    if nlu.entities.temporal_reference:
+        return True
+    # Recipient surface must actually occur in this message — the rule
+    # extractor only ever reads the raw text, so a hit there is proof the
+    # name was typed now (not inherited).
+    from ..nlp.entities import extract as _rule_extract
+
+    if _rule_extract(raw).recipient_text:
+        return True
+    return False
+
+
 def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
@@ -1629,6 +1818,18 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             intent="transfer",
             text="Chưa có tài khoản nguồn. Bạn liên kết tài khoản trước nhé.",
         )
+
+    # Anti-fabrication backstop: a brand-new transfer draft requires the
+    # current message to actually express a transfer (see
+    # ``_msg_has_transfer_signal``). When the LLM inherited ``transfer``
+    # from history but the user said nothing transfer-shaped this turn,
+    # ask instead of inventing a recipient + amount from stale context.
+    if not _msg_has_transfer_signal(nlu):
+        return OmniResponse(
+            intent="transfer",
+            text="Bạn muốn chuyển bao nhiêu và cho ai ạ?",
+        )
+
     e = nlu.entities
 
     candidates = (
@@ -1643,6 +1844,16 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
 
     # Resolve temporal reference using the chosen recipient (if any) for higher precision
     amount = e.amount
+    # Drop an LLM-inherited amount on a *fresh* transfer: if the user didn't
+    # type a sum this turn (and isn't referencing a past one via "như tháng
+    # trước"), ``e.amount`` came from the FOLLOW-UP rule re-emitting an older
+    # turn — not from what they just said. Leaving it would fabricate a
+    # figure; drop it so the predictor offers a suggestion instead.
+    if amount is not None and not e.temporal_reference:
+        from ..nlp.amount import parse_amount as _pa_raw
+
+        if _pa_raw(nlu.raw_text)[0] is None and not re.search(r"\d", nlu.raw_text):
+            amount = None
     description = e.description or ""
     reference_tx_id: Optional[str] = None
     referenced_tx = None
@@ -1662,17 +1873,17 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             if chosen is None and not candidates:
                 chosen = store.get_contact(referenced_tx.contact_id)
 
-    # Smart amount prediction: when the user named a recipient but no
-    # amount, look at their history with this contact and pre-fill the
-    # draft with the most likely figure. This must run *before* `evaluate`
-    # so the `missing_amount` flag isn't raised on a draft that does have
-    # an amount (a predicted one). The user can still override the value
-    # in the confirm card or by saying "đổi sang 3 triệu thôi".
+    # Smart amount SUGGESTION: when the user named a recipient but no
+    # amount, look at their history and OFFER the most likely figure — but
+    # do NOT apply it to ``amount``. ``amount`` stays None so ``evaluate``
+    # still raises ``missing_amount`` and the reply asks "bao nhiêu". The
+    # figure rides along as ``suggested_amount`` → the UI shows a tappable
+    # chip and only the user's tap commits it. (Previously this auto-filled
+    # the amount, which read as the assistant deciding a sum the user never
+    # stated — the product owner asked for offer-don't-decide.)
     prediction: Optional[dict] = None
     if amount is None and chosen is not None:
         prediction = predict_amount(user_id, chosen.id)
-        if prediction is not None:
-            amount = prediction["amount"]
 
     # Auto-categorise BEFORE evaluate() so the safety layer can check
     # this draft against the user's monthly budget for ``category``.
@@ -1710,7 +1921,13 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         flags=flags,
         requires_step_up=requires_step_up(flags),
         auth_required=auth_policy(flags),
-        predicted_amount=prediction is not None,
+        # amount is NOT auto-filled from the predictor anymore, so
+        # predicted_amount stays False; the figure is offered via
+        # suggested_amount instead.
+        predicted_amount=False,
+        suggested_amount=(
+            prediction.get("amount") if prediction is not None else None
+        ),
         amount_prediction_reason=(
             prediction.get("rationale") if prediction is not None else None
         ),
@@ -1724,16 +1941,9 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     session = session_for(user_id)
     session.set_draft(draft)
 
+    # ``_compose_transfer_text`` surfaces the suggestion hint when the
+    # amount is the only missing slot — no override needed here.
     text = _compose_transfer_text(draft, referenced_tx)
-    if prediction is not None and draft.recipient is not None:
-        # Prepend the rationale so both the LLM-phrased and the
-        # deterministic fallback responses surface the suggestion clearly.
-        text = (
-            f"Có vẻ bạn muốn gửi {format_vnd(draft.amount)} cho "  # type: ignore[arg-type]
-            f"{draft.recipient.display_name} như thường lệ "
-            f"({prediction['rationale']}). Đúng không? "
-            + text
-        )
     return OmniResponse(
         intent="transfer",
         text=text,
@@ -1747,10 +1957,85 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
 # ---------------------------------------------------------------------------
 
 
+# A bare integer that, in an active-draft edit, is an amount rather than
+# an OTP / ordinal. Capped at 3 digits so a 6-digit OTP never inherits a
+# unit. The leading edit/command frame ("chỉ … thôi", "chuyển", "đổi
+# sang", "còn") keeps a stray number in unrelated text from being read as
+# a new amount.
+_BARE_AMOUNT_RE = re.compile(
+    r"(?:^|\bchi\b|\bchỉ\b|\bcon\b|\bcòn\b|\bchuyen\b|\bchuyển\b|\bgui\b|"
+    r"\bgửi\b|\bdoi\b|\bđổi\b|\bsang\b|\bthanh\b|\bthành\b|\bsua\b|\bsửa\b)"
+    r"[^0-9]*?\b(\d{1,3})\b",
+    re.IGNORECASE,
+)
+
+
+def _draft_unit(amount: int) -> int:
+    """The conversational unit a bare number inherits from the current
+    draft. On a 20-triệu draft "5" means 5 triệu (unit 1e6); on a 500k
+    draft "200" means 200 nghìn (unit 1e3)."""
+    if amount >= 1_000_000_000:
+        return 1_000_000_000
+    if amount >= 1_000_000:
+        return 1_000_000
+    if amount >= 1_000:
+        return 1_000
+    return 1
+
+
+def _restated_amount(text: str, draft: TransactionDraft) -> Optional[int]:
+    """The new transfer amount when a mid-draft message (re)states one.
+
+    Two cases:
+      * Explicit, unit-bearing — "5 triệu", "5tr", "500k": delegate to
+        ``parse_amount``.
+      * Bare number in an edit frame — "thôi chỉ chuyển 20 thôi",
+        "đổi sang 5", "còn 10 thôi": the user dropped the unit because
+        the conversation is already at a known scale, so inherit the
+        draft's unit (see ``_draft_unit``).
+
+    Returns ``None`` when the message names no amount. The bare-number
+    branch only fires once the draft already has a committed recipient —
+    otherwise a lone digit is a candidate pick ("người 2"), not a sum."""
+    from ..nlp.amount import parse_amount
+
+    amount, _ = parse_amount(text)
+    if amount is not None:
+        return amount
+    if draft.recipient is None:
+        return None
+    m = _BARE_AMOUNT_RE.search(text)
+    if not m:
+        return None
+    return int(m.group(1)) * _draft_unit(draft.amount or 0)
+
+
 def _try_continue_draft(
     user_id: str, text: str, draft: TransactionDraft
 ) -> Optional[OmniResponse]:
-    if _is_cancel(text):
+    # An amount edit takes priority over a leading cancel particle: a
+    # *pure* cancel ("thôi", "huỷ", "không cần nữa") never names a sum, so
+    # "thôi chỉ chuyển 20 thôi" / "thôi chỉ 5 triệu thôi" is an edit, not a
+    # kill. Resolve the (possibly unit-less) restated amount up front so
+    # the cancel short-circuit can step aside for it.
+    new_amount = _restated_amount(text, draft)
+
+    # Does this message name a REAL (resolvable) recipient? Distinguishes a
+    # redirect ("thôi chuyển cho bố" → switch to bố, keep the amount) from a
+    # pure cancel ("thôi", "thôi không chuyển nữa"). We resolve the surface
+    # form so a filler word the extractor grabs ("nữa") doesn't masquerade
+    # as a recipient and block a genuine cancel.
+    from ..nlp.entities import extract as _rule_extract
+
+    _rt = _rule_extract(text).recipient_text
+    names_real_recipient = bool(
+        _rt and resolve_recipient(_rt, get_store().contacts_of(user_id))
+    )
+
+    # A leading cancel particle only cancels when it's a PURE cancel — no
+    # new amount AND no new recipient. "thôi chuyển cho bố" / "thôi chỉ 5
+    # triệu thôi" are edits, not kills.
+    if _is_cancel(text) and new_amount is None and not names_real_recipient:
         return cancel_draft(user_id, draft.id)
 
     if _is_confirm(text):
@@ -1758,6 +2043,37 @@ def _try_continue_draft(
 
     if re.fullmatch(r"\d{6}", text.strip()):
         return confirm_draft(user_id, draft.id, otp=text.strip())
+
+    # Amount-only edit on an active draft. Route through the modify path
+    # (recipient preserved, safety re-evaluated). A no-op restatement —
+    # the same amount the draft already holds — falls out as an unchanged
+    # re-render of the card, which is exactly right: don't cancel, don't
+    # spawn a new transaction.
+    #
+    # GUARD — this fast path is ONLY for a *bare* number whose unit was
+    # dropped ("thôi chỉ 5 thôi", "đổi sang 5") and which the full NLU
+    # pipeline's amount parser would therefore miss. Two exclusions:
+    #   1. A unit-bearing amount ("2 triệu", "10 triệu") → fall through to
+    #      the full pipeline; the LLM resolves any simultaneous recipient
+    #      swap that the (pre-LLM) rule extractor here can't ("đổi sang chị
+    #      Thảo 2 triệu").
+    #   2. A recipient named in this message → fall through too, so the
+    #      swap + amount apply together ("chuyển cho mẹ 10 triệu" must go to
+    #      mẹ, not silently keep the old recipient — the reported bug).
+    from ..nlp.amount import parse_amount as _pa_continue
+
+    parseable_amount = _pa_continue(text)[0] is not None
+    if new_amount is not None and not parseable_amount and not names_real_recipient:
+        from ..models.schemas import ExtractedEntities
+
+        synth = NLUResult(
+            intent="transfer",
+            confidence=0.85,
+            entities=ExtractedEntities(amount=new_amount),
+            raw_text=text,
+            source="rule",
+        )
+        return _modify_transfer_draft(user_id, draft, synth)
 
     # "Chọn Trần Hoàng Minh" / "Trần Hoàng Minh"
     if draft.recipient is None and draft.candidates:
@@ -2414,7 +2730,16 @@ def _compose_transfer_text(draft: TransactionDraft, referenced_tx) -> str:
         else:
             recipient_part = f"cho {draft.recipient.display_name}"  # type: ignore[union-attr]
 
-        return f"Bạn muốn chuyển {amount_part} {recipient_part}?"
+        question = f"Bạn muốn chuyển {amount_part} {recipient_part}?"
+        # Offer (don't apply) a history-based figure when the amount is the
+        # only thing missing. The UI renders ``suggested_amount`` as a
+        # tappable chip; this line tells the user it's there.
+        if has_miss_amt and draft.suggested_amount is not None:
+            question += (
+                f" Mình gợi ý {format_vnd(draft.suggested_amount)} dựa trên lịch sử"
+                " — bấm vào gợi ý nếu đúng nhé."
+            )
+        return question
 
     warn = next(
         (f for f in draft.flags if f.severity == "warn"),

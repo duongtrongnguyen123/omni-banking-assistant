@@ -415,6 +415,36 @@ export const TransactionCard = ({
           {draft.category && <CategoryChip category={draft.category} />}
         </div>
       )}
+      {draft.amount == null &&
+        draft.suggested_amount != null &&
+        onModifyAmount &&
+        actionable && (
+          <div className="tx-card__amount tx-card__amount--suggest">
+            <div className="tx-card__label">SỐ TIỀN</div>
+            <div className="tx-card__suggest">
+              <span className="tx-card__suggest-ask">
+                Bạn muốn chuyển bao nhiêu?
+              </span>
+              <button
+                type="button"
+                className="tx-card__suggest-chip"
+                onClick={() => onModifyAmount(draft.suggested_amount!)}
+                title={
+                  draft.amount_prediction_reason ??
+                  "Đề xuất từ lịch sử giao dịch với người này"
+                }
+              >
+                Dùng {formatVND(draft.suggested_amount)}
+                <span className="tx-card__suggest-tag">đề xuất từ lịch sử</span>
+                {typeof draft.amount_prediction_confidence === "number" && (
+                  <span className="tx-card__confidence-badge">
+                    {Math.round(draft.amount_prediction_confidence * 100)}%
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
       {r && (
         <>
           <div className="tx-row">

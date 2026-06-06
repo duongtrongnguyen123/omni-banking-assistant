@@ -122,6 +122,40 @@ def get_messages(session_id: str, user_id: str) -> Optional[list[dict]]:
     return [dict(r) for r in rows]
 
 
+def recent_messages(
+    session_id: str, user_id: str, max_turns: int = 8
+) -> list[dict]:
+    """Recent turns of a conversation as NLU-ready chat messages.
+
+    This is the *durable* context window the orchestrator feeds into the
+    NLU / phrasing layers. Unlike the ephemeral
+    :mod:`app.context.session_store` history (TTL-bounded, user-scoped,
+    wiped on restart), this reads straight from the permanent archive and
+    is scoped to a single ``session_id`` — so the assistant's context
+    always equals exactly what the user sees on screen, survives reloads
+    and process restarts, and never bleeds across conversations.
+
+    Roles are mapped to the OpenAI-compatible convention the LLM layer
+    expects (``omni`` → ``assistant``). Returns the last ``max_turns``
+    messages in chronological order, or ``[]`` if the conversation
+    doesn't exist or isn't the caller's.
+    """
+    if get_session(session_id, user_id) is None:
+        return []
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT role, content FROM chat_messages WHERE session_id = ? "
+        "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (session_id, max_turns),
+    ).fetchall()
+    role_map = {"user": "user", "omni": "assistant"}
+    return [
+        {"role": role_map.get(r["role"], "user"), "content": r["content"]}
+        for r in reversed(rows)
+        if r["content"]
+    ]
+
+
 def latest_session_id(user_id: str) -> Optional[str]:
     conn = get_connection()
     row = conn.execute(

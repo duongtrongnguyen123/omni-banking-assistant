@@ -652,6 +652,31 @@ textarea:focus-visible,
   border: 1px solid var(--orange);
   letter-spacing: 0.01em;
 }
+.tx-card__amount--suggest .tx-card__suggest {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.tx-card__suggest-ask {
+  font-size: 14px; font-weight: 600; color: var(--ink, #1a1a1a);
+}
+.tx-card__suggest-chip {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700;
+  padding: 7px 12px; border-radius: 999px;
+  background: var(--orange); color: white; border: none;
+  transition: filter .15s, transform .05s;
+}
+.tx-card__suggest-chip:hover { filter: brightness(1.05); }
+.tx-card__suggest-chip:active { transform: translateY(1px); }
+.tx-card__suggest-tag {
+  font-size: 10.5px; font-weight: 600; opacity: 0.9;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.tx-card__suggest-chip .tx-card__confidence-badge {
+  background: rgba(255, 255, 255, 0.22);
+  color: white; border-color: transparent;
+}
 .tx-card__amount-edit-trigger {
   appearance: none; border: none; background: transparent;
   margin-left: 8px;

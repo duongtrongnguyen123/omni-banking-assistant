@@ -36,9 +36,22 @@ def _bootstrap_test_env() -> None:
 
     # Empty out LLM credentials so `_enabled_providers()` returns []. We set
     # them explicitly (rather than relying on absence) because the dev .env
-    # may already define real keys.
+    # may already define real keys. CRITICAL: clear the *numbered key pool*
+    # too (GROQ_API_KEY_1..N / GEMINI_API_KEY_1..N) — `_collect_keys` reads
+    # those straight from os.environ, and a dev .env with a 36-key pool
+    # would otherwise leave the LLM live during tests, making every
+    # response-phrasing assertion (smalltalk/insights fallback copy)
+    # non-deterministic.
+    # Set to "" rather than pop: ``app.config`` calls
+    # ``load_dotenv(override=False)`` on import, which RE-ADDS any key that
+    # is absent from os.environ — popping would let the real .env pool leak
+    # back in. An existing empty string is not "absent", so override=False
+    # leaves it alone and ``_collect_keys`` skips it (it drops empties).
     os.environ["GROQ_API_KEY"] = ""
     os.environ["GEMINI_API_KEY"] = ""
+    for _prefix in ("GROQ_API_KEY", "GEMINI_API_KEY"):
+        for _n in range(1, 200):
+            os.environ[f"{_prefix}_{_n}"] = ""
 
     # Skip the fastembed backfill — irrelevant to NLU rule testing and
     # downloads ~120MB on first run.

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, friendlyApiError } from "./api/client";
+import {
+  api,
+  friendlyApiError,
+  setCurrentSessionId as setApiSessionId,
+} from "./api/client";
 import { TOAST_EVENT_NAME, type ToastEvent } from "./hooks/useEventStream";
 import type {
   AtmHit,
@@ -267,9 +271,13 @@ export default function App() {
   };
 
   // Keep the ref in lockstep with the state so stable callbacks read the
-  // live conversation id.
+  // live conversation id. Also mirror it into the API client module so the
+  // draft-action endpoints (confirm / cancel / select) replay the right
+  // `X-Chat-Session-Id` after the user switches or starts a conversation in
+  // the sidebar — not just after a chat send.
   useEffect(() => {
     sessionIdRef.current = currentSessionId;
+    setApiSessionId(currentSessionId);
   }, [currentSessionId]);
 
   const refreshSessions = useCallback(async () => {

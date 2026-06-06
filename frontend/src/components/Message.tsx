@@ -142,7 +142,17 @@ export const Message = ({
             }
             onModifyAmount={
               onSubmitText
-                ? (amount: number) => onSubmitText(`đổi sang ${amount}`)
+                ? (amount: number) =>
+                    // Format with dot thousands separators ("2.000.000")
+                    // so the backend amount parser resolves it even on the
+                    // rule-only path (a bare "2000000" has no unit/separator
+                    // and wouldn't parse).
+                    onSubmitText(
+                      `đổi sang ${String(amount).replace(
+                        /\B(?=(\d{3})+(?!\d))/g,
+                        ".",
+                      )}`,
+                    )
                 : undefined
             }
             onSplitBill={onSplitBill}

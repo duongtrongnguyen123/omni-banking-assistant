@@ -1757,6 +1757,345 @@ def test_recent_to_recipient_refreshed_after_modify() -> None:
         )
 
 
+def test_thoi_chi_chuyen_amount_is_edit_not_cancel() -> None:
+    """A leading "thôi" used to short-circuit straight into the cancel
+    path, so "thôi chỉ chuyển 20 thôi" silently killed the draft. The
+    edit-guard only recognised amounts *with* a unit (parse_amount), and
+    a bare "20" returned None — so the cancel won. Now a bare number in
+    an edit frame inherits the draft's unit (20 → 20 triệu on a
+    triệu-scale draft) and the message routes to the modify path instead
+    of cancelling. Regression for the rate-limited-fallback report."""
+    from app.services.orchestrator import handle_message
+
+    _clear_all_drafts()
+    r1 = handle_message(USER, "Gửi cho mẹ 20 triệu")
+    assert r1.draft is not None and r1.draft.recipient is not None
+    recipient = r1.draft.recipient.display_name
+
+    r2 = handle_message(USER, "thôi chỉ chuyển 20 thôi")
+    assert r2.draft is not None, "must NOT cancel — it's an amount restatement"
+    assert "huỷ" not in r2.text.lower() and "hủy" not in r2.text.lower()
+    assert r2.draft.recipient is not None
+    assert r2.draft.recipient.display_name == recipient
+    assert r2.draft.amount == 20_000_000
+
+
+def test_thoi_chi_chuyen_bare_number_reduces_amount() -> None:
+    """Bare-number edit also *reduces*: on a 20-triệu draft, "thôi chỉ
+    chuyển 5 thôi" means 5 triệu (unit inherited from the draft), not a
+    cancel and not 5 đồng."""
+    from app.services.orchestrator import handle_message
+
+    _clear_all_drafts()
+    r1 = handle_message(USER, "Gửi cho mẹ 20 triệu")
+    assert r1.draft is not None
+    r2 = handle_message(USER, "thôi chỉ chuyển 5 thôi")
+    assert r2.draft is not None, "must edit, not cancel"
+    assert r2.draft.amount == 5_000_000
+
+
+def test_thoi_with_new_recipient_is_redirect_not_cancel() -> None:
+    """"thôi chuyển cho bố" after a draft to mẹ is a REDIRECT (switch to
+    bố, keep the amount), not a cancel — the leading "thôi" is a discourse
+    particle, not a kill. Pure cancels ("thôi", "thôi không chuyển nữa")
+    must still cancel (covered separately)."""
+    from app.services.orchestrator import handle_message, session_for
+
+    session_for(USER).clear_draft()
+    r1 = handle_message(USER, "chuyển cho mẹ 5 triệu")
+    assert r1.draft is not None and r1.draft.amount == 5_000_000
+    r2 = handle_message(USER, "thôi chuyển cho bố")
+    assert r2.draft is not None, "must redirect, not cancel"
+    assert r2.draft.recipient is not None
+    assert "Hùng" in r2.draft.recipient.display_name  # bố = Lê Văn Hùng
+    assert r2.draft.amount == 5_000_000, "amount must be remembered across the redirect"
+    session_for(USER).clear_draft()
+
+
+def test_thoi_khong_chuyen_nua_still_cancels() -> None:
+    """A pure cancel that the extractor might mis-read ("nữa" looks like a
+    name) must still cancel — the redirect step-aside only fires when the
+    named recipient actually RESOLVES to a contact."""
+    from app.services.orchestrator import handle_message, session_for
+
+    session_for(USER).clear_draft()
+    handle_message(USER, "chuyển cho mẹ 5 triệu")
+    r = handle_message(USER, "thôi không chuyển nữa")
+    assert r.draft is None
+    assert "huỷ" in r.text.lower() or "hủy" in r.text.lower()
+
+
+def test_pure_thoi_still_cancels_draft() -> None:
+    """Positive control: a *pure* "thôi" (no amount) must still cancel —
+    the edit-guard only steps aside when the message names a sum."""
+    from app.services.orchestrator import handle_message
+
+    _clear_all_drafts()
+    r1 = handle_message(USER, "Gửi cho mẹ 20 triệu")
+    assert r1.draft is not None
+    r2 = handle_message(USER, "thôi")
+    assert r2.draft is None
+    assert "huỷ" in r2.text.lower() or "hủy" in r2.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Redirecting an open draft to a NEW recipient must not silently inherit the
+# previous recipient's amount. Reported bug: after "chuyển cho nam 10 triệu",
+# typing "chuyển cho lan" (no amount) showed "chuyển 10.000.000đ cho ai?" —
+# a figure the user never entered this turn. Driven through
+# _modify_transfer_draft with synthesized NLU so the assertion is
+# deterministic regardless of LLM/rule-classifier availability.
+# ---------------------------------------------------------------------------
+
+
+def _draft_to(recipient_text: str, amount: int):
+    """Build a fresh transfer draft for ``USER`` and register it as the
+    session's current draft, bypassing the (LLM-dependent) NLU layer."""
+    from app.models.schemas import ExtractedEntities, NLUResult
+    from app.services.orchestrator import (
+        _handle_transfer,
+        session_for,
+    )
+
+    session_for(USER).clear_draft()
+    nlu = NLUResult(
+        intent="transfer",
+        confidence=0.9,
+        entities=ExtractedEntities(recipient_text=recipient_text, amount=amount),
+        raw_text=f"chuyển cho {recipient_text} {amount}",
+        source="rule",
+    )
+    draft = _handle_transfer(USER, nlu).draft
+    session_for(USER).set_draft(draft)
+    return draft
+
+
+def _modify(draft, *, recipient_text=None, amount=None, account_hint=None, raw_text=""):
+    from app.models.schemas import ExtractedEntities, NLUResult
+    from app.services.orchestrator import _modify_transfer_draft
+
+    nlu = NLUResult(
+        intent="transfer",
+        confidence=0.9,
+        entities=ExtractedEntities(
+            recipient_text=recipient_text, amount=amount, account_hint=account_hint
+        ),
+        raw_text=raw_text,
+        source="rule",
+    )
+    return _modify_transfer_draft(USER, draft, nlu)
+
+
+def test_redirect_to_ambiguous_recipient_keeps_amount() -> None:
+    """"chuyển cho lan" after a 10tr draft to Nam: lan is ambiguous, the
+    user only changed the recipient → the amount they already typed (10tr)
+    is REMEMBERED and carried to the new recipient; they just pick which
+    Lan. The committed recipient is cleared (must disambiguate) but the
+    candidate list is surfaced."""
+    d = _draft_to("nam", 10_000_000)
+    r = _modify(d, recipient_text="lan", raw_text="chuyển cho lan")
+    assert r.draft is not None
+    assert r.draft.recipient is None  # ambiguous → must pick one
+    assert len(r.draft.candidates) >= 2
+    assert r.draft.amount == 10_000_000, "amount the user set must be remembered"
+
+
+def test_redirect_to_single_recipient_keeps_amount() -> None:
+    """Swapping to a clean single match keeps the amount the user already
+    set — "remember the whole transaction". No re-asking, no auto-predict
+    of a NEW figure for the new person."""
+    d = _draft_to("nam", 2_000_000)
+    r = _modify(d, recipient_text="Thảo", raw_text="đổi sang Thảo")
+    assert r.draft is not None and r.draft.recipient is not None
+    assert r.draft.recipient.display_name != "Vũ Hoàng Nam"
+    assert r.draft.amount == 2_000_000, "amount must be remembered across a recipient change"
+    assert r.draft.predicted_amount is False
+
+
+def test_named_recipient_with_amount_swaps_recipient() -> None:
+    """Reported alias bug: with an active draft to Linh, "chuyển cho mẹ 10
+    triệu" must SWAP to mẹ (Nguyễn Thị Lan). The amount-edit fast path in
+    _try_continue_draft must not fire on a unit-bearing amount and silently
+    keep the old recipient. Goes through handle_message so the continuation
+    path is exercised (LLM off in tests → rule pipeline)."""
+    from app.services.orchestrator import handle_message, session_for
+
+    session_for(USER).clear_draft()
+    r1 = handle_message(USER, "chuyển cho linh 200k")
+    assert r1.draft is not None and r1.draft.recipient is not None
+    assert "Linh" in r1.draft.recipient.display_name
+    r2 = handle_message(USER, "chuyển cho mẹ 10 triệu")
+    assert r2.draft is not None and r2.draft.recipient is not None
+    assert "Lan" in r2.draft.recipient.display_name, "must swap to mẹ, not keep Linh"
+    assert r2.draft.amount == 10_000_000
+    session_for(USER).clear_draft()
+
+
+def test_amount_only_edit_keeps_recipient_and_amount() -> None:
+    """Regression guard: "đổi sang 3 triệu" changes only the amount; the
+    recipient and the new amount both stick (this path must be untouched
+    by the redirect-amount-reset fix)."""
+    d = _draft_to("nam", 10_000_000)
+    r = _modify(d, amount=3_000_000, raw_text="đổi sang 3 triệu")
+    assert r.draft is not None and r.draft.recipient is not None
+    assert r.draft.recipient.display_name == "Vũ Hoàng Nam"
+    assert r.draft.amount == 3_000_000
+
+
+def test_redirect_with_new_amount_uses_that_amount() -> None:
+    """When the user redirects AND states a new amount in the same turn,
+    that amount wins (no reset, no inheritance)."""
+    d = _draft_to("nam", 10_000_000)
+    r = _modify(
+        d, recipient_text="Thảo", amount=2_000_000, raw_text="đổi sang chị Thảo 2 triệu"
+    )
+    assert r.draft is not None and r.draft.recipient is not None
+    assert r.draft.recipient.display_name != "Vũ Hoàng Nam"
+    assert r.draft.amount == 2_000_000
+
+
+# ---------------------------------------------------------------------------
+# Anti-fabrication backstop — the LLM's FOLLOW-UP rule re-emits the prior
+# turn's amount/recipient/intent. These two guards make sure money values
+# are only ever trusted when the CURRENT message actually carries them, so
+# a stale figure can't ride into a draft the user never asked for. Driven
+# with synthesized NLU (source mimics the LLM having inherited a value) so
+# the assertions are deterministic with the LLM off.
+# ---------------------------------------------------------------------------
+
+
+def test_llm_hallucinated_amount_ignored_when_not_typed() -> None:
+    """The deterministic gate: the LLM emits a DIFFERENT amount (9tr,
+    hallucinated/inherited) while the raw text "à chuyển cho linh đi" has
+    no number. The draft's real amount (2tr the user set) must be kept —
+    the LLM's untyped figure is ignored, never applied."""
+    d = _draft_to("nam", 2_000_000)
+    r = _modify(
+        d, recipient_text="linh", amount=9_000_000, raw_text="à chuyển cho linh đi"
+    )
+    assert r.draft is not None and r.draft.recipient is not None
+    assert r.draft.amount == 2_000_000, (
+        "an untyped LLM amount must neither override nor wipe the user's real amount"
+    )
+
+
+def test_vague_message_does_not_fabricate_transfer() -> None:
+    """No active draft + a vague message ("ờ cái kia") whose only transfer
+    content was inherited by the LLM from history → ask, never build a
+    draft out of stale recipient/amount."""
+    from app.models.schemas import ExtractedEntities, NLUResult
+    from app.services.orchestrator import _handle_transfer
+
+    nlu = NLUResult(
+        intent="transfer",
+        confidence=0.6,
+        entities=ExtractedEntities(recipient_text="lan", amount=10_000_000),
+        raw_text="ờ cái kia",
+        source="llm",
+    )
+    r = _handle_transfer(USER, nlu)
+    assert r.draft is None, "must not fabricate a draft from inherited fields"
+    low = r.text.lower()
+    assert "bao nhiêu" in low or "cho ai" in low
+
+
+def test_transfer_with_real_signal_still_builds_draft() -> None:
+    """Positive control: a message that genuinely carries a verb + amount +
+    recipient must still build a draft — the backstop only blocks the
+    no-signal case."""
+    from app.models.schemas import ExtractedEntities, NLUResult
+    from app.services.orchestrator import _handle_transfer
+
+    nlu = NLUResult(
+        intent="transfer",
+        confidence=0.9,
+        entities=ExtractedEntities(recipient_text="mẹ", amount=2_000_000),
+        raw_text="chuyển cho mẹ 2 triệu",
+        source="rule",
+    )
+    r = _handle_transfer(USER, nlu)
+    assert r.draft is not None
+    assert r.draft.amount == 2_000_000
+
+
+def test_source_account_switch_mid_draft() -> None:
+    """"người gửi" change: "dùng tài khoản phụ" moves the draft's source
+    account to the non-primary one, keeping recipient + amount; "chính"
+    moves it back. Resolution is against the draft's own accounts."""
+    d = _draft_to("nam", 2_000_000)
+    accounts = d.source_accounts
+    assert len(accounts) >= 2, "demo user needs ≥2 accounts for this test"
+    primary = next(a for a in accounts if a.primary)
+    secondary = next(a for a in accounts if not a.primary)
+
+    r = _modify(d, account_hint="phụ", raw_text="dùng tài khoản phụ nhé")
+    assert r.draft is not None
+    assert r.draft.source_account_id == secondary.id
+    assert r.draft.amount == 2_000_000
+    assert r.draft.recipient is not None  # recipient untouched
+
+    r2 = _modify(r.draft, account_hint="chính", raw_text="à quay lại tài khoản chính")
+    assert r2.draft.source_account_id == primary.id
+
+
+def test_missing_amount_offers_suggestion_not_autofill() -> None:
+    """First mention of a known recipient without an amount must NOT
+    auto-fill the figure. The history estimate is OFFERED via
+    ``suggested_amount`` (tappable chip) while ``amount`` stays None →
+    ``missing_amount`` → the reply asks "bao nhiêu" and mentions the
+    suggestion. Regression for the "tự set 220.000đ" report."""
+    from app.models.schemas import ExtractedEntities, NLUResult
+    from app.services.orchestrator import _handle_transfer, session_for
+
+    session_for(USER).clear_draft()
+    nlu = NLUResult(
+        intent="transfer",
+        confidence=0.9,
+        entities=ExtractedEntities(recipient_text="mẹ"),
+        raw_text="chuyển cho mẹ",
+        source="rule",
+    )
+    r = _handle_transfer(USER, nlu)
+    d = r.draft
+    assert d is not None and d.recipient is not None
+    assert d.amount is None, "amount must NOT be auto-filled from the predictor"
+    assert d.predicted_amount is False
+    assert any(f.code == "missing_amount" for f in d.flags)
+    # mẹ has rich history, so a suggestion should be offered (chip + hint).
+    assert d.suggested_amount is not None
+    assert "gợi ý" in r.text.lower()
+
+
+def test_redirect_while_amount_unset_refreshes_suggestion() -> None:
+    """When NO amount has been set yet, redirecting to a new known
+    recipient refreshes the OFFERED suggestion for THEM (chip) while
+    ``amount`` stays None — still asks, never auto-decides. (Once an amount
+    IS set, a recipient change keeps it — see the *_keeps_amount tests.)"""
+    from app.models.schemas import ExtractedEntities, NLUResult
+    from app.services.orchestrator import _handle_transfer, session_for
+
+    session_for(USER).clear_draft()
+    base = _handle_transfer(
+        USER,
+        NLUResult(
+            intent="transfer",
+            confidence=0.9,
+            entities=ExtractedEntities(recipient_text="mẹ"),
+            raw_text="chuyển cho mẹ",
+            source="rule",
+        ),
+    ).draft
+    assert base is not None and base.amount is None
+    session_for(USER).set_draft(base)
+
+    r = _modify(base, recipient_text="linh", raw_text="à chuyển cho linh")
+    assert r.draft is not None and r.draft.recipient is not None
+    assert r.draft.amount is None
+    assert r.draft.predicted_amount is False
+    assert r.draft.suggested_amount is not None  # Linh has history
+    assert any(f.code == "missing_amount" for f in r.draft.flags)
+
+
 def test_insights_anomaly_renders_detector_reason() -> None:
     """The MAD anomaly detector returns ``contact_name`` + ``reason``
     (e.g. "cao gấp 8.4 lần mức thường (per-contact)"). The chat reply
