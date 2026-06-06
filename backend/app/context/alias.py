@@ -26,13 +26,30 @@ def _fold(s: str) -> str:
 # Family/relational prefixes that should be stripped to match name tokens.
 _RELATIONAL_PREFIXES = ("anh ", "chi ", "em ", "ban ", "co ", "chu ", "bac ", "ong ", "ba ")
 
+# Possessive / vocative tail tokens — "mẹ tôi" / "mẹ mình" /
+# "chị Lan ơi" / "anh Hùng nhé". None appear in any contact's display
+# name or alias list, so leaving them in defeats the exact-alias match
+# ("mẹ tôi" never hits the "mẹ" alias). Strip from the right.
+_RELATIONAL_TAIL_TOKENS = {
+    "toi", "minh", "em", "anh", "chi",
+    "oi", "nhe", "nha", "nhi",
+}
+
 
 def _strip_relational(folded: str) -> str:
     s = folded
     for p in _RELATIONAL_PREFIXES:
         if s.startswith(p):
             s = s[len(p):]
-    return s
+    # Token-level tail stripping — handles "mẹ tôi nhé" → "mẹ". Only
+    # strips when the original has >1 token so a single-token name like
+    # "Minh" doesn't get eaten (Minh is in the tail-token set... actually
+    # it isn't; but "Em" / "Anh" / "Chi" might be a single name token,
+    # so the >1 guard keeps them safe).
+    tokens = s.split()
+    while len(tokens) > 1 and tokens[-1] in _RELATIONAL_TAIL_TOKENS:
+        tokens.pop()
+    return " ".join(tokens)
 
 
 def _last_token(folded_name: str) -> str:

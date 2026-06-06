@@ -743,6 +743,41 @@ def test_budget_overshoot_details_payload_shape() -> None:
     assert callable(compute_status_for)
 
 
+# ---------------------------------------------------------------------------
+# Alias resolver — possessive / vocative tail stripping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "surface,expected",
+    [
+        ("mẹ tôi", "Nguyễn Thị Lan"),
+        ("mẹ mình", "Nguyễn Thị Lan"),
+        ("mẹ tôi nhé", "Nguyễn Thị Lan"),
+        ("anh tuấn", "Phạm Quốc Tuấn"),  # prefix path, kept as-is
+        ("Trần Hoàng Minh", "Trần Hoàng Minh"),  # full name, no strip
+    ],
+)
+def test_alias_resolver_strips_possessive_tail(
+    surface: str, expected: str
+) -> None:
+    """The natural Vietnamese phrasing "mẹ tôi" / "mẹ mình" / "chị X
+    ơi" / "anh Y nhé" used to lose the alias match because the
+    possessive/vocative suffix isn't in any contact's alias list. Now
+    the resolver strips trailing tokens (tôi / mình / ơi / nhé / nha
+    / em / anh / chi) before alias lookup, so "Chuyển cho mẹ tôi 2tr"
+    resolves to mẹ → Lan instead of asking "who?"."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of(USER)
+    matches = resolve_recipient(surface, contacts)
+    names = [m.contact.display_name for m in matches]
+    assert expected in names, (
+        f"{surface!r} should resolve to {expected!r}; got {names}"
+    )
+
+
 def test_fraud_model_threshold_constant_exists() -> None:
     """rules.evaluate() reads ``fraud_model.FRAUD_RISK_THRESHOLD``. A
     rename / reorder would silently disable the integration; assert
