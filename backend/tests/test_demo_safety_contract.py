@@ -1024,6 +1024,54 @@ def test_month_year_check_does_not_eat_other_intents(
 
 
 # ---------------------------------------------------------------------------
+# Colloquial balance phrasings — "còn bao nhiêu tiền", "cạn ví", "lương về"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "còn bao nhiêu tiền",
+        "còn nhiều tiền không",
+        "hết tiền chưa",
+        "hết sạch tiền",
+        "cạn ví",
+        "tiền nong còn không",
+        "tiền nong còn ko",
+        "tiền còn không",
+        "lương về chưa",
+        "lương về rồi chưa",
+    ],
+)
+def test_colloquial_balance_phrasings_route_to_balance(text: str) -> None:
+    """The Tier-1 substring "so du" / "balance" matched only the literal
+    "số dư" / "balance" question. A judge typing "còn bao nhiêu tiền" or
+    "cạn ví" used to fall to the Tier-2 history match ("bao nhieu") and
+    get a month aggregate instead of the actual balance — the most
+    visible mis-routing in the demo. These are all idiomatic Vietnamese
+    "do I still have money?" phrasings that judges actually use."""
+    intent, _ = classify(text)
+    assert intent == "balance", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Negatives — must still route correctly.
+        ("tháng này tiêu nhiều tiền", "history"),
+        ("tháng này hết bao nhiêu", "history"),
+        ("gửi mẹ 2 triệu", "transfer"),
+        ("số dư", "balance"),
+    ],
+)
+def test_colloquial_balance_does_not_eat_other_intents(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
+
+
+# ---------------------------------------------------------------------------
 # "Lặp lại?" only fires when draft.amount actually matches the referenced tx
 # ---------------------------------------------------------------------------
 
