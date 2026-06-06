@@ -26,6 +26,26 @@ from .deps import current_user
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+_LAST_SESSION_BY_USER: dict[str, str] = {}
+"""Per-user record of the chat-conversation id last seen on /api/chat.
+
+The orchestrator's ``session_for(user_id)`` is keyed by user only, so
+its in-memory ``current_draft`` would otherwise persist across
+*conversation* boundaries — opening a fresh chat in the left drawer
+and asking "chuyển tiền cho bố" would inherit the abandoned amount
+from the prior conversation's draft (user report: "tự gán số tiền
+đang lưu ở trong bộ nhớ"). When the active session_id changes we
+clear the draft so each conversation starts with a clean slot."""
+
+
+def _enter_chat_session(user_id: str, session_id: str) -> None:
+    """Clear the orchestrator's in-memory draft when switching chats.
+    Called both from /api/chat (every turn) and the new-session route
+    so any path that adopts a new conversation gets a fresh draft."""
+    if _LAST_SESSION_BY_USER.get(user_id) != session_id:
+        session_for(user_id).clear_draft()
+        _LAST_SESSION_BY_USER[user_id] = session_id
+
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
@@ -102,6 +122,7 @@ def chat(
     # gets adopted by the UI.
     session_id = chat_log.resolve_session(user_id, req.session_id)
     response.headers["X-Chat-Session-Id"] = session_id
+    _enter_chat_session(user_id, session_id)
     if dev:
         begin_telemetry()
     try:
@@ -135,7 +156,12 @@ def list_chat_sessions(user_id: str = Depends(current_user)) -> list[dict]:
 @router.post("/chat/sessions")
 def create_chat_session(user_id: str = Depends(current_user)) -> dict:
     """Open a fresh conversation and return its row."""
-    return chat_log.create_session(user_id)
+    row = chat_log.create_session(user_id)
+    # Clear any in-flight draft so the new conversation doesn't inherit
+    # the previous one's amount/recipient through the orchestrator's
+    # per-user session cache.
+    _enter_chat_session(user_id, row["id"])
+    return row
 
 
 @router.get("/chat/sessions/{session_id}")

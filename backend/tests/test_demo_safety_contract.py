@@ -2036,6 +2036,131 @@ def test_transfer_negative_amount_rejected() -> None:
     assert any(f.code == "missing_amount" for f in resp.draft.flags)
 
 
+def test_fresh_verb_swap_recipient_keeps_amount() -> None:
+    """User flow from feedback "cứ đổi người là quên mất số tiền":
+    ``chuyển mẹ 1tr`` then ``chuyển cho bố`` (fresh verb + recipient
+    only, no amount). Pre-fix the fresh-transfer guard wiped the draft
+    on any verb-led prefix, so the second turn started a NEW draft with
+    no amount. Now we only wipe when BOTH slots arrive together — a
+    single-slot edit routes through the modify path and the amount is
+    preserved."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.amount == 1_000_000
+
+    edit = handle_message("u_an", "chuyển cho bố")
+    assert edit.draft is not None, "draft must survive a single-slot fresh-verb edit"
+    assert edit.draft.amount == 1_000_000, "amount must carry over from the previous turn"
+    assert edit.draft.recipient is not None
+    # Recipient changed away from mẹ (loose check — exact name depends on seed).
+    assert edit.draft.recipient.display_name != first.draft.recipient.display_name
+
+
+def test_fresh_verb_swap_amount_keeps_recipient() -> None:
+    """Mirror: ``chuyển mẹ 1tr`` then ``chuyển 500k`` (fresh verb +
+    amount only, no recipient). Pre-fix the guard wiped the draft and
+    the second turn lost the recipient. Now the amount edit lands on
+    the existing draft."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.recipient is not None
+    first_name = first.draft.recipient.display_name
+
+    edit = handle_message("u_an", "chuyển 500k")
+    assert edit.draft is not None, "draft must survive a single-slot fresh-verb edit"
+    assert edit.draft.amount == 500_000, "amount must update to the new value"
+    assert edit.draft.recipient is not None
+    assert edit.draft.recipient.display_name == first_name
+
+
+def test_new_chat_session_clears_orchestrator_draft() -> None:
+    """User report: open a new chat in the left drawer, ask
+    "chuyển tiền cho bố" — Omni auto-fills the amount from the prior
+    conversation's abandoned draft. The orchestrator session is keyed
+    by user_id only, so without a session-switch hook the in-memory
+    draft persisted across conversations. Now /api/chat clears it on
+    every session_id change, AND POST /chat/sessions clears it on
+    create."""
+    from fastapi.testclient import TestClient
+    from app.context.session import session_for as _sf
+    from app.main import app
+    from app.routes.chat import _LAST_SESSION_BY_USER
+
+    client = TestClient(app)
+    _LAST_SESSION_BY_USER.clear()
+    _sf("u_an").clear_draft()
+
+    # First conversation — leave an incomplete draft hanging.
+    r1 = client.post(
+        "/api/chat",
+        headers={"x-user-id": "u_an"},
+        json={"message": "chuyển 2 triệu"},
+    )
+    assert r1.status_code == 200
+    first_session = r1.headers["X-Chat-Session-Id"]
+    assert _sf("u_an").current_draft is not None
+    assert _sf("u_an").current_draft.amount == 2_000_000
+
+    # User opens a brand-new conversation via the left drawer button.
+    create = client.post("/api/chat/sessions", headers={"x-user-id": "u_an"})
+    assert create.status_code == 200
+    new_session = create.json()["id"]
+    assert new_session != first_session
+
+    # The orchestrator draft must have been wiped — otherwise the next
+    # turn in the new conversation would inherit the abandoned 2tr.
+    assert _sf("u_an").current_draft is None
+
+    # _enter_chat_session also fires from /api/chat itself: switching
+    # back to the FIRST session via a turn must again clear the draft
+    # (so going back-and-forth in the drawer never leaks slots).
+    _sf("u_an").clear_draft()  # baseline
+    r2 = client.post(
+        "/api/chat",
+        headers={"x-user-id": "u_an"},
+        json={"message": "chuyển 9tr", "session_id": first_session},
+    )
+    assert r2.status_code == 200
+    assert _sf("u_an").current_draft is not None
+    assert _sf("u_an").current_draft.amount == 9_000_000
+
+    # Now hop back to the NEW session — draft from "chuyển 9tr" above
+    # must NOT carry over.
+    r3 = client.post(
+        "/api/chat",
+        headers={"x-user-id": "u_an"},
+        json={"message": "số dư bao nhiêu", "session_id": new_session},
+    )
+    assert r3.status_code == 200
+    # After the switch the orchestrator's draft is cleared. The balance
+    # turn itself doesn't create a draft, so it stays None.
+    assert _sf("u_an").current_draft is None
+
+
+def test_fresh_verb_both_slots_still_starts_fresh() -> None:
+    """Counter-test: when the user provides BOTH recipient AND amount
+    on a verb-led command, it's truly a fresh request — wipe the old
+    draft. Without this we'd silently inherit safety flags / mini-
+    ledger from the previous recipient."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 1tr")
+    assert first.draft and first.draft.amount == 1_000_000
+
+    fresh = handle_message("u_an", "chuyển cho bố 500k")
+    assert fresh.draft is not None
+    assert fresh.draft.amount == 500_000
+    # Recipient swapped — and the mini-ledger / flags are recomputed
+    # against the new recipient because the draft was wiped first.
+    assert fresh.draft.recipient is not None
+    assert fresh.draft.recipient.display_name != first.draft.recipient.display_name
+
+
 def test_modify_amount_preserves_recipient() -> None:
     """Sequence: ``chuyển mẹ 2tr`` then ``đổi thành 5tr``. Pre-fix the
     rule extractor matched "đổi thành" as ``recipient_text`` and

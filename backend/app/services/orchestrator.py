@@ -567,16 +567,44 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         )
 
     # Fresh-transfer guard: if the user types a NEW verb-led command
-    # ("chuyển tiền cho t", "gửi 500k cho ai đó"), don't carry over the
-    # previous draft's amount / recipient. Pre-fix, judges who finished
-    # one demo turn (draft cached with amount=2tr) then started a fresh
-    # request without naming an amount saw "Bạn muốn chuyển 2.000.000đ
-    # cho ai?" — the stale 2tr leaked from session. Detect the fresh
-    # command shape (leading transfer verb) and clear the current draft
-    # before the modify-path heuristic runs.
+    # AND provides BOTH the recipient and the amount, treat it as a
+    # truly fresh request and wipe the previous draft. Pre-fix, the
+    # wipe fired on any "chuyển …" prefix, so the user editing one
+    # slot mid-flow ("chuyển cho Y" while draft sits at (X, 1tr)) lost
+    # the other slot (amount evaporated to None) — the bug reported by
+    # the user as "cứ đổi người là quên mất số tiền".
+    #
+    # Single-slot updates now fall through to ``_looks_like_modification``
+    # below, which mutates the existing draft in place. The original
+    # bug this guard was added for (stale 2tr leaking after a finished
+    # turn) only manifests when the previous turn never confirmed nor
+    # cancelled — covered separately by the missing_recipient flag the
+    # safety layer raises on the modified draft.
+    e = nlu.entities
+    provides_both_slots = e.amount is not None and bool(e.recipient_text)
+    prev_draft_complete = (
+        session.current_draft is not None
+        and session.current_draft.recipient is not None
+        and session.current_draft.amount is not None
+    )
+    # Wipe on a fresh verb-led command in either of two cases:
+    #   1. The new message provides BOTH recipient and amount — truly
+    #      a brand-new request, anything carried over from the prior
+    #      draft would be a stale leak.
+    #   2. The previous draft was incomplete (missing recipient OR
+    #      missing amount). The user is restarting after an unfinished
+    #      slot-prompt — e.g. "chuyển 2tr" (no recipient) then "chuyển
+    #      tiền cho t". Inheriting the abandoned 2tr would surface as
+    #      "Bạn muốn chuyển 2tr cho t?" which the user never asked for.
+    #
+    # Otherwise (single-slot edit on a complete previous draft) fall
+    # through to the modify path — the user is swapping one slot and
+    # expects the other to carry over. That's the "đổi người là quên
+    # mất số tiền" scenario from user feedback.
     if (
         session.current_draft is not None
         and _looks_like_fresh_transfer_command(text)
+        and (provides_both_slots or not prev_draft_complete)
     ):
         session.clear_draft()
 
