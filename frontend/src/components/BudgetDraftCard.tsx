@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { api } from "../api/client";
 import { formatVND } from "../format";
 import type { BudgetDraft, GoalDraft, OmniResponse } from "../types";
@@ -14,7 +15,17 @@ interface BudgetProps {
 }
 
 export const BudgetDraftCard = ({ draft, onResolve, busy }: BudgetProps) => {
+  // Local inflight lock: prevents the double-click race where two
+  // parallel confirmBudget / cancelBudget calls would each rewrite
+  // the message and double-fire onResolve (over-refreshing the
+  // sidebar widgets). `busy` from App only covers the main send()
+  // path, not the confirm itself.
+  const [submitting, setSubmitting] = useState(false);
+  const locked = submitting || !!busy;
+
   const onConfirm = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const resp = await api.confirmBudget(draft.id);
       onResolve(resp);
@@ -33,15 +44,21 @@ export const BudgetDraftCard = ({ draft, onResolve, busy }: BudgetProps) => {
         recurring_patterns: null,
         needs_disambiguation: false,
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const onCancel = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const resp = await api.cancelBudget(draft.id);
       onResolve(resp);
     } catch {
       /* silent — cancel is best-effort */
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -61,7 +78,7 @@ export const BudgetDraftCard = ({ draft, onResolve, busy }: BudgetProps) => {
         <button
           className="btn btn--ghost"
           onClick={onCancel}
-          disabled={busy}
+          disabled={locked}
           aria-label="Huỷ đặt ngân sách"
         >
           Huỷ
@@ -69,10 +86,11 @@ export const BudgetDraftCard = ({ draft, onResolve, busy }: BudgetProps) => {
         <button
           className="btn btn--primary"
           onClick={onConfirm}
-          disabled={busy}
+          disabled={locked}
+          aria-busy={submitting}
           aria-label="Xác nhận đặt ngân sách"
         >
-          Xác nhận
+          {submitting ? "Đang xử lý…" : "Xác nhận"}
         </button>
       </div>
     </div>
@@ -88,7 +106,13 @@ interface GoalProps {
 }
 
 export const GoalDraftCard = ({ draft, onResolve, busy }: GoalProps) => {
+  // Same inflight lock rationale as BudgetDraftCard above.
+  const [submitting, setSubmitting] = useState(false);
+  const locked = submitting || !!busy;
+
   const onConfirm = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const resp = await api.confirmGoal(draft.id);
       onResolve(resp);
@@ -105,15 +129,21 @@ export const GoalDraftCard = ({ draft, onResolve, busy }: GoalProps) => {
         recurring_patterns: null,
         needs_disambiguation: false,
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const onCancel = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const resp = await api.cancelGoal(draft.id);
       onResolve(resp);
     } catch {
       /* silent */
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -133,7 +163,7 @@ export const GoalDraftCard = ({ draft, onResolve, busy }: GoalProps) => {
         <button
           className="btn btn--ghost"
           onClick={onCancel}
-          disabled={busy}
+          disabled={locked}
           aria-label="Huỷ mục tiêu"
         >
           Huỷ
@@ -141,10 +171,11 @@ export const GoalDraftCard = ({ draft, onResolve, busy }: GoalProps) => {
         <button
           className="btn btn--primary"
           onClick={onConfirm}
-          disabled={busy}
+          disabled={locked}
+          aria-busy={submitting}
           aria-label="Xác nhận mục tiêu"
         >
-          Xác nhận
+          {submitting ? "Đang xử lý…" : "Xác nhận"}
         </button>
       </div>
     </div>
