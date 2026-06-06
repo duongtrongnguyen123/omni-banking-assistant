@@ -360,7 +360,9 @@ def _period_from_temporal(temporal_ref: Optional[str]) -> str:
     return "this_month"
 
 
-_user_locks: dict[str, "_th.Lock"] = {}
+from collections import OrderedDict as _OrderedDict
+_USER_LOCKS_MAX = 2048
+_user_locks: "_OrderedDict[str, _th.Lock]" = _OrderedDict()
 _user_locks_lock = _th.Lock()
 
 
@@ -370,14 +372,25 @@ def _user_lock(user_id: str) -> "_th.Lock":
     can't race. Round-9 stress reproduced wrong-recipient + wrong-amount
     OTP prompts when /api/chat fired ~250ms apart: request A wrote a
     draft, request B's NLU classify hit before A's draft write landed,
-    and B picked up a stale draft from a prior turn. The lock makes
-    turns serial within a user; cross-user latency is unaffected.
+    and B picked up a stale draft from a prior turn.
+
+    Backed by an ``OrderedDict`` LRU bounded at ``_USER_LOCKS_MAX`` so
+    the process doesn't accumulate one lock per unique user_id
+    forever. Eviction risk: a tx-in-flight user whose lock is evicted
+    would race the next turn — but the eviction policy LRU-touches the
+    user on every access, so any user with current activity stays in
+    the front. Only stale users get evicted.
     """
     with _user_locks_lock:
         lock = _user_locks.get(user_id)
         if lock is None:
             lock = _th.Lock()
             _user_locks[user_id] = lock
+            if len(_user_locks) > _USER_LOCKS_MAX:
+                _user_locks.popitem(last=False)
+        else:
+            # Touch — move to back so this user stays "fresh" for the LRU.
+            _user_locks.move_to_end(user_id)
         return lock
 
 
