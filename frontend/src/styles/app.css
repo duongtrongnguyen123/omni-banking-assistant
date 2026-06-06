@@ -361,6 +361,14 @@ textarea:focus-visible,
   display: block; margin: 6px 0 0;
   vertical-align: bottom;
 }
+
+.bal-card__total-row {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+}
+.bal-card__spark {
+  margin-left: auto;
+  opacity: 0.85;
+}
 @media (prefers-reduced-motion: reduce) {
   .suggest-chip__bar-fill { transition: none; }
 }

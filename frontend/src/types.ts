@@ -123,6 +123,8 @@ export interface Account {
 export interface BalanceResult {
   display_name: string;
   total: number;
+  /** Oldest → newest 7-day spending series (one cell per day). */
+  recent_outflow_7d?: number[];
   accounts: Account[];
 }
 

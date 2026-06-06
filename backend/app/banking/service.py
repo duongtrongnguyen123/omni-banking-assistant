@@ -77,10 +77,27 @@ def execute_transfer(
 def get_balance(user_id: str) -> dict:
     store = get_store()
     user = store.get_user(user_id)
+    # 7-day rolling outflow series — one cell per day, oldest → newest.
+    # Powers the sparkline on BalanceCard so the user sees their recent
+    # spending shape at a glance instead of opening the history view.
+    ref = now()
+    today = ref.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = today - timedelta(days=6)
+    daily = [0] * 7
+    txs = store.transactions_of(
+        user_id, since=start, status="completed",
+    )
+    for t in txs:
+        if t.amount <= 0:
+            continue
+        bucket = (t.created_at - start).days
+        if 0 <= bucket < 7:
+            daily[bucket] += t.amount
     return {
         "display_name": user.display_name,
         "accounts": [a.model_dump() for a in user.accounts],
         "total": sum(a.balance for a in user.accounts),
+        "recent_outflow_7d": daily,
     }
 
 
