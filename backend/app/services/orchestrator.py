@@ -1739,8 +1739,21 @@ def _execute_and_record(
     # persist it so next time the same phrase resolves in O(1) without any
     # LLM or embedding lookup. This is how long-tail contacts get smarter
     # over real usage.
+    # Safety guard: never persist an alias when the safety engine warned
+    # this recipient looks like a known frequent contact. The user
+    # confirmed the transfer anyway — that's their call — but we DON'T
+    # want a future "anh hai" / "mẹ" to resolve via the auto-learned
+    # alias to the lookalike contact. That would entrench the attack
+    # pattern and silently re-route subsequent transfers.
+    flagged_lookalike = any(
+        f.code == "lookalike_recipient" for f in draft.flags
+    )
     alias_learned: Optional[dict] = None
-    if draft.recipient and draft.recipient_surface:
+    if (
+        draft.recipient
+        and draft.recipient_surface
+        and not flagged_lookalike
+    ):
         if _is_worth_learning_alias(draft.recipient_surface, draft.recipient):
             try:
                 inserted = get_store().add_alias(
