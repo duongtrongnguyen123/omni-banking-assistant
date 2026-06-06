@@ -244,6 +244,38 @@ def _help_response() -> OmniResponse:
     )
 
 
+_CATEGORY_PREDICT_FLOOR = 0.5
+
+
+def _annotate_predicted_category(item: dict) -> dict:
+    """Re-categorize history rows that landed as ``other``.
+
+    Old transactions in the seed dataset were inserted before the
+    two-stage ``ml.categorizer`` shipped, so they sit in the ``other``
+    bucket even when their description is unambiguous ("tiền nhà",
+    "grab"). Annotating at read-time gives the LLM phraser (and any UI
+    chip) enough signal to say "trông giống rent" without mutating the
+    underlying row — preserves backward compat with by_category /
+    top_category aggregations the rest of the handler already computed.
+
+    Best-effort: any exception inside the categorizer returns the row
+    untouched. History replies must never break on ML.
+    """
+    if item.get("category") != "other":
+        return item
+    try:
+        cat, conf = categorize_description(item.get("description", ""))
+    except Exception:
+        return item
+    if cat == "other" or conf < _CATEGORY_PREDICT_FLOOR:
+        return item
+    return {
+        **item,
+        "predicted_category": cat,
+        "predicted_confidence": round(conf, 3),
+    }
+
+
 def _is_confirm(text: str) -> bool:
     return bool(_CONFIRM_RE.search(text.strip().lower()))
 
@@ -911,13 +943,15 @@ def _handle_history(
             "semantic_filter": e.semantic_filter,
             "limit_applied": e.limit,
             "descriptions": [
-                {
-                    "recipient": t["contact"]["display_name"],
-                    "amount": t["amount"],
-                    "description": t["description"],
-                    "category": t["category"],
-                    "created_at": t["created_at"],
-                }
+                _annotate_predicted_category(
+                    {
+                        "recipient": t["contact"]["display_name"],
+                        "amount": t["amount"],
+                        "description": t["description"],
+                        "category": t["category"],
+                        "created_at": t["created_at"],
+                    }
+                )
                 for t in hist["items"]
             ],
         }
