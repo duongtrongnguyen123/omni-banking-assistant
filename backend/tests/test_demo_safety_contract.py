@@ -2766,6 +2766,43 @@ def test_pivot_particles_strip_to_clean_recipient(follow: str) -> None:
     assert resp.draft.amount == 2_000_000
 
 
+def test_compound_noun_does_not_strip_to_kinship_prefix() -> None:
+    """User report: hỏi "chủ nhà" lại nhận suggestion Phạm Văn Đạt (chú).
+
+    Root cause: ``_strip_tail_only("chu nha")`` returned "chu" because
+    "nha" is in the tail-token set (kept for the "mẹ nha" softener).
+    "chu" then matched the "Chú" label on an unrelated contact.
+
+    Compound-noun guard now reverts the strip when it would collapse
+    the surface to a SINGLE token that is itself a relational prefix
+    (chu/anh/chi/em/ban/...). The original "chu nha" stays intact;
+    only Vũ Đình Phong (label="Chủ nhà") matches."""
+    from app.context.alias import resolve_recipient
+    from app.store import get_store
+
+    contacts = get_store().contacts_of("u_an")
+    r = resolve_recipient("chủ nhà", contacts)
+    names = [c.contact.display_name for c in r]
+    # The genuine landlord must match.
+    assert "Vũ Đình Phong" in names, names
+    # The unrelated "Chú" contact must NOT leak in.
+    assert "Phạm Văn Đạt" not in names, names
+
+
+def test_tail_strip_still_works_for_real_particles() -> None:
+    """Regression: the compound-noun guard must not over-trigger and
+    block legit tail-particle strips ("mẹ nhé" → "mẹ", "ny ơi" → "ny")."""
+    from app.context.alias import _strip_tail_only
+
+    assert _strip_tail_only("me nha") == "me"
+    assert _strip_tail_only("sep oi") == "sep"
+    assert _strip_tail_only("ban than cua toi") == "ban than"
+    # Compound nouns stay intact.
+    assert _strip_tail_only("chu nha") == "chu nha"
+    assert _strip_tail_only("anh em") == "anh em"
+    assert _strip_tail_only("chi em") == "chi em"
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a
