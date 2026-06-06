@@ -10,6 +10,11 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
+      // Allow Cloudflare quick-tunnel / ngrok hosts so judges and
+      // teammates can hit the dev server from outside the LAN without
+      // bumping config per session. The default-deny is for SSRF
+      // protection — these public tunnel domains are safe to whitelist.
+      allowedHosts: [".trycloudflare.com", ".ngrok-free.app", ".ngrok.io"],
       proxy: {
         "/api": apiTarget,
         "/health": apiTarget,

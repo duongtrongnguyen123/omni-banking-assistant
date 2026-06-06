@@ -82,6 +82,21 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ("balance", [
         "so du", "kiem tra so du", "xem so du", "balance",
         "tai khoan con", "con bao nhieu trong tai khoan",
+        # Common Vietnamese colloquialisms — "do I still have money?"
+        # All of these are high-precision: as substrings they rarely
+        # appear inside an unrelated history / transfer command.
+        "con bao nhieu tien",      # "còn bao nhiêu tiền"
+        "con nhieu tien",          # "còn nhiêu tiền" (casual)
+        "het tien chua",           # "hết tiền chưa"
+        "het sach tien",           # "hết sạch tiền"
+        "het sach vi",             # "hết sạch ví"
+        "can vi",                  # "cạn ví" — out of money slang
+        "can sach vi",             # "cạn sạch ví"
+        "tien nong con",           # "tiền nong còn (không)"
+        "tien con khong",          # "tiền còn không"
+        "tien con ko",             # casual
+        "luong ve chua",           # "lương về chưa" — payday check
+        "luong ve roi",            # "lương về rồi (chưa)"
     ]),
     ("history", [
         "lich su", "thong ke", "sao ke", "bao cao chi tieu",
