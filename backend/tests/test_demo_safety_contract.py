@@ -959,18 +959,44 @@ def test_cron_label_renders_correct_vn_day() -> None:
 @pytest.mark.parametrize(
     "text",
     [
+        # Month / year — original coverage.
         "tháng 5 năm 2026",
         "tháng 5/2026",
         "thang 4",
         "tháng 12 năm 2025",
+        # Year only.
+        "năm 2026",
+        "năm 2026 tiêu bao nhiêu",
+        # Quarter.
+        "quý 1",
+        "quý 2 năm 2026",
+        # Day / slash-date.
+        "ngày 15/5",
+        "15/5/2026",
+        "15/5",
+        # N-period-gần-đây.
+        "6 tháng gần đây",
+        "3 tuần qua",
+        # Bare temporal phrases.
+        "tuần này",
+        "tuần trước tiêu bao nhiêu",
+        "hôm qua tiêu gì",
+        "năm nay",
+        "năm ngoái",
+        "đầu năm",
+        "cuối năm",
+        "đầu tháng",
+        "cuối tháng",
     ],
 )
-def test_month_year_reference_routes_history(text: str) -> None:
-    """Bare "tháng N năm YYYY" / "tháng N/YYYY" used to fall through to
-    the Tier-3 bare-digit fallback and get classified as transfer
-    (because the year is a digit). Judges asking about a specific
-    month would see a confused transfer draft instead of a history
-    aggregate."""
+def test_temporal_reference_routes_history(text: str) -> None:
+    """Temporal references — month, year, quarter, day, week, hôm/đầu/
+    cuối — must route to history, not transfer. The Tier-3 bare-digit
+    fallback used to grab "năm 2026" / "15/5" / "tháng 5 năm 2026" as
+    transfers (because the year is a digit) and bare phrases like "tuần
+    này" / "năm ngoái" fell to "unknown". Judges asking about a
+    specific period would see a confused transfer draft or generic
+    fallback instead of a history aggregate."""
     intent, _ = classify(text)
     assert intent == "history", text
 
@@ -981,6 +1007,11 @@ def test_month_year_reference_routes_history(text: str) -> None:
         # Same-class negatives — must still route correctly.
         ("Chuyển 2 triệu cho mẹ", "transfer"),
         ("Gửi mẹ 5 triệu", "transfer"),
+        # Transfer with temporal phrase — Tier-1 "chuyển" wins first.
+        ("chuyển mẹ 2 triệu đầu tháng", "transfer"),
+        ("gửi anh Hùng 500k tuần này", "transfer"),
+        # Schedule with temporal phrase — Tier-1 "đặt lịch" wins first.
+        ("đặt lịch chuyển mẹ 2tr đầu tháng", "schedule"),
         ("số dư", "balance"),
         ("Lưu Lê Mai STK 0123987654 Vietcombank", "add_contact"),
     ],

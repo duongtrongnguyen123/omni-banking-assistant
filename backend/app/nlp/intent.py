@@ -165,12 +165,43 @@ _SMALLTALK_HI_RE = re.compile(r"\b(?:hi|hey)\b", re.IGNORECASE)
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)
 
-# Month / year reference — "tháng 5 năm 2026" / "tháng 5/2026" / "thang
-# 5". Without this, the Tier-3 bare-digit fallback routes the date query
-# to "transfer" because "2026" / "5" trip the digit detector. History
-# is the right intent for any specific-month aggregate question.
+# Date / temporal references that should route to history.
+#
+# Two flavours:
+#
+#  * Numeric anchors (tháng/năm/ngày/quý + digit, or bare DD/MM[/YYYY]
+#    slash dates). These have to win against the Tier-3 ``\d`` fallback
+#    that defaults any digit-bearing message to "transfer".
+#
+#  * Bare temporal words ("tuần này", "tuần trước", "hôm qua", "năm nay",
+#    "năm ngoái", "đầu/cuối tháng/năm"). Without a digit they end up at
+#    "unknown"; routing them to history makes the period filter Just Work.
+#
+# Conservative: any tier that matches first (transfer keyword, balance,
+# add_contact, schedule, etc.) still wins because these checks run AFTER
+# the keyword tiers and the smalltalk regex.
 _HISTORY_DATE_RE = re.compile(
-    r"\bth[áa]ng\s+\d{1,2}(?:[/\s]\d{2,4}|\s+n[ăa]m\s+\d{4})?\b",
+    r"\bth[áa]ng\s+\d{1,2}(?:[/\s]\d{2,4}|\s+n[ăa]m\s+\d{4})?\b"
+    # "năm 2026"
+    r"|\bn[ăa]m\s+\d{4}\b"
+    # "quý 1" / "quý 2 năm 2026"
+    r"|\bqu[ýy]\s+\d(?:\s+n[ăa]m\s+\d{4})?\b"
+    # "ngày 15/5" / "ngày 15 tháng 5"
+    r"|\bng[àa]y\s+\d{1,2}(?:[/\s]\d{1,2}(?:[/\s]\d{2,4})?|\s+th[áa]ng\s+\d{1,2})\b"
+    # Bare slash-date "15/5" or "15/5/2026"
+    r"|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b"
+    # "N tháng gần đây" / "N năm gần đây"
+    r"|\b\d{1,2}\s+(?:th[áa]ng|n[ăa]m|tu[ầa]n|ng[àa]y)\s+(?:gần|gan|qua|trước|truoc)\b",
+    re.IGNORECASE,
+)
+
+# Bare temporal phrases — no digit — that judges use as a standalone
+# history query.
+_HISTORY_TEMPORAL_RE = re.compile(
+    r"\b(?:tuần|tuan)\s+(?:này|nay|trước|truoc|qua)\b"
+    r"|\b(?:hôm|hom)\s+(?:nay|qua)\b"
+    r"|\b(?:n[ăa]m)\s+(?:nay|ngoái|ngoai|trước|truoc)\b"
+    r"|\b(?:đầu|dau|cuối|cuoi)\s+(?:tháng|thang|n[ăa]m|tu[ầa]n)\b",
     re.IGNORECASE,
 )
 
@@ -224,10 +255,13 @@ def classify(text: str) -> tuple[Intent, float]:
     if _SMALLTALK_HI_RE.search(folded):
         return "smalltalk", 0.65
 
-    # Tier 2.6 — month/year reference is a history query, not a transfer.
-    # Catches "tháng 5 năm 2026" / "tháng 5/2026" / "thang 5" before the
-    # Tier-3 bare-digit fallback steals it.
-    if _HISTORY_DATE_RE.search(text):
+    # Tier 2.6 — temporal references (month/year/week/day/quarter) are
+    # history queries, not transfers. Catches "tháng 5 năm 2026" /
+    # "thang 5/2026" / "quý 1" / "ngày 15/5" / "tuần này" / "năm ngoái" /
+    # "đầu tháng" before the Tier-3 bare-digit fallback steals them or the
+    # query falls to "unknown". Runs AFTER Tier 1/2 so a real transfer or
+    # schedule keyword wins first ("chuyển mẹ 2tr đầu tháng").
+    if _HISTORY_DATE_RE.search(text) or _HISTORY_TEMPORAL_RE.search(text):
         return "history", 0.55
 
     # Tier 3 — bare digit means an unclassified transfer command.
