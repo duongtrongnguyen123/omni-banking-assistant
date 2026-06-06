@@ -31,7 +31,13 @@ def _round_to_nice(amount: int) -> int:
     largest "natural" step ≤ amount/10."""
     if amount <= 0:
         return amount
-    # Pick a step proportional to magnitude: 100k under 1M, 100k under 10M,
+    # Tiny amounts (< 10k) would collapse to 0 under the 10k step + banker's
+    # rounding (e.g. 5_000 → round(0.5) → 0). Keep them as-is — there is no
+    # noise to smooth at that magnitude, and surfacing "đề xuất 0đ" on the
+    # confirm card while safety raises `missing_amount` confuses the user.
+    if amount < 10_000:
+        return amount
+    # Pick a step proportional to magnitude: 10k under 1M, 100k under 10M,
     # 500k otherwise. Keeps small social transfers (50k cà phê) intact while
     # smoothing large recurring ones.
     if amount < 1_000_000:
