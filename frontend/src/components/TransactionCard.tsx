@@ -189,6 +189,7 @@ export const TransactionCard = ({
         (f) =>
           f.severity === "warn" &&
           (f.code === "new_recipient_large_amount" ||
+            f.code === "large_amount" ||
             f.code === "amount_above_average" ||
             f.code === "fraud_risk_high" ||
             f.code === "transfer_velocity_high"),
@@ -441,6 +442,7 @@ export const TransactionCard = ({
                         (f) =>
                           f.code === "amount_above_average" ||
                           f.code === "fraud_risk_high" ||
+                          f.code === "large_amount" ||
                           f.code === "new_recipient_large_amount",
                       )}
                     />

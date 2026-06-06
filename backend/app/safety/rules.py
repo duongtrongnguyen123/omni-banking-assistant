@@ -112,13 +112,24 @@ def evaluate(
 
     # If we have a chosen recipient + amount, run anomaly + balance checks.
     if recipient and amount:
-        # New recipient + large amount
-        if not recipient.frequent and amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
+        # Any large transfer needs step-up auth. New recipients get a more
+        # specific warning below, but known contacts still need biometric for
+        # bank-grade high-value transfers.
+        if amount >= NEW_RECIPIENT_LARGE_THRESHOLD:
             flags.append(
                 SafetyFlag(
-                    code="new_recipient_large_amount",
+                    code=(
+                        "new_recipient_large_amount"
+                        if not recipient.frequent
+                        else "large_amount"
+                    ),
                     severity="warn",
                     message=(
+                        "Số tiền trên 10.000.000đ — mình sẽ yêu cầu xác thực "
+                        "sinh trắc học thêm trước khi thực hiện."
+                    )
+                    if recipient.frequent
+                    else (
                         "Người nhận chưa từng giao dịch và số tiền lớn — "
                         "mình sẽ yêu cầu xác thực thêm để bảo vệ bạn."
                     ),
@@ -352,6 +363,7 @@ def requires_step_up(flags: list[SafetyFlag]) -> bool:
     return any(
         f.code in (
             "new_recipient_large_amount",
+            "large_amount",
             "amount_above_average",
             "fraud_risk_high",
             "transfer_velocity_high",
