@@ -60,6 +60,17 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "dang ky dich vu", "subscription", "thue bao hang thang",
         "co the cat giam", "khoan nao thua",
         "phan tich chi tieu", "phan tich tieu",
+        # Casual "anything weird / interesting?" — common opening
+        # judge probe. Pre-fix fell to "unknown" → guess-correction
+        # page. Insights handler already surfaces anomalies + MoM, so
+        # routing these there gives a sensible answer.
+        "co gi la",                # "có gì lạ không"
+        "thay gi la",              # "thấy gì lạ không"
+        "co gi dang chu y",        # "có gì đáng chú ý không"
+        "dang chu y",              # standalone
+        "tieu hop ly",             # "tiêu hợp lý chưa"
+        "check spending",          # English code-switch
+        "spending pattern",        # English
     ]),
     # recurring (read) before schedule (create): "khoan dinh ky" / "tu dong
     # hang thang" are queries about existing patterns, not commands to make
@@ -89,6 +100,22 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "ngung lich",
         "xem lich chuyen", "xem cac lich", "danh sach lich",
         "lich chuyen cua",
+        # READ-side schedule list — judges asking "show me my
+        # schedules". Pre-fix, "lịch chuyển tiền của mình" matched the
+        # Tier-1 transfer keyword "chuyen" and opened a transfer draft
+        # → one-click money send (same risk class as "tạm dừng lịch
+        # chuyển mẹ" closed by PR #19). Recurring fires before
+        # transfer, so these win.
+        "lich chuyen tien",        # "lịch chuyển tiền của mình"
+        "cac lich",                # "các lịch của mình"
+        "lich cua minh",           # "lịch của mình"
+        "lich cua toi",            # "lịch của tôi"
+        "co lich nao",             # "có lịch nào đang chạy"
+        "lich nao dang",           # "lịch nào đang chạy"
+        "lich sap toi",            # "lịch sắp tới"
+        "lich sap den",            # "lịch sắp đến"
+        "lich nao sap",            # "lịch nào sắp đến / sắp tới"
+        "lich tu dong cua",        # "lịch tự động của mình"
     ]),
     ("schedule", [
         "dat lich", "len lich", "lap lich",

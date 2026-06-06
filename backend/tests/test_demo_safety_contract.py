@@ -2386,3 +2386,66 @@ def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     # return [] rather than silently picking the name-token match.
     r = resolve_recipient("không tồn tại", contacts, kind="alias")
     assert r == []
+
+
+# ---------------------------------------------------------------------------
+# Schedule-list (recurring) + casual insights queries
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # READ-side "show me my schedules" — pre-fix these either fell
+        # to "unknown" or, worse, opened a TRANSFER draft because the
+        # Tier-1 transfer keyword "chuyen" sat inside "lịch chuyển tiền
+        # của mình" → one-click money-send card. Same class as the
+        # PR #19 fix for "tạm dừng lịch chuyển mẹ".
+        "lịch chuyển tiền của mình",
+        "các lịch của mình",
+        "có lịch nào đang chạy",
+        "lịch của tôi",
+        "lịch sắp tới",
+        "lịch nào sắp đến",
+        "lịch tự động của mình",
+    ],
+)
+def test_schedule_list_queries_route_recurring(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "recurring", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Casual "anything weird / interesting?" — judges' opening
+        # probe of the insights tab. Pre-fix all fell to "unknown".
+        "tháng này có gì lạ không",
+        "thấy gì lạ không",
+        "có gì đáng chú ý không",
+        "tiêu hợp lý chưa",
+        "check spending pattern",
+    ],
+)
+def test_casual_insights_queries_route_insights(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "insights", text
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Negatives — the "chuyen" substring in "lịch chuyển" must NOT
+        # eat the recurring route, and a real transfer command must
+        # still route to transfer.
+        ("chuyển mẹ 2 triệu", "transfer"),
+        ("đặt lịch chuyển mẹ 2tr mùng 5 hàng tháng", "schedule"),
+        ("số dư", "balance"),
+        ("tháng này tiêu bao nhiêu", "history"),
+    ],
+)
+def test_schedule_list_route_doesnt_eat_commands(
+    text: str, expected: str
+) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, text
