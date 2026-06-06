@@ -490,6 +490,34 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         session.append("omni", resp.text)
         return resp
 
+    # Missing-slot fill: when the assistant just asked "Bạn muốn chuyển X
+    # cho ai?" and the user types a short bare name as the next turn
+    # ("Nam"), the rule classifier sees a single token / no verb / no
+    # digit → intent=unknown → user gets "Mình chưa rõ ý bạn". Slot-fill
+    # that: if there's an active draft missing the recipient AND the
+    # message looks like a bare name (short, no command keywords), feed
+    # it into _modify_transfer_draft with recipient_text=text so the
+    # resolver can take a shot.
+    if (
+        session.current_draft is not None
+        and session.current_draft.recipient is None
+        and nlu.intent in ("unknown", "transfer", "smalltalk")
+        and _looks_like_bare_recipient(text)
+    ):
+        from ..models.schemas import ExtractedEntities, NLUResult as _NLU
+
+        synth = _NLU(
+            intent="transfer",
+            confidence=0.7,
+            entities=ExtractedEntities(recipient_text=text),
+            raw_text=text,
+            source="rule",
+        )
+        resp = _modify_transfer_draft(user_id, session.current_draft, synth)
+        session.append("user", text)
+        session.append("omni", resp.text)
+        return resp
+
     resp = _dispatch_intent(user_id, nlu, history_msgs)
     session.append("user", text)
     session.append("omni", resp.text)
@@ -584,6 +612,41 @@ def _dispatch_intent(
             "\"chuyển cho mẹ 2 triệu\" hoặc \"tháng này tiêu bao nhiêu?\""
         ),
     )
+
+
+_BARE_RECIPIENT_COMMANDS = {
+    "huy", "huỷ", "hủy", "cancel", "ok", "okay", "đồng ý", "dong y",
+    "yes", "no", "không", "khong", "stop", "xác nhận", "xac nhan",
+    "y", "n", "lưu", "luu",
+}
+
+
+def _looks_like_bare_recipient(text: str) -> bool:
+    """Heuristic: is the user's short reply a recipient name rather than
+    a command? Used only when an active draft is waiting for a recipient.
+
+    Conservative — we'd rather miss a recipient hint and ask again than
+    treat "ok" or "huỷ" as someone's name. Rejects:
+      - longer than 30 chars (commands stay short; long → free-text)
+      - contains a digit (probably an amount or OTP)
+      - matches a known command word after diacritic-fold
+      - empty / whitespace-only
+    """
+    import re as _re
+    import unicodedata as _u
+
+    s = text.strip()
+    if not s or len(s) > 30:
+        return False
+    if _re.search(r"\d", s):
+        return False
+    folded = "".join(
+        c for c in _u.normalize("NFKD", s.lower())
+        if not _u.combining(c)
+    ).replace("đ", "d")
+    if folded in _BARE_RECIPIENT_COMMANDS:
+        return False
+    return True
 
 
 def _looks_like_modification(nlu: NLUResult, draft: TransactionDraft) -> bool:
