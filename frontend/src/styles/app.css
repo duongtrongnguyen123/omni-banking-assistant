@@ -590,6 +590,11 @@ textarea:focus-visible,
   background: #ebe9f4; transform: translateY(-1px);
 }
 .phone__voice-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Visual lock-out while the chat is submitting AND the mic is idle.
+   Listening keeps the click wired (to STOP), so we don't lock it. */
+.phone__voice-btn--busy {
+  opacity: 0.5; cursor: not-allowed; pointer-events: none;
+}
 .phone__voice-btn--listening {
   background: #fee2e2; color: #b91c1c; border-color: #fecaca;
   animation: voice-pulse 1.4s ease-out infinite;

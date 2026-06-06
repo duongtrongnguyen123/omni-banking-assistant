@@ -556,6 +556,12 @@ export default function App() {
     sourceAccountId?: string,
     biometricScan?: BiometricScanResult,
   ) => {
+    // Reset transient confirm/OTP error state before firing a new
+    // request. Without this, a previous 5xx / network failure leaves
+    // `authOtpError` populated, which renders a stale red banner over
+    // the retry's pending bubble and gives the user no signal that the
+    // new attempt is in flight. Mirror in `onConfirmSchedule` below.
+    setAuthOtpError("");
     appendUser(biometricScan ? "Xác minh sinh trắc học" : "Xác minh OTP");
     const pendingId = appendOmniPending();
     setBusy(true);
@@ -693,8 +699,11 @@ export default function App() {
     draftId: string,
     otp: string,
     sourceAccountId?: string,
-  ) =>
-    sendDraftAction(
+  ) => {
+    // Mirror runConfirm — clear any prior OTP banner before retry so
+    // a quick second submission isn't shadowed by stale error text.
+    setAuthOtpError("");
+    return sendDraftAction(
       async () => {
         const resp = await api.confirmSchedule(draftId, otp, sourceAccountId);
         if (!resp.schedule_draft) {
@@ -704,6 +713,7 @@ export default function App() {
       },
       "Xác minh OTP",
     );
+  };
 
   const onCancelSchedule = (draftId: string) =>
     sendDraftAction(() => api.cancelSchedule(draftId), "Huỷ đặt lịch");
