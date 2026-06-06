@@ -186,6 +186,173 @@ def test_sao_ke_html_rejects_bad_month():
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# Injection-hardening regression tests
+# --------------------------------------------------------------------------- #
+
+
+def test_csv_defangs_formula_injection():
+    """A description starting with `=` must be prefixed with `'` so Excel /
+    LibreOffice / Numbers treat the cell as literal text, not a formula."""
+    _make_tx(
+        description='=HYPERLINK("http://evil","go")',
+        amount=42_000,
+        when=datetime(2027, 3, 4, 10, 0, tzinfo=timezone.utc),
+    )
+    r = _client().get(
+        "/api/export/transactions.csv",
+        params={"from": "2027-03-01", "to": "2027-03-31"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    body = r.content.decode("utf-8-sig")
+    # The CSV writer wraps cells containing quotes in `"..."` and doubles any
+    # internal `"`. After our defang, the raw cell value is
+    # `'=HYPERLINK("http://evil","go")` and the CSV-encoded form is
+    # `"'=HYPERLINK(""http://evil"",""go"")"`. We assert the defang prefix
+    # `'=HYPERLINK` is present (Excel/LibreOffice will then render the cell
+    # as literal text instead of executing the formula).
+    assert "'=HYPERLINK" in body
+    # And the bare formula (no leading quote) must NOT appear as a cell —
+    # csv-encoded cells either start with `,"` or sit at line start; a raw
+    # `,=HYPERLINK` or `,"=HYPERLINK` would mean the defang silently
+    # regressed.
+    assert ",=HYPERLINK" not in body
+    assert ',"=HYPERLINK' not in body
+
+
+def test_csv_defangs_all_dangerous_prefixes():
+    """Every spreadsheet-formula starter (=, +, -, @, \\t, \\r) must be
+    defanged by a single-quote prefix when it leads a user-controlled cell.
+    """
+    payloads = {
+        "plus": "+1+1",
+        "minus": "-2-2",
+        "at": "@SUM(1)",
+        "tab": "\t=cmd|'/c calc'!A1",
+        "cr": "\r=evil()",
+    }
+    txs = []
+    for i, (label, desc) in enumerate(payloads.items()):
+        txs.append(
+            _make_tx(
+                description=desc,
+                amount=(i + 1) * 1_000,
+                when=datetime(2027, 4, i + 1, 10, 0, tzinfo=timezone.utc),
+            )
+        )
+    r = _client().get(
+        "/api/export/transactions.csv",
+        params={"from": "2027-04-01", "to": "2027-04-30"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    body = r.content.decode("utf-8-sig")
+    # Each payload must appear with a leading single-quote (possibly inside
+    # double quotes from the csv writer's escaping).
+    for desc in payloads.values():
+        # csv writer wraps a cell containing comma/quote/newline in
+        # double-quotes; the defang prefix is the first char of the cell so
+        # it sits either after a `,` or after `,"`.
+        assert (",'" + desc) in body or (',"\'' + desc) in body or (
+            ",\"'" + desc
+        ) in body, f"payload not defanged: {desc!r}"
+
+
+def test_csv_content_disposition_is_rfc5987():
+    """The Content-Disposition header must include both the ASCII fallback
+    and the RFC 5987 `filename*=UTF-8''...` form, so non-ASCII filenames
+    cannot break header parsing on any browser."""
+    r = _client().get(
+        "/api/export/transactions.csv",
+        params={"from": "2026-06-01", "to": "2026-06-30"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    cd = r.headers.get("content-disposition", "")
+    # Both forms present
+    assert cd.startswith("attachment;")
+    assert 'filename="' in cd
+    assert "filename*=UTF-8''" in cd
+    # No bare unquoted filename that could be split by a stray `;`
+    assert "filename=omni-" not in cd
+
+
+def test_content_disposition_helper_handles_non_ascii_and_quotes():
+    """Unit-level test for the header builder: a filename containing a
+    non-ASCII character (`á`) and a double-quote (`"`) must produce a
+    well-formed header where the ASCII fallback is sanitised and the
+    `filename*` form carries the original via percent-encoding."""
+    from app.routes.exports import _content_disposition_attachment
+
+    header = _content_disposition_attachment('sao-ke-Tháng-7-"june".csv')
+    # Header has the two standard fields and no unescaped `"` inside the
+    # ASCII fallback that could terminate the value early.
+    assert header.startswith("attachment;")
+    assert 'filename="' in header
+    assert "filename*=UTF-8''" in header
+    # The non-ASCII `á` is stripped from the ASCII fallback and the bare
+    # quote is replaced so the quoted-string cannot be broken.
+    ascii_part = header.split('filename="', 1)[1].split('";', 1)[0]
+    assert "á" not in ascii_part
+    assert '"' not in ascii_part
+    # The percent-encoded form preserves the original bytes
+    star_part = header.split("filename*=UTF-8''", 1)[1]
+    assert "%C3%A1" in star_part  # UTF-8 of `á`
+    assert "%22" in star_part  # quoted `"`
+
+
+def test_sao_ke_brace_injection_is_safe():
+    """A contact whose display name contains `{evil}` must:
+    1. NOT raise KeyError (no 500 response), and
+    2. Land in the rendered HTML as literal text (HTML-escaped braces are
+       not standard, so we expect `X{evil}Y` to appear verbatim).
+
+    This pins the contract for the Sao kê HTML template: user-controlled
+    strings flow through `_escape_html` and a single `str.format()` pass,
+    which does NOT re-parse substituted values. A future refactor that
+    swapped to a re-parsing engine would break this test loudly.
+    """
+    store = get_store()
+    # Insert a contact whose display name contains brace characters that
+    # would explode a naive `str.format()` if values were re-parsed.
+    from app.models.schemas import Contact
+
+    bad_id = "c_brace_injection"
+    try:
+        store.add_contact(
+            Contact(
+                id=bad_id,
+                owner_id=USER_ID,
+                display_name="X{evil}Y",
+                bank="VCB",
+                account_number="0000000000",
+                account_masked="******0000",
+                aliases=[],
+            )
+        )
+    except Exception:
+        # Idempotent: test may re-run inside the same store instance.
+        pass
+
+    _make_tx(
+        contact_id=bad_id,
+        description="brace-test",
+        amount=10_000,
+        when=datetime(2027, 5, 10, 9, 0, tzinfo=timezone.utc),
+    )
+    r = _client().get(
+        "/api/export/sao-ke.html",
+        params={"month": "2027-05"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200, r.text
+    # Literal braces present, no KeyError-induced 500
+    assert "X{evil}Y" in r.text
+    # And no doubled braces leaked into the output
+    assert "X{{evil}}Y" not in r.text
+
+
 def test_tax_year_has_expected_keys():
     _make_tx(
         description="Year-end coffee",
