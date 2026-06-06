@@ -513,7 +513,22 @@ def _dispatch_intent(
         return _handle_atm_finder(user_id, nlu)
 
     if nlu.intent == "smalltalk":
-        fallback = "Chào bạn! Mình là Omni — sẵn sàng giúp bạn chuyển tiền, xem số dư hay tra lịch sử."
+        # Pick the fallback line by the type of smalltalk the user wrote
+        # — judges who say "cảm ơn" deserve a "không có chi" not a
+        # robotic re-greeting; "tạm biệt" / "bye" gets a sign-off line.
+        # The LLM (when reachable) still does the variable phrasing; the
+        # fallback only fires when both providers are 429 / offline.
+        from ..nlp.entities import normalize_alias
+        _folded = normalize_alias(nlu.raw_text or "")
+        if any(t in _folded for t in ("cam on", "cám ơn", "thank")):
+            fallback = "Không có chi! Cần gì bạn cứ nhắn mình nhé."
+        elif any(
+            t in _folded
+            for t in ("tam biet", "tạm biệt", "bye", "goodbye", "good night")
+        ):
+            fallback = "Hẹn gặp lại bạn! Có việc gì cứ gọi Omni nhé."
+        else:
+            fallback = "Chào bạn! Mình là Omni — sẵn sàng giúp bạn chuyển tiền, xem số dư hay tra lịch sử."
         text = llm_phrase(
             nlu.raw_text,
             {

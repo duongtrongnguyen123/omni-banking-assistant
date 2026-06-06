@@ -128,11 +128,21 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ]),
     ("smalltalk", [
         "xin chao", "chao omni", "hello", "cam on",
+        # English thanks variants — judges who switch language mid-flow
+        # shouldn't fall to the generic "chưa rõ ý" fallback.
+        "thank you", "thanks",
         # Farewells + casual variants — judges who say goodbye to the
         # assistant shouldn't get the safe "unknown" fallback that
         # invites them to "thử chuyển cho mẹ 2 triệu".
         "tam biet", "bye omni", "bye bye", "goodbye", "tạm biệt",
         "good morning", "good evening", "chao buoi sang",
+        # Vietnamese greetings with salutation forms — "chào em" / "chào
+        # anh" / "chào chị" / "chào cô / chú / bác / mọi người / bạn".
+        # The bare "chao" substring is intentionally NOT here because it
+        # would false-positive inside common words. Two-token forms are
+        # safe — they don't appear inside transfer or history commands.
+        "chao em", "chao anh", "chao chi", "chao co ", "chao chu ",
+        "chao bac", "chao moi nguoi", "chao ban",
     ]),
 ]
 
@@ -174,8 +184,15 @@ _MED: list[tuple[Intent, list[str]]] = [
 
 # Word-boundary smalltalk fallback — kept out of the Tier-2 substring loop
 # so "hi" inside "hiện" / "nghi" / "chi" can't steal the routing from
-# insights / history / transfer.
-_SMALLTALK_HI_RE = re.compile(r"\b(?:hi|hey)\b", re.IGNORECASE)
+# insights / history / transfer. Same word-boundary discipline applies
+# to bare "chào" / "bye" — they would substring-match inside countless
+# Vietnamese words ("chào" appears in "chào hỏi", "khẩu chào"; "bye"
+# can hide in URLs).  Matched as whole words/anchored phrases here.
+_SMALLTALK_HI_RE = re.compile(
+    r"\b(?:hi|hey|bye)\b"
+    r"|^\s*ch[àa]o\s*[!?.]?\s*$",   # bare "chào" / "chao" only
+    re.IGNORECASE,
+)
 
 
 _LUU_STK_RE = re.compile(r"\bluu\s+[a-z][a-z\s]{0,40}?\s+stk\b", re.IGNORECASE)

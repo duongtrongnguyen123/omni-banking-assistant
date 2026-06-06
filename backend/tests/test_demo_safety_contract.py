@@ -1072,6 +1072,62 @@ def test_colloquial_balance_does_not_eat_other_intents(
 
 
 # ---------------------------------------------------------------------------
+# Smalltalk subtypes — thanks / farewell / greeting each get their own reply
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # English + VN thanks variants — all routed to smalltalk.
+        "cảm ơn", "cám ơn omni", "thank you", "thanks",
+        # Farewells.
+        "tạm biệt", "bye", "goodbye",
+        # Greetings.
+        "chào em", "chào anh", "chào omni", "chào", "chào!",
+        "xin chào", "hi", "hello",
+    ],
+)
+def test_smalltalk_phrasings_route_to_smalltalk(text: str) -> None:
+    """The most common Vietnamese + English chat openers / closers all
+    route to smalltalk. Used to fall to "unknown" → "Mình chưa rõ ý
+    bạn..." (a robotic guess-correction reply that's bad demo vibe)."""
+    intent, _ = classify(text)
+    assert intent == "smalltalk", text
+
+
+@pytest.mark.parametrize(
+    "text,must_contain",
+    [
+        # Thanks → "không có chi"; NOT a re-greeting.
+        ("cảm ơn", "Không có chi"),
+        ("thank you", "Không có chi"),
+        ("thanks", "Không có chi"),
+        # Farewell → "hẹn gặp lại"; NOT a re-greeting.
+        ("tạm biệt", "Hẹn gặp lại"),
+        ("bye", "Hẹn gặp lại"),
+        ("goodbye", "Hẹn gặp lại"),
+        # Greeting → "Chào bạn".
+        ("xin chào", "Chào bạn"),
+        ("chào em", "Chào bạn"),
+        ("hi", "Chào bạn"),
+    ],
+)
+def test_smalltalk_reply_branches_by_subtype(text: str, must_contain: str) -> None:
+    """Pre-fix the smalltalk handler ignored what the user actually said
+    and replied "Chào bạn! Mình là Omni..." for thanks AND farewell —
+    a robotic feel that judges noticed immediately. The deterministic
+    fallback now branches on the user text before calling the LLM, so
+    even under 429 the reply stays human."""
+    s = session_for(USER)
+    s.clear_draft()
+    r = handle_message(USER, text)
+    s.clear_draft()
+    assert r.intent == "smalltalk", text
+    assert must_contain in r.text, (text, r.text)
+
+
+# ---------------------------------------------------------------------------
 # First-person pronoun guard — "mình"/"tôi" must not be mistaken for "Minh"
 # ---------------------------------------------------------------------------
 
