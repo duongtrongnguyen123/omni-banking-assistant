@@ -243,11 +243,37 @@ _BARE_RECIPIENT_AMOUNT_RE = re.compile(
 # captured "who" reduces to any of these (after diacritic-fold), bail —
 # "lương 5tr" / "tiền nhà 3tr" / "số dư 2tr" must NOT route to transfer
 # with those words as the recipient.
+#
+# Also includes the money-flow verbs themselves — "chuyển 5tr Nam" was
+# matching ``_BARE_RECIPIENT_AMOUNT_RE`` with who="chuyển" + amount=5tr,
+# which prevented the backward word-order regex below from getting a
+# chance to extract "Nam" as the actual recipient.
 _BARE_RECIPIENT_DENYLIST = {
     "luong", "tien", "so du", "tien nha", "tien dien", "tien nuoc",
     "tien an", "ngan sach", "han muc", "muc tieu", "tiet kiem",
     "thue", "phi", "no", "cuoc",
+    "chuyen", "gui", "tra", "nap", "send", "transfer",
 }
+
+# Backward word-order: "<verb> <amount> <recipient>" — judges write this
+# often ("chuyển 5tr Nam", "gửi 300k sếp", "trả 2tr mẹ"). The verb and
+# amount come first; the recipient is the trailing token(s) up to the
+# end of the message or a particle. Stops the rule extractor from
+# silently dropping the recipient on backward-order inputs.
+_VERB_AMOUNT_RECIPIENT_RE = re.compile(
+    r"^(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
+    r"\d+(?:[.,]\d+)?\s*"
+    r"(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|tỷ|ty|tỉ|ti|đ|dong|đồng)\b"
+    r"\s+(?:cho|tới|toi|đến|den|sang|qua\s+)?"
+    r"(?P<who>[^\d,.\n?!]+?)"
+    rf"\s*(?:{_STOP_LOOKAHEAD}|$)",
+    re.IGNORECASE,
+)
+
+# Amount-first phrasing: "<amount> cho <recipient>" — "5tr cho bạn thân"
+# already works via _RECIPIENT_PREP_RE because the preposition pattern
+# scans the whole string. Kept as a no-op here for symmetry with
+# documented test cases; the prep regex handles it.
 
 # First-person pronouns that judges naturally use ("gửi mình 200k",
 # "ai chuyển tiền cho mình", "trả tôi"). Without this guard, "mình"
@@ -310,8 +336,13 @@ _ACCOUNT_HINT_RE = re.compile(
 
 def _clean_recipient(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
+    # Strip leading prepositions/verbs that aren't part of the name. The
+    # set covers all Vietnamese money-flow words plus the directional
+    # particles "sang"/"qua" that appear in "gửi sang Minh" /
+    # "chuyển qua bạn thân". Without those, the resolver tries to match
+    # "sang Minh" or "qua bạn thân" verbatim and returns 0.
     s = re.sub(
-        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen)\s+",
+        r"^(?:cho|gửi|gui|đến|den|tới|toi|chuyển|chuyen|sang|qua)\s+",
         "",
         s,
         flags=re.IGNORECASE,
@@ -351,6 +382,18 @@ def extract(text: str) -> ExtractedEntities:
         m = _RECIPIENT_VERB_RE.search(text)
         if m:
             out.recipient_text = _clean_recipient(m.group("who"))
+
+    # Backward word-order: "<verb> <amount> <recipient>". Run BEFORE the
+    # bare-token-amount fallback so "chuyển 5tr Nam" extracts "Nam" instead
+    # of falling through to the bare pattern (which would have matched
+    # "chuyển" as recipient before the verb tokens were denylisted).
+    if not out.recipient_text:
+        m = _VERB_AMOUNT_RECIPIENT_RE.search(text)
+        if m:
+            candidate = _clean_recipient(m.group("who"))
+            folded = _strip_diacritics(candidate).strip()
+            if folded and folded not in _BARE_RECIPIENT_DENYLIST:
+                out.recipient_text = candidate
 
     # Bare leading-token + amount fallback ("mẹ 2tr" / "anh Hùng 500k").
     # Only fires when no other recipient was found. Denylist filters out
