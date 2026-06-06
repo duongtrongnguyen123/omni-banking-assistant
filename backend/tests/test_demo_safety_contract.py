@@ -424,6 +424,12 @@ def test_fraud_risk_high_triggers_step_up() -> None:
         "Tổng thu chi tháng này",
         "Tổng chi tiêu tháng trước",
         "tổng chi tiêu của tôi từ trước đến nay",
+        # Newer history phrasings (e1cde1c + this commit). "Tổng chi phí
+        # hàng tháng" used to route to schedule because "hang thang" hit
+        # the schedule Tier-2 keyword before any history rule fired.
+        "Tổng chi phí hàng tháng",
+        "Báo cáo tháng",
+        "Báo cáo chi tiêu tháng này",
     ],
 )
 def test_total_expense_phrasings_route_history(text: str) -> None:

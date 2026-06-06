@@ -85,6 +85,8 @@ _HIGH: list[tuple[Intent, list[str]]] = [
     ]),
     ("history", [
         "lich su", "thong ke", "sao ke", "bao cao chi tieu",
+        "bao cao thang", "bao cao chi", "bao cao tieu",  # "Báo cáo tháng / chi tiêu"
+        "tong chi phi", "tong chi", "tong tieu",         # "Tổng chi phí hàng tháng"
         "ai nhan nhieu", "ai gui nhieu", "ai chuyen nhieu",
         "nhieu nhat", "lan cuoi", "lan gan nhat", "gan nhat",
         "5 giao dich", "3 giao dich", "10 giao dich",
