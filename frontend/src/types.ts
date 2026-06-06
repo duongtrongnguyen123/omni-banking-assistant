@@ -99,6 +99,7 @@ export interface HistoryItem {
   amount: number;
   description: string;
   created_at: string;
+  category?: string | null;
   contact: { display_name: string; bank: string; account_masked: string; label: string | null };
 }
 
