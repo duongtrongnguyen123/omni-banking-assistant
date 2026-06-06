@@ -515,6 +515,20 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
     except Exception:
         pass
 
+    # Fresh-transfer guard: if the user types a NEW verb-led command
+    # ("chuyển tiền cho t", "gửi 500k cho ai đó"), don't carry over the
+    # previous draft's amount / recipient. Pre-fix, judges who finished
+    # one demo turn (draft cached with amount=2tr) then started a fresh
+    # request without naming an amount saw "Bạn muốn chuyển 2.000.000đ
+    # cho ai?" — the stale 2tr leaked from session. Detect the fresh
+    # command shape (leading transfer verb) and clear the current draft
+    # before the modify-path heuristic runs.
+    if (
+        session.current_draft is not None
+        and _looks_like_fresh_transfer_command(text)
+    ):
+        session.clear_draft()
+
     # Follow-up modify path: there's an active draft and the user is
     # editing one of the slots (amount / recipient / description).
     # CRITICAL: don't gate on nlu.intent == "transfer" — judges saying
@@ -686,6 +700,38 @@ _BARE_RECIPIENT_COMMANDS = {
     "yes", "no", "không", "khong", "stop", "xác nhận", "xac nhan",
     "y", "n", "lưu", "luu",
 }
+
+
+_FRESH_TRANSFER_VERB_RE = re.compile(
+    r"^\s*(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|"
+    r"thanh\s+toán|thanh\s+toan|send|transfer)\s+",
+    re.IGNORECASE,
+)
+_MODIFY_VERB_RE = re.compile(
+    # Words that signal "edit the current draft, don't start a new one".
+    # Includes: đổi/sửa/thành/sang for amount-or-recipient edits, and
+    # cộng/thêm/giảm/bớt/tăng for additive amount tweaks.
+    r"^\s*(?:đổi|doi|sửa|sua|thay\s+đổi|thay\s+doi|"
+    r"thành|thanh\b|sang\b|"
+    r"cộng|cong|thêm|them|giảm|giam|bớt|bot|tăng|tang)\s+",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_fresh_transfer_command(text: str) -> bool:
+    """Does the message start with a fresh verb-led transfer command?
+
+    Used to decide whether to wipe the previous draft's amount /
+    recipient before the modify path runs. "chuyển tiền cho t" /
+    "gửi 500k cho ai đó" / "trả 200k mẹ" are fresh — they shouldn't
+    inherit the previous draft's amount.
+
+    "đổi sang 5tr" / "cộng thêm 500k" are NOT fresh — those are
+    explicit edits on the existing draft.
+    """
+    if _MODIFY_VERB_RE.search(text):
+        return False
+    return bool(_FRESH_TRANSFER_VERB_RE.search(text))
 
 
 def _looks_like_bare_recipient(text: str) -> bool:

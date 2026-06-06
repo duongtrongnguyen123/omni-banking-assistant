@@ -2501,6 +2501,43 @@ def test_bare_name_after_complete_draft_does_not_break_confirm() -> None:
     assert "OTP" in resp.text or "otp" in resp.text.lower()
 
 
+def test_fresh_transfer_does_not_inherit_stale_amount() -> None:
+    """User report: after a previous draft cached amount=2tr, typing a
+    fresh ``chuyển tiền cho t`` (no amount specified) saw the prompt
+    "Bạn muốn chuyển 2.000.000đ cho ai?" — the stale 2tr leaked from
+    the session draft via the modify-path. A fresh verb-led transfer
+    command must start a NEW draft and not inherit the prior amount."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    # Establish a stale draft with an amount.
+    handle_message("u_an", "chuyển 2tr")
+    # Fresh transfer command, no amount mentioned.
+    resp = handle_message("u_an", "chuyển tiền cho t")
+    assert resp.draft is not None
+    # The stale 2tr must NOT be carried over.
+    assert resp.draft.amount is None, (resp.draft.amount, resp.text)
+    # Both slots are missing → safety engine asks generically.
+    flag_codes = [f.code for f in resp.draft.flags]
+    assert "missing_amount" in flag_codes
+
+
+def test_modify_verbs_still_inherit_amount() -> None:
+    """Companion: ``đổi sang 5tr`` / ``cộng thêm 500k`` after a draft
+    must still hit the modify-path and keep the recipient. The
+    fresh-transfer guard only fires on leading transfer verbs
+    (``chuyển`` / ``gửi`` / ``trả`` / ``nạp``), not modify verbs."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    handle_message("u_an", "chuyển mẹ 2tr")
+    resp = handle_message("u_an", "đổi sang 5tr")
+    assert resp.draft is not None
+    assert resp.draft.recipient is not None
+    assert resp.draft.recipient.display_name == "Nguyễn Thị Lan"
+    assert resp.draft.amount == 5_000_000
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a
