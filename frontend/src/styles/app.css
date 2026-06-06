@@ -310,6 +310,18 @@ textarea:focus-visible,
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 160px;
 }
+.suggest-chip__bar {
+  display: block; width: 100%; height: 3px; margin-top: 4px;
+  background: var(--line); border-radius: 999px; overflow: hidden;
+}
+.suggest-chip__bar-fill {
+  display: block; height: 100%; background: var(--orange);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .suggest-chip__bar-fill { transition: none; }
+}
 
 /* -------- input -------- */
 
