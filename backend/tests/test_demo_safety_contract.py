@@ -1072,6 +1072,49 @@ def test_colloquial_balance_does_not_eat_other_intents(
 
 
 # ---------------------------------------------------------------------------
+# Account-info phrasings route to balance; transaction-search to history
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Per-account / account-count queries — the balance reply already
+        # surfaces primary + total + per-account list, so routing these
+        # to balance gives the right answer. Pre-fix they fell to
+        # Tier-2 "bao nhieu" → month-aggregate history reply.
+        "tài khoản chính của mình",
+        "tài khoản tiết kiệm có bao nhiêu",
+        "có bao nhiêu tài khoản",
+        "tài khoản của tôi",
+        "các tài khoản",
+        "tổng tài sản",
+    ],
+)
+def test_account_info_phrasings_route_balance(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "balance", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # "Find / which / over / under" transaction searches — common
+        # judge probes. Pre-fix all of them fell to "unknown" or the
+        # Tier-3 transfer fallback (because "1 triệu" contains a digit).
+        "tìm giao dịch trên 1 triệu",
+        "giao dịch nào lớn nhất",
+        "giao dịch nhỏ nhất tháng này",
+        "giao dịch trên 5 triệu",
+        "giao dịch dưới 100k",
+    ],
+)
+def test_transaction_search_phrasings_route_history(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == "history", text
+
+
+# ---------------------------------------------------------------------------
 # Help intent — VN "how do I / what can you do" phrasings reach _HELP_TEXT
 # ---------------------------------------------------------------------------
 

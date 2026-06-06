@@ -97,6 +97,17 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "tien con ko",             # casual
         "luong ve chua",           # "lương về chưa" — payday check
         "luong ve roi",            # "lương về rồi (chưa)"
+        # Account-info queries. The balance handler already surfaces
+        # per-account balances + total; these phrasings used to fall to
+        # Tier-2 "bao nhieu" → history aggregate.
+        "tai khoan chinh",          # "tài khoản chính"
+        "tai khoan tiet kiem",      # "tài khoản tiết kiệm"
+        "tai khoan dich vu",        # "tài khoản dịch vụ"
+        "bao nhieu tai khoan",      # "có bao nhiêu tài khoản"
+        "tai khoan cua minh",       # "tài khoản của mình"
+        "tai khoan cua toi",        # "tài khoản của tôi"
+        "cac tai khoan",            # "các tài khoản"
+        "tong tai san",             # "tổng tài sản"
     ]),
     ("history", [
         "lich su", "thong ke", "sao ke", "bao cao chi tieu",
@@ -107,6 +118,17 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "5 giao dich", "3 giao dich", "10 giao dich",
         "giao dich gan day", "xem giao dich",
         "tu truoc den gio", "tat ca cac lan",
+        # Transaction-search phrasings. Without these, "giao dịch nào
+        # lớn nhất" falls to "unknown" and "tìm giao dịch trên 1 triệu"
+        # falls to Tier-3 transfer because of the `\d`. All
+        # high-precision: "giao dich" only appears in retrospective
+        # queries.
+        "tim giao dich",            # "tìm giao dịch"
+        "giao dich lon",            # "giao dịch lớn nhất / lớn nhất"
+        "giao dich nho",            # "giao dịch nhỏ nhất"
+        "giao dich nao",            # "giao dịch nào ..."
+        "giao dich tren",           # "giao dịch trên X triệu"
+        "giao dich duoi",           # "giao dịch dưới X triệu"
     ]),
     ("add_contact", [
         "luu danh ba", "them danh ba", "luu lien lac", "luu so",
