@@ -73,12 +73,15 @@ def month_over_month(
 ) -> dict:
     """Compare this-month vs last-month totals per category.
 
-    Returns ``{category: {this: int, last: int, delta_pct: float}}``.
+    Returns ``{category: {this: int, last: int, delta_pct: float | None,
+    is_new: bool}}``.
 
     `delta_pct` is the relative change vs last month, expressed as a percent.
     Special cases:
-      - last == 0 and this  > 0  -> 100.0 (treat as "new spend in this cat")
-      - last == 0 and this == 0 -> 0.0  (not reported anyway)
+      - last == 0 and this  > 0  -> delta_pct=None, is_new=True
+        (no baseline; reporting "+100%" would be misleading — let the UI
+        render "(mới)" instead).
+      - last == 0 and this == 0  -> not reported.
     """
     this_start, this_end = _month_bounds(when)
     last_start, last_end = _prev_month_bounds(when)
@@ -102,10 +105,24 @@ def month_over_month(
         if last == 0 and this == 0:
             continue
         if last == 0:
-            delta_pct = 100.0
-        else:
-            delta_pct = round((this - last) / last * 100.0, 1)
-        result[cat] = {"this": this, "last": last, "delta_pct": delta_pct}
+            # Brand-new category — no baseline, so a percent change is
+            # mathematically undefined. Signal this explicitly via
+            # ``is_new`` and leave ``delta_pct`` null so the UI doesn't
+            # claim "+100%".
+            result[cat] = {
+                "this": this,
+                "last": last,
+                "delta_pct": None,
+                "is_new": True,
+            }
+            continue
+        delta_pct = round((this - last) / last * 100.0, 1)
+        result[cat] = {
+            "this": this,
+            "last": last,
+            "delta_pct": delta_pct,
+            "is_new": False,
+        }
     return result
 
 
@@ -172,8 +189,12 @@ def anomalies(
         else:
             z = (t.amount - mu) / sigma
 
-        if (z < 2.5 or not math.isfinite(z) and z != float("inf")) and z != float("inf"):
-            # Filter out everything below threshold; keep +inf for novelty.
+        # Keep ``+inf`` (novelty signal from the constant-history branch),
+        # drop everything else that's either below threshold or non-finite
+        # (NaN / -inf). The original boolean was a precedence accident
+        # — ``(A or (B and C)) and C`` — that worked by chance; this is
+        # the explicit intent.
+        if z != float("inf") and (z < 2.5 or not math.isfinite(z)):
             continue
 
         ratio = (t.amount / mu) if mu > 0 else float("inf")
@@ -249,6 +270,20 @@ def subscriptions(
             continue
         median_gap = statistics.median(gaps)
         if not (20 <= median_gap <= 40):
+            continue
+
+        # Coverage: how dense the (year, month) buckets are over the span.
+        # Three transfers in three consecutive months → coverage 1.0; three
+        # transfers scattered across six months → coverage 0.5 → reject.
+        # Mirrors ``banking/recurring.py`` to suppress coincidental triples.
+        months = sorted({(t.created_at.year, t.created_at.month) for t in group})
+        months_spanned = (
+            (months[-1][0] - months[0][0]) * 12
+            + (months[-1][1] - months[0][1])
+            + 1
+        )
+        coverage = len(months) / months_spanned if months_spanned else 1.0
+        if coverage < 0.7:
             continue
 
         last_seen = max(t.created_at for t in group)
