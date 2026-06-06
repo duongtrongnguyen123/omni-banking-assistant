@@ -1894,6 +1894,93 @@ def test_resolver_honorific_falls_through_to_name_lookup() -> None:
     assert all("Lan" in n for n in names)
 
 
+def test_amount_parser_bare_digit_with_transfer_context() -> None:
+    """Pre-fix the user-typed bare-VND amount "chuyển 100000000 cho mẹ"
+    parsed as ``None`` (no unit suffix) and the amount predictor then
+    silently overwrote it with the recipient's median ~750k. The
+    confirm card said "Đã hiểu! Xác nhận chuyển 750.000đ" while the
+    user thought they were sending 100M. Money-touching silent
+    override. Now the bare-integer + transfer-verb branch picks up
+    the explicit amount before the predictor runs."""
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount("chuyển 100000000 cho mẹ")
+    assert amount == 100_000_000
+    amount, _ = parse_amount("chuyển 50000 cho bố")
+    assert amount == 50_000
+    amount, _ = parse_amount("chuyển 100 cho mẹ")
+    assert amount is None
+
+
+def test_amount_parser_bare_digit_excludes_account_hints() -> None:
+    """The bare-digit branch must NOT swallow account numbers — those
+    have a separate extractor and a different downstream meaning. Pre-
+    fix the new branch happily read ``stk 9990001234`` as a 9.99-billion
+    đồng amount."""
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount("gửi mẹ stk 9990001234")
+    assert amount is None
+    amount, _ = parse_amount("Lưu Nam STK 9990001234 MB Bank")
+    assert amount is None
+
+
+def test_amount_parser_zero_djong_explicit() -> None:
+    """Explicit ``0đ`` must parse as 0 (not None) so the orchestrator's
+    ``user_invalid_amount`` guard catches it and the predictor doesn't
+    silently fill 750k median."""
+    from app.nlp.amount import parse_amount
+
+    amount, _ = parse_amount("chuyển 0đ mẹ")
+    assert amount == 0
+
+
+def test_transfer_zero_amount_blocks_predictor() -> None:
+    """When the user types an explicit 0đ, do NOT swap it for a
+    history-median prediction. Surface ``missing_amount`` instead."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", "chuyển 0đ mẹ")
+    assert resp.draft is not None
+    assert resp.draft.amount is None
+    assert resp.draft.predicted_amount is False
+    assert any(f.code == "missing_amount" for f in resp.draft.flags)
+
+
+def test_transfer_negative_amount_rejected() -> None:
+    """Pre-fix ``chuyển -5tr cho mẹ`` parsed to amount=5_000_000 (the
+    minus sign was stripped silently). Now the leading-minus guard
+    catches it and the safety engine surfaces ``missing_amount``."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", "chuyển -5tr cho mẹ")
+    assert resp.draft is not None
+    assert resp.draft.amount is None
+    assert any(f.code == "missing_amount" for f in resp.draft.flags)
+
+
+def test_modify_amount_preserves_recipient() -> None:
+    """Sequence: ``chuyển mẹ 2tr`` then ``đổi thành 5tr``. Pre-fix the
+    rule extractor matched "đổi thành" as ``recipient_text`` and
+    ``_modify_transfer_draft`` then cleared the existing recipient on
+    the failed alias lookup. User got "Bạn muốn chuyển 5tr cho ai?"
+    when they only meant to change the amount."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    first = handle_message("u_an", "chuyển mẹ 2tr")
+    assert first.draft and first.draft.recipient is not None
+    first_name = first.draft.recipient.display_name
+
+    edit = handle_message("u_an", "đổi thành 5tr")
+    assert edit.draft is not None
+    assert edit.draft.recipient is not None
+    assert edit.draft.recipient.display_name == first_name
+    assert edit.draft.amount == 5_000_000
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a

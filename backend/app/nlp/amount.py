@@ -190,6 +190,32 @@ def parse_amount(text: str) -> tuple[Optional[int], Optional[str]]:
     if m:
         return int(m.group(1)), m.group(0)
 
+    # 5. Single digit + đ — covers explicit "0đ" / "5đ". Kept narrow
+    # so it doesn't swallow account hints (which use ≥3 digit prefixes
+    # and the ``stk`` cue) or year mentions.
+    m = re.search(r"\b(\d)\s*đ\b", t)
+    if m:
+        return int(m.group(1)), m.group(0)
+
+    # 6. Plain bare integer ≥1000 inside an explicit transfer clause.
+    # Catches "chuyển 100000000 cho mẹ" — the user typed the full VND
+    # amount without a unit suffix. Without this branch the parser
+    # returned None and the amount predictor silently overwrote the
+    # user's explicit 100M with the recipient's median (~750k).
+    # Restricted to a transfer-verb context so phone numbers, account
+    # numbers and dates can't be mis-parsed as amounts. The
+    # ``stk``/``so tai khoan`` guard prevents account hints from being
+    # read as amounts (entities.py has its own _ACCOUNT_HINT_RE).
+    if not re.search(r"\b(?:stk|số\s+tài\s+khoản|so\s+tai\s+khoan|account)\b", t):
+        m = re.search(
+            r"(?:chuyển|chuyen|gửi|gui|trả|tra|nạp|nap|send|transfer)\s+"
+            r"(?:cho|tới|toi|đến|den|sang|qua\s+)?"
+            r"[^\d]*?(\d{4,12})\b(?!\s*(?:người|nguoi|lần|lan|giờ|gio|phút|phut|giây|giay))",
+            t,
+        )
+        if m:
+            return int(m.group(1)), m.group(0)
+
     return None, None
 
 
