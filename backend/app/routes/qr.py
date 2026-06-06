@@ -76,9 +76,13 @@ def decode(body: QRDecodeRequest) -> QRDecodeResponse:
         decoded = decode_payload(body.payload_text)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"QR không đọc được: {e}") from e
+    bank = decoded.get("bank")
+    account = decoded.get("account_number")
+    if not bank or not account:
+        raise HTTPException(status_code=400, detail="QR thiếu trường bắt buộc")
     return QRDecodeResponse(
-        bank=decoded["bank"],
-        account_number=decoded["account_number"],
+        bank=bank,
+        account_number=account,
         amount=decoded.get("amount"),
         message=decoded.get("message"),
     )

@@ -216,7 +216,7 @@ def _render_png_base64(payload: str) -> str:
     qr.make(fit=True)
     img = qr.make_image(fill_color="#15173a", back_color="white")
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG")  # type: ignore[call-arg]
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
