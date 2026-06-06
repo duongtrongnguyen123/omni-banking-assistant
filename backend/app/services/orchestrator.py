@@ -1474,6 +1474,25 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         if cat != "other" and conf >= 0.5:
             category = cat
 
+    # Mini-history for the confirm card — last 3 completed transfers to
+    # this recipient. Skipped for ambiguous drafts (no chosen recipient)
+    # so the disambiguation card stays uncluttered.
+    recent_to_recipient: Optional[list[dict]] = None
+    if chosen is not None:
+        recent_txs = store.transactions_of(
+            user_id, contact_id=chosen.id, status="completed", limit=3,
+        )
+        if recent_txs:
+            recent_to_recipient = [
+                {
+                    "amount": t.amount,
+                    "created_at": t.created_at.isoformat(),
+                    "description": t.description,
+                    "category": t.category,
+                }
+                for t in recent_txs
+            ]
+
     draft = TransactionDraft(
         id=new_id("d"),
         recipient=chosen,
@@ -1491,6 +1510,7 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             prediction.get("rationale") if prediction is not None else None
         ),
         category=category,
+        recent_to_recipient=recent_to_recipient,
     )
 
     session = session_for(user_id)

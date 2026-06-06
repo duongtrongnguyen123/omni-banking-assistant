@@ -262,6 +262,40 @@ export const TransactionCard = ({
                   {r.bank} · {r.account_masked}{" "}
                   {r.verified && <span className="tx-verified">· Đã xác minh</span>}
                 </div>
+                {draft.recent_to_recipient && draft.recent_to_recipient.length > 0 && (
+                  <ul
+                    className="tx-recent-mini"
+                    aria-label={`${draft.recent_to_recipient.length} giao dịch gần đây với ${r.display_name}`}
+                  >
+                    {draft.recent_to_recipient.slice(0, 3).map((tx, i) => {
+                      const date = new Date(tx.created_at);
+                      const dm =
+                        isNaN(date.getTime())
+                          ? ""
+                          : `${String(date.getDate()).padStart(2, "0")}/${String(
+                              date.getMonth() + 1,
+                            ).padStart(2, "0")}`;
+                      return (
+                        <li key={i} className="tx-recent-mini__row">
+                          <span className="tx-recent-mini__amount">
+                            {formatVND(tx.amount)}
+                          </span>
+                          {dm && (
+                            <span className="tx-recent-mini__date">· {dm}</span>
+                          )}
+                          {tx.description && (
+                            <span
+                              className="tx-recent-mini__desc"
+                              title={tx.description}
+                            >
+                              · {tx.description}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
           </div>

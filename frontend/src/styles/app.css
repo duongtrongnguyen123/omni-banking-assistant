@@ -340,6 +340,23 @@ textarea:focus-visible,
   transform: translateY(-1px);
 }
 .quick-amount-chip:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.tx-recent-mini {
+  list-style: none; padding: 0; margin: 6px 0 0;
+  display: grid; gap: 2px;
+  border-top: 1px dashed var(--line); padding-top: 6px;
+}
+.tx-recent-mini__row {
+  font-size: 11.5px; color: var(--muted); line-height: 1.4;
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline;
+}
+.tx-recent-mini__amount {
+  font-weight: 700; color: var(--ink);
+}
+.tx-recent-mini__desc {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 160px;
+}
 @media (prefers-reduced-motion: reduce) {
   .suggest-chip__bar-fill { transition: none; }
 }

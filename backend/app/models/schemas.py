@@ -185,6 +185,12 @@ class TransactionDraft(BaseModel):
     # chip below the amount; the value is also stamped onto the Transaction
     # row when the draft is executed (see banking/service.execute_transfer).
     category: Optional[str] = None
+    # Last few completed transfers to ``recipient`` — used to render a
+    # tiny mini-ledger under the recipient name so the user can sanity
+    # check this draft against their own history without leaving the
+    # confirm card. Raw dicts (``amount, created_at, description``) to
+    # keep the schema layer free of banking-side imports.
+    recent_to_recipient: Optional[list[dict]] = None
 
 
 class ContactDraft(BaseModel):
