@@ -2881,15 +2881,25 @@ def _execute_and_record(
     # share one tap at a time; "Đã chia tiền với 3 người" is the demo
     # closing line once the queue drains.
     next_split = None
+    remaining = 0
+    # Critical section: pop the next split + sample the queue depth in
+    # one atomic step. The previous code read ``len(_split_queues.get(...))``
+    # OUTSIDE the lock, which races against ``start_split_bill`` /
+    # ``clear_user_module_state`` mutating the dict under another
+    # request — risking ``RuntimeError: dictionary changed size during
+    # iteration`` once the runtime grows beyond the small-dict fast
+    # path, and at minimum a stale "Còn N người" count.
     with _drafts_lock:
         queue = _split_queues.get(user_id)
         if queue:
             next_split = queue.pop(0)
             if not queue:
                 _split_queues.pop(user_id, None)
+        # Sample the post-pop depth WHILE the lock is held so the
+        # rendered count and the underlying list cannot diverge.
+        remaining = len(_split_queues.get(user_id) or []) + 1
     if next_split is not None:
         session.set_draft(next_split)
-        remaining = len(_split_queues.get(user_id, [])) + 1
         body = (
             f"{text}\nCòn {remaining} người trong yêu cầu chia tiền — "
             f"xác nhận chuyển {format_vnd(next_split.amount or 0)} cho "  # type: ignore[arg-type]
