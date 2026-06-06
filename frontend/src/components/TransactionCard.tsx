@@ -302,6 +302,9 @@ export const TransactionCard = ({
                   n_samples?: number;
                   ratio?: number;
                   current_amount?: number;
+                  score?: number;
+                  threshold?: number;
+                  n_train?: number;
                 }
               | null
               | undefined;
@@ -310,6 +313,12 @@ export const TransactionCard = ({
               typeof d.median === "number" &&
               typeof d.p90 === "number" &&
               typeof d.n_samples === "number";
+            // Isolation Forest detail block — mirrors the "why" panel for
+            // amount_above_average but for the per-user fraud model.
+            const showFraudWhy =
+              d?.kind === "fraud_model" &&
+              typeof d.score === "number" &&
+              typeof d.threshold === "number";
             return (
               <div key={i} className={`tx-flag tx-flag--${f.severity}`}>
                 <div>
@@ -330,6 +339,22 @@ export const TransactionCard = ({
                       Mẫu: {d!.n_samples} giao dịch · Lần này gấp{" "}
                       <strong>{d!.ratio?.toFixed(1)}×</strong> trung vị
                     </div>
+                  </div>
+                )}
+                {showFraudWhy && (
+                  <div className="tx-flag__why">
+                    <div>
+                      Điểm rủi ro:{" "}
+                      <strong>{Math.round((d!.score ?? 0) * 100)}%</strong>{" "}
+                      · Ngưỡng cảnh báo:{" "}
+                      <strong>{Math.round((d!.threshold ?? 0) * 100)}%</strong>
+                    </div>
+                    {typeof d!.n_train === "number" && (
+                      <div>
+                        Mô hình Isolation Forest huấn luyện trên{" "}
+                        <strong>{d!.n_train}</strong> giao dịch của bạn.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

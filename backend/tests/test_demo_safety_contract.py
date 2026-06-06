@@ -529,6 +529,14 @@ def test_fraud_risk_high_appears_when_score_above_threshold(
     assert "fraud_risk_high" in codes, f"expected fraud_risk_high in {codes}"
     fraud_flag = next(f for f in flags if f.code == "fraud_risk_high")
     assert fraud_flag.severity == "warn"
+    # Details payload — frontend renders a "why" panel from these. Missing
+    # / renamed fields silently drop the explanation. ``kind`` is the
+    # discriminator the TransactionCard switches on.
+    assert fraud_flag.details is not None
+    assert fraud_flag.details.get("kind") == "fraud_model"
+    assert fraud_flag.details.get("score") is not None
+    assert fraud_flag.details.get("threshold") is not None
+    assert fraud_flag.details.get("current_amount") == 1_000_000
 
 
 def test_insights_anomaly_renders_detector_reason() -> None:

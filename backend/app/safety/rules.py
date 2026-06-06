@@ -205,6 +205,13 @@ def evaluate(
                     for f in flags
                 )
                 if not already_warned:
+                    # Pull the per-user training stats so the frontend can
+                    # render a "why" panel mirroring the amount_above_average
+                    # detail block (kind=fraud_model).
+                    fitted = fraud_model._models.get(user_id)
+                    n_train = (
+                        getattr(fitted, "n_train", None) if fitted else None
+                    )
                     flags.append(
                         SafetyFlag(
                             code="fraud_risk_high",
@@ -214,6 +221,13 @@ def evaluate(
                                 f"giao dịch này có rủi ro cao ({int(score * 100)}%). "
                                 "Bạn xác minh OTP để chắc chắn nhé."
                             ),
+                            details={
+                                "kind": "fraud_model",
+                                "score": round(score, 3),
+                                "threshold": fraud_model.FRAUD_RISK_THRESHOLD,
+                                "n_train": n_train,
+                                "current_amount": int(amount),
+                            },
                         )
                     )
         except Exception:  # pragma: no cover — defensive
