@@ -353,6 +353,14 @@ export default function App() {
         const resp = m.response;
         if (resp?.draft?.id) {
           latestDraftId = resp.draft.id;
+          // Historical drafts loaded from a past conversation are
+          // never actionable — they belong to a completed slice of
+          // the user's journey. Mark every draft id as closed so the
+          // TransactionCard renders the "đã đóng" / receipt view
+          // instead of the actionable confirm UI. Subsequent
+          // messages with `đã chuyển` / `mã giao dịch` / `huỷ`
+          // refine that status into confirmed or cancelled below.
+          closed.add(resp.draft.id);
         }
         if (resp?.intent === "transfer" && latestDraftId && !resp.draft) {
           closed.add(latestDraftId);
@@ -1320,9 +1328,20 @@ export default function App() {
                   <button
                     className="btn btn--ghost"
                     onClick={() => {
+                      // Closing the OTP overlay must also cancel the
+                      // backend draft, otherwise it stays alive in
+                      // `awaiting_otp` and the TransactionCard keeps
+                      // showing as actionable. Re-clicking Xác nhận
+                      // then re-opens the overlay against a stale
+                      // draft. Mirror the biometric-cancel branch
+                      // below.
+                      const draftId = pendingAuth?.draftId;
                       setPendingAuth(null);
                       setAuthOtp("");
                       setAuthOtpError("");
+                      if (draftId) {
+                        onCancel(draftId);
+                      }
                     }}
                     disabled={busy}
                   >
