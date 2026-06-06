@@ -443,6 +443,142 @@ def llm_phrase(
 
 
 # ---------------------------------------------------------------------------
+# Category classification — LLM fallback for the rule-based categorizer
+# ---------------------------------------------------------------------------
+
+_CATEGORIZE_SYSTEM = """Bạn là bộ phân loại danh mục chi tiêu cho ngân hàng \
+tiếng Việt. Nhận mô tả giao dịch (1-30 từ), trả về JSON với danh mục \
+trong danh sách dưới đây.
+
+DANH MỤC HỢP LỆ (chỉ trả về 1 trong các code này — KHÔNG được tự đặt code mới):
+- food         → Ăn uống (nhà hàng, cafe, đồ ăn, trà sữa, ăn trưa/tối/sáng)
+- transport    → Đi lại (xăng, Grab, taxi, vé tàu xe, sửa xe)
+- groceries    → Tạp hoá / chợ / siêu thị (Bách Hoá Xanh, Co.opmart, đi chợ)
+- shopping     → Mua sắm (quần áo, mỹ phẩm, Zara, Shopee, hàng tiêu dùng)
+- entertainment→ Giải trí (phim, karaoke, Netflix, concert, game)
+- health       → Sức khoẻ (bệnh viện, thuốc, gym, yoga, khám bệnh, PT)
+- rent         → Tiền nhà / tiền trọ / đặt cọc thuê
+- utilities    → Tiện ích (điện, nước, internet, điện thoại, gas)
+- gifts        → Quà tặng (mừng cưới, lì xì, quà sinh nhật, phong bì)
+- savings      → Tiết kiệm / đầu tư (gửi tiết kiệm, chứng khoán, crypto, vàng)
+- family       → Gia đình (gửi bố mẹ, em út, sinh hoạt gia đình, hiếu)
+- friends      → Bạn bè (chia tiền, trả nợ bạn, góp tiền sinh nhật)
+- work         → Công việc (công tác phí, team building, freelance, hoa hồng)
+- other        → Không thuộc các nhóm trên
+
+ĐẦU RA: chỉ trả JSON đúng format. Không markdown, không giải thích.
+{"category": "<code>", "confidence": <0..1>}
+
+confidence:
+- 0.9-1.0: chắc chắn rõ ràng (có từ khoá đặc trưng)
+- 0.6-0.9: hợp lý nhưng có thể nhập nhằng
+- 0.3-0.6: đoán dựa context, không rõ
+- <0.3: thực sự không phân loại được → category="other"
+
+Ví dụ:
+INPUT: "phở Lý Quốc Sư"
+{"category":"food","confidence":1.0}
+
+INPUT: "đặt Shopee son môi"
+{"category":"shopping","confidence":1.0}
+
+INPUT: "chia tiền sách kỹ thuật"
+{"category":"friends","confidence":0.7}
+
+INPUT: "đi spa cuối tuần"
+{"category":"entertainment","confidence":0.7}
+
+INPUT: "đóng quỹ lớp con"
+{"category":"family","confidence":0.7}
+
+INPUT: "phí gym tháng"
+{"category":"health","confidence":0.9}
+
+INPUT: "tiền mặt"
+{"category":"other","confidence":0.3}
+
+INPUT: "test"
+{"category":"other","confidence":0.0}"""
+
+
+# Tiny LRU cache so identical descriptions reuse the LLM result. Banking
+# notes repeat heavily (same "tiền điện" / "cafe sáng") so this saves the
+# bulk of LLM-classification cost.
+_CATEGORIZE_CACHE: dict[str, tuple[str, float]] = {}
+_CATEGORIZE_CACHE_MAX = 1024
+
+
+def llm_categorize(description: str) -> Optional[tuple[str, float]]:
+    """Ask the LLM to classify a transaction description.
+
+    Used as a fallback when the rule-based categoriser returns
+    ``other`` or a low-confidence score. Returns ``(category, confidence)``
+    or ``None`` if all providers are down / disabled.
+
+    Validates the LLM output against the canonical ``CATEGORIES`` tuple so
+    a hallucinated label can't leak into draft.category. On any
+    deserialization or validation failure, returns None so the caller
+    falls back to its rule-based answer.
+    """
+    if not description or not description.strip():
+        return None
+
+    cached = _CATEGORIZE_CACHE.get(description)
+    if cached is not None:
+        return cached
+
+    providers = _enabled_providers()
+    if not providers and privacy.get_mode() == "local-only":
+        privacy.record_llm_call(
+            provider="(none)",
+            mode="local-only",
+            original_size=len(description),
+            redacted_size=0,
+            redaction_count=0,
+            suppressed=True,
+            note="llm_categorize suppressed by local-only mode",
+        )
+        return None
+
+    # Lazy import to avoid circular dep between nlp/llm.py and ml/categorizer.py.
+    from ..ml.categorizer import CATEGORIES as _CANONICAL
+
+    for p in providers:
+        data = _openai_compat(
+            provider=p,
+            system_prompt=_CATEGORIZE_SYSTEM,
+            history=None,
+            user_message=description,
+            temperature=0,
+            response_format={"type": "json_object"},
+            max_tokens=80,
+        )
+        if data is None:
+            continue
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        cat = obj.get("category")
+        conf_raw = obj.get("confidence", 0.7)
+        # Validate against the canonical category set — reject hallucinations.
+        if not isinstance(cat, str) or cat not in _CANONICAL:
+            continue
+        try:
+            conf = float(conf_raw)
+        except (TypeError, ValueError):
+            continue
+        conf = max(0.0, min(1.0, conf))
+        result = (cat, conf)
+        # Naive cache eviction: drop the oldest entry when full.
+        if len(_CATEGORIZE_CACHE) >= _CATEGORIZE_CACHE_MAX:
+            _CATEGORIZE_CACHE.pop(next(iter(_CATEGORIZE_CACHE)))
+        _CATEGORIZE_CACHE[description] = result
+        return result
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Generic OpenAI-compatible call
 # ---------------------------------------------------------------------------
 
