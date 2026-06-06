@@ -4,6 +4,20 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Load .env into os.environ so untyped keys (the GROQ_API_KEY_N pool,
+# OMNI_DEBUG flags, etc.) are visible to modules that read environ
+# directly. pydantic-settings ONLY populates the typed fields below;
+# anything else stays in the .env file and never reaches os.environ
+# without this explicit load_dotenv call.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(
+        Path(__file__).resolve().parent.parent / ".env", override=False,
+    )
+except ImportError:  # python-dotenv is optional; settings still load .env
+    pass
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

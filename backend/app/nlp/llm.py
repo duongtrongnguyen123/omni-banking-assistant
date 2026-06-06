@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
@@ -36,41 +37,81 @@ class _Provider:
     model: str
 
 
-def _enabled_providers() -> list[_Provider]:
-    """Priority order: Groq first (fastest), Gemini fallback if Groq is down.
+def _collect_keys(prefix: str, primary: str) -> list[str]:
+    """Pool collector — ``GROQ_API_KEY`` plus ``GROQ_API_KEY_1..N``.
 
-    Offline-demo mode returns an empty list unconditionally — the caller
-    falls through to the rule-based extractor. This is the survival path
-    when the pitch laptop has no wifi (see ``docs/offline-demo.md``).
+    Why a numbered pool: the existing 429-fallback in ``_call_llm`` walks
+    providers in order. If we register each key as its own provider, a
+    rate-limited key gets skipped automatically and the next one takes
+    over. No code path change — just more entries in the chain.
+
+    Reads from ``os.environ`` directly so it picks up keys loaded via
+    ``--env-file`` / dotenv even when the settings dataclass doesn't
+    expose them as typed fields. De-duplicates and drops empties.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    if primary:
+        out.append(primary)
+        seen.add(primary)
+    # Look for GROQ_API_KEY_1, _2, … up to a generous ceiling. Stops at
+    # the first 5-in-a-row miss so we don't iterate 1..999 for nothing.
+    misses = 0
+    for n in range(1, 200):
+        v = os.environ.get(f"{prefix}_{n}", "").strip()
+        if not v:
+            misses += 1
+            if misses >= 5 and n > 5:
+                break
+            continue
+        misses = 0
+        if v not in seen:
+            out.append(v)
+            seen.add(v)
+    return out
+
+
+def _enabled_providers() -> list[_Provider]:
+    """Priority order: Groq pool (1..N keys) → Gemini pool → done.
+
+    Each API key registers as its own provider entry so the existing
+    429 fallback in ``_call_llm`` walks through the pool transparently.
+    Burn a key → next one takes over without restart.
+
+    Offline-demo and privacy local-only modes return [] so the rule
+    extractor handles every request.
     """
     s = get_settings()
     if s.offline_demo:
         log.debug("offline_demo=1 — skipping LLM providers")
         return []
-    # Privacy: local-only mode hard-disables every network provider so the
-    # NLU pipeline falls through to the rule-based extractor.
     if privacy.get_mode() == "local-only":
         log.debug("privacy_mode=local-only — skipping LLM providers")
         return []
     out: list[_Provider] = []
-    if s.groq_api_key:
+    groq_keys = _collect_keys("GROQ_API_KEY", s.groq_api_key)
+    for i, key in enumerate(groq_keys):
         out.append(
             _Provider(
-                "groq",
+                f"groq#{i + 1}" if len(groq_keys) > 1 else "groq",
                 "https://api.groq.com/openai/v1/chat/completions",
-                s.groq_api_key,
+                key,
                 s.groq_model,
             )
         )
-    if s.gemini_api_key:
+    gemini_keys = _collect_keys("GEMINI_API_KEY", s.gemini_api_key)
+    for i, key in enumerate(gemini_keys):
         out.append(
             _Provider(
-                "gemini",
+                f"gemini#{i + 1}" if len(gemini_keys) > 1 else "gemini",
                 "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                s.gemini_api_key,
+                key,
                 s.gemini_model,
             )
         )
+    if len(out) > 2:
+        log.info("LLM provider pool: %d entries (Groq %d, Gemini %d)",
+                 len(out), len(groq_keys), len(gemini_keys))
     return out
 
 
