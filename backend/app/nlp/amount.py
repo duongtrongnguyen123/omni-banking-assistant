@@ -63,17 +63,32 @@ _NUM = r"(\d+(?:[.,]\d+)?)"
 # 5 000 000 (10× overpay; visible-money bug). Digits / whitespace /
 # end-of-string still match, so "1tr5" and "5tr500" keep working.
 _PRIMARY_RE = re.compile(
-    rf"{_NUM}\s*(?P<unit>{_UNIT_ALT})(?![A-Za-zÀ-ỹĂăÂâĐđÊêÔôƠơƯư])\s*"
-    # CRITICAL guard (round 6 S5): "100k 2 lần cho mẹ" used to swallow
-    # the trailing "2" as a sub-unit concatenation and produce 100.002đ
-    # — money-loss-class wrong-amount. The rest group now refuses to
-    # match when the digits are followed by a non-amount Vietnamese
-    # word (lần / tháng / ngày / giờ / phút / tuần / năm / người), so
-    # "5tr500" and "100k500" still work but "100k 2 lần" stops at the
-    # 100k and the "2 lần" stays out of the amount.
-    rf"(?:(?P<rest>\d+)"
-    r"(?!\s+(?:lần|lan|tháng|thang|ngày|ngay|giờ|gio|phút|phut|giây|giay|tuần|tuan|năm|nam|người|nguoi|lượt|luot))"
-    rf"\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
+    rf"{_NUM}\s*(?P<unit>{_UNIT_ALT})(?![A-Za-zÀ-ỹĂăÂâĐđÊêÔôƠơƯư])"
+    # CRITICAL guard (round 6 S5 + round 7): "100k 2 lần cho mẹ" used
+    # to swallow the trailing "2" as a sub-unit concatenation and
+    # produce 100.002đ — money-loss-class wrong-amount. We now split
+    # the rest group into two alternatives:
+    #   (a) COMPACT — no whitespace between unit and rest digits
+    #       ("5tr500", "1tr5", "100k500"). Keeps the historical
+    #       behaviour for the colloquial decimal-fraction / sub-unit
+    #       forms. Always allowed; the digit count and base-unit size
+    #       drive the interpretation downstream.
+    #   (b) SPACED — whitespace between unit and rest digits
+    #       ("5 triệu 500", "5tr 500k"). Only allowed when the rest
+    #       digits are followed by a sub-thousand unit
+    #       (k|nghìn|ngàn), punctuation, or end-of-string. Any other
+    #       trailing token (prepositions "cho/tới/đến", base units
+    #       "tr/triệu/tỷ", counter words "lần/tháng/người", bare
+    #       nouns "ai/mẹ/anh") means the digits weren't part of the
+    #       amount — bail out and keep the base amount only.
+    r"(?:"
+    r"(?P<rest>"
+    r"\s*\d+(?=\s*(?:k|nghìn|nghin|ngàn|ngan)\b)"  # +sub-unit (spaced or compact)
+    r"|\s+\d{2,}(?!\d)"                             # spaced, ≥2-digit tail (sub-amount)
+    r"|(?<!\s)\d+"                                  # compact (no leading space)
+    r")"
+    r"\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?"
+    r")?",
     re.IGNORECASE,
 )
 
@@ -181,9 +196,19 @@ def parse_amount(text: str) -> tuple[Optional[int], Optional[str]]:
         unit = _UNITS[unit_key]
         total = n * unit
         rest = m.group("rest")
+        # Alternative (b) of the rest group captures a leading
+        # whitespace ("\s+\d+"). Detect it so we can (i) strip before
+        # int()/len() and (ii) drop the rest when the base is <1M and
+        # no sub-unit follows — "100k 2" should be 100.000đ, not
+        # 100.002đ (money-loss bug fixed in round 7).
+        rest_was_spaced = bool(rest) and rest != rest.lstrip()
         if rest is not None:
+            rest = rest.strip()
+        rest_unit_kw = m.group("rest_unit")
+        if rest and rest_was_spaced and not rest_unit_kw and unit < 1_000_000:
+            rest = None
+        if rest:
             rest_n = int(rest)
-            rest_unit_kw = m.group("rest_unit")
             if rest_unit_kw:
                 total += rest_n * _UNITS[rest_unit_kw.lower()]
             else:
