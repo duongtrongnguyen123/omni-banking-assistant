@@ -128,7 +128,8 @@ _MED: list[tuple[Intent, list[str]]] = [
         "tieu bao", "minh tieu", "toi tieu", "tieu cho",
         "chi cho", "chi gi", "chi nao", "khoan chi", "khoan nao",
         "tong cong", "tong chi", "tong gui", "tong chuyen",
-        "tong tien", "tat ca", "den gio", "lien quan",
+        "tong tien", "tong thu chi", "tong chi tieu",  # "Tổng thu chi tháng này"
+        "tat ca", "den gio", "lien quan",
         "thang nay gui", "thang nay chuyen", "thang nay tieu",
         "thang truoc gui", "thang truoc chuyen", "thang truoc tieu",
     ]),

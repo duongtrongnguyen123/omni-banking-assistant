@@ -98,6 +98,16 @@ _LIMIT_ONE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Default-limit cue — "(các) giao dịch gần nhất" / "giao dịch gần đây"
+# without a number. Falls back to N=5 so the user gets a list instead
+# of the aggregate they didn't ask for.
+_LIMIT_DEFAULT_RE = re.compile(
+    r"(?:cac\s+)?(?:các\s+)?giao\s+d[ịi]ch\s+(?:gần\s+nhất|gan\s+nhat|gần\s+đây|gan\s+day)"
+    r"|(?:cac\s+)?(?:các\s+)?giao\s+d[ịi]ch\s+(?:vừa\s+rồi|vua\s+roi|mới\s+nhất|moi\s+nhat)",
+    re.IGNORECASE,
+)
+_LIMIT_DEFAULT_N = 5
+
 # "ai nhận nhiều nhất", "ai gửi NHIỀU TIỀN nhất", "ai chuyển khoản nhiều nhất",
 # plus the inverted phrasings "tôi tiêu nhiều nhất cho ai" / "cho ai nhiều nhất"
 # where the verb is on the user side ("tiêu / chi") and "ai" is the object.
@@ -105,7 +115,14 @@ _TOP_RECIPIENT_RE = re.compile(
     r"ai\s+(?:nhận|nhan|gửi|gui|chuyển|chuyen)[^,.\n?!]*nhiều[^,.\n?!]*nhất"
     r"|ai\s+(?:nhận|nhan|gửi|gui|chuyển|chuyen)[^,.\n?!]*nhieu[^,.\n?!]*nhat"
     r"|(?:nhiều|nhieu)\s+nhất\s+cho\s+ai|(?:nhieu)\s+nhat\s+cho\s+ai"
-    r"|cho\s+ai\s+(?:nhiều|nhieu)\s+nhất|cho\s+ai\s+(?:nhieu)\s+nhat",
+    r"|cho\s+ai\s+(?:nhiều|nhieu)\s+nhất|cho\s+ai\s+(?:nhieu)\s+nhat"
+    # Verb-first form ("tôi gửi ai nhiều nhất").
+    r"|(?:gửi|gui|chuyển|chuyen|nhận|nhan)\s+ai[^,.\n?!]*(?:nhiều|nhieu)[^,.\n?!]*(?:nhất|nhat)"
+    # "Top N người ..." — the ranking phrasing judges actually type.
+    # Conservative: requires explicit "Top" anchor + người to avoid
+    # eating numeric-amount transfer commands.
+    r"|\btop\s+\d+\s+(?:nguoi|người)"
+    r"|\btop\s+(?:nguoi|người)\s+(?:nhận|nhan|gửi|gui|chuyển|chuyen)",
     re.IGNORECASE,
 )
 
@@ -292,6 +309,10 @@ def extract(text: str) -> ExtractedEntities:
         m = _LIMIT_RE.search(text)
         if m:
             out.limit = int(m.group(1))
+        elif _LIMIT_DEFAULT_RE.search(text):
+            # "các giao dịch gần nhất" without a number — default to 5 so
+            # the handler emits a list, not an aggregate.
+            out.limit = _LIMIT_DEFAULT_N
 
     if _TOP_RECIPIENT_RE.search(text):
         out.top_recipient = True
