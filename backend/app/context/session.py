@@ -178,17 +178,29 @@ class Session:
             history = history[-max_n:]
         self._backend.set_history(self.user_id, history)
 
-    def conversation_messages(self, max_turns: int = 8) -> list[dict]:
+    def conversation_messages(self, max_turns: Optional[int] = None) -> list[dict]:
         """Recent turns as OpenAI-compatible chat messages.
 
         Used as conversational context for both NLU (so the model
         can resolve references like "còn tháng trước?") and response
         phrasing.
+
+        Audit fix: the historical default was ``max_turns=8``, which
+        truncated to four turn pairs even though the backend stored
+        ``OMNI_HISTORY_MAX`` (default 20) messages and ``.env.example``
+        documents that knob as the LLM-context budget. The cap below
+        the storage limit silently defeated terse pivots like
+        "đợi tí, số dư bao nhiêu" → "ok tiếp đi" because the resume
+        cue was already evicted before the LLM ever saw it. When the
+        caller omits ``max_turns`` we now feed ``history_max_messages()``
+        so the LLM sees everything the session retains. The kwarg is
+        kept so tests / future callers can request a smaller window.
         """
+        max_n = max_turns if max_turns is not None else history_max_messages()
         role_map = {"user": "user", "omni": "assistant"}
         return [
             {"role": role_map.get(h.get("role", "user"), "user"), "content": h.get("content", "")}
-            for h in self.history[-max_turns:]
+            for h in self.history[-max_n:]
         ]
 
 

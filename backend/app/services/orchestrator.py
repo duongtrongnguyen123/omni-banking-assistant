@@ -773,6 +773,40 @@ def _handle_message_inner(user_id: str, text: str) -> OmniResponse:
         session.append("omni", resp.text)
         return resp
 
+    # Bare ambiguous turn guard. The rule classifier maps low-signal
+    # inputs (e.g. a bare "2" / "3" / a stray word) to ``transfer`` with
+    # 0.4 confidence. If a draft is in flight and the new turn parsed
+    # NO recipient AND NO amount AND no description AND isn't a
+    # fresh-verb command, dispatching to ``_handle_transfer`` would
+    # mint a brand-new draft with a different id — silently clobbering
+    # the in-flight one. The user reports this as
+    # "tự bỏ mất giao dịch đang điền". Hold the existing draft and ask
+    # the user to clarify instead.
+    if (
+        session.current_draft is not None
+        and nlu.intent == "transfer"
+        and nlu.entities.recipient_text is None
+        and nlu.entities.amount is None
+        and not nlu.entities.description
+        and not _looks_like_fresh_transfer_command(text)
+    ):
+        existing = session.current_draft
+        # Pick a clarification line that fits the missing slot. If the
+        # draft already has both slots, we just re-prompt confirm — the
+        # text isn't a clear edit, so we don't mutate.
+        if existing.amount is None:
+            ask = "Bạn muốn chuyển số tiền cụ thể là bao nhiêu? (ví dụ \"2 triệu\")"
+        elif existing.recipient is None:
+            ask = "Bạn muốn chuyển cho ai? Bạn gõ rõ tên người nhận giúp mình."
+        else:
+            ask = (
+                "Mình chưa rõ ý vừa rồi. Bạn gõ \"xác nhận\" để gửi, "
+                "\"huỷ\" để bỏ, hoặc cho mình biết bạn muốn đổi gì."
+            )
+        session.append("user", text)
+        session.append("omni", ask)
+        return OmniResponse(intent="transfer", text=ask, draft=existing)
+
     resp = _dispatch_intent(user_id, nlu, history_msgs)
     session.append("user", text)
     session.append("omni", resp.text)

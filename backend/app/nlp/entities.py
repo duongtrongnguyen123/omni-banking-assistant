@@ -344,6 +344,14 @@ _BARE_RECIPIENT_DENYLIST = {
     # the user still sees the new amount on the card and can correct.
     "cong", "cong them", "them", "tang",
     "giam", "bot", "tru",
+    # Connective particles that lead an amount-edit on an existing
+    # draft. "với 3tr" / "voi 3tr" / "kèm 500k" / "luôn 1tr" / "thì
+    # 2tr" are amount continuations after a recipient was already
+    # named in a prior turn — they're NOT a new recipient. Pre-fix
+    # the rule extractor matched "với" as recipient_text, the modify
+    # path tried to resolve it, found nothing, and CLEARED the active
+    # draft's recipient (scenario 4 in test_terse_pivot_context).
+    "voi", "kem", "luon", "thi", "ma",
 }
 
 # Backward word-order: "<verb> <amount> <recipient>" — judges write this
