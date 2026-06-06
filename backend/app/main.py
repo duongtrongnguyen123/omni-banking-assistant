@@ -31,3 +31,16 @@ app.include_router(ws.router)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "omni-api"}
+
+
+@app.get("/health/cache")
+def cache_health() -> dict:
+    """Soi trạng thái + hiệu quả lớp cache Redis (hit/miss, hit_rate, số key)."""
+    from . import redis_client
+
+    return {
+        "data_backend": settings.data_backend,
+        "cache_enabled": settings.cache_enabled,
+        "ttl_seconds": settings.cache_ttl_seconds,
+        "redis": redis_client.stats(),
+    }

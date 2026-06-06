@@ -1,0 +1,49 @@
+# Hạ tầng phụ trợ cho Omni — chạy local bằng: docker compose up -d
+#
+# CHỈ chạy Redis ở đây. Postgres "omni" của dự án là DB managed trên AWS RDS
+# (đã seed sẵn ~590k giao dịch) — app/script kết nối qua DATABASE_URL trỏ tới
+# endpoint RDS, KHÔNG cần Postgres local.
+#
+# REDIS_URL: redis://localhost:6379/0
+#
+# (Tùy chọn) Nếu muốn dev offline với Postgres local thay cho RDS, bỏ comment
+# block 'postgres' bên dưới rồi đổi DATABASE_URL=postgresql://omni:omni@localhost:5432/omni
+# và seed lại bằng backend/scripts/push_to_postgres.py.
+services:
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: omni-postgres
+  #   environment:
+  #     POSTGRES_USER: omni
+  #     POSTGRES_PASSWORD: omni
+  #     POSTGRES_DB: omni
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U omni -d omni"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+  #   restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: omni-redis
+    ports:
+      - "6379:6379"
+    # save 60 1: snapshot ra đĩa mỗi 60s nếu có >=1 key đổi (đủ cho demo, không bật AOF).
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  # postgres-data:   # chỉ cần khi bật service postgres local ở trên

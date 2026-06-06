@@ -1,4 +1,4 @@
-.PHONY: install backend frontend smoke dev clean
+.PHONY: install backend frontend smoke dev clean redis
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
@@ -12,6 +12,9 @@ frontend:
 
 smoke:
 	cd backend && .venv/bin/python scripts/smoke.py
+
+redis:
+	docker compose up -d
 
 dev:
 	@echo "Run 'make backend' and 'make frontend' in two terminals."

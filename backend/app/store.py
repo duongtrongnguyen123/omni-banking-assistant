@@ -45,14 +45,51 @@ class Store:
     def contacts_of(self, user_id: str) -> list[Contact]:
         return [c for c in self.contacts.values() if c.owner_id == user_id]
 
-    def transactions_of(self, user_id: str) -> list[Transaction]:
+    def _load_transactions(self, user_id: str) -> list[Transaction]:
+        """Đọc lịch sử từ nguồn đã chọn (in-memory hoặc Postgres RDS)."""
+        if get_settings().data_backend == "postgres":
+            from .db import postgres
+
+            txs = postgres.fetch_transactions(user_id)
+            if txs:  # fail-open: nếu RDS rỗng/sập thì rơi về in-memory
+                return txs
         txs = [t for t in self.transactions.values() if t.owner_id == user_id]
         return sorted(txs, key=lambda t: t.created_at, reverse=True)
+
+    def transactions_of(self, user_id: str) -> list[Transaction]:
+        settings = get_settings()
+        if not settings.cache_enabled:
+            return self._load_transactions(user_id)
+
+        # Cache-aside: thử Redis trước, miss thì đọc nguồn chính rồi ghi cache.
+        from .redis_client import get_cache, set_cache, user_history_key
+
+        key = user_history_key(user_id)
+        cached = get_cache(key)
+        if cached is not None:
+            return [Transaction(**t) for t in cached]
+
+        txs = self._load_transactions(user_id)
+        set_cache(
+            key,
+            [t.model_dump(mode="json") for t in txs],
+            settings.cache_ttl_seconds,
+        )
+        return txs
 
     def add_transaction(self, tx: Transaction) -> Transaction:
         with self._lock:
             self.transactions[tx.id] = tx
+            self._invalidate(tx.owner_id)
             return tx
+
+    @staticmethod
+    def _invalidate(user_id: str) -> None:
+        """Xoá mọi cache của user sau khi dữ liệu thay đổi (history/summary/balance)."""
+        if get_settings().cache_enabled:
+            from .redis_client import invalidate_user
+
+            invalidate_user(user_id)
 
     def update_balance(self, user_id: str, account_id: str, delta: int) -> int:
         with self._lock:
@@ -60,6 +97,7 @@ class Store:
             for acc in user.accounts:
                 if acc.id == account_id:
                     acc.balance += delta
+                    self._invalidate(user_id)
                     return acc.balance
             raise KeyError(account_id)
 
