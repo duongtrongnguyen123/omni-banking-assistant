@@ -640,6 +640,18 @@ def _modify_transfer_draft(
         elif len(candidates) > 1:
             draft.recipient = None
             draft.candidates = [c.contact for c in candidates]
+        else:
+            # Resolver found nobody for the new surface form. The old
+            # code silently kept the previous draft.recipient, which
+            # means a stale "chuyển cho Bố 5tr" lingered when the user
+            # then typed "chuyển cho bạn thân 2tr" → safety engine ran
+            # against Bố with the new amount. Money-touching: don't
+            # inherit the previous recipient when the user EXPLICITLY
+            # named someone else. Clear it; the safety eval below will
+            # then flag missing_recipient and the chat asks for clarity.
+            draft.recipient = None
+            draft.candidates = []
+            draft.recipient_surface = e.recipient_text
 
     # Re-evaluate safety on the modified draft.
     draft.flags = evaluate(
