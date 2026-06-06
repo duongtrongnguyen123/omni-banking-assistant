@@ -29,6 +29,42 @@ from .redactor import redact
 log = logging.getLogger("omni.nlu.llm")
 
 
+# Lazy reorder: when a provider returns 429, push it to the END of the
+# pool for ``_DEPRIORITY_BACKOFF_SECONDS``. The next ``_enabled_providers()``
+# build will partition active-first then backoff-last so the next chat
+# turn doesn't pay the latency of walking every dead key before reaching
+# a live one. Effect on the user: when 37 Groq keys are all daily-limited,
+# the SECOND request hits Gemini in ~50ms instead of ~1.5s of 429 walks.
+import threading as _thr_lazy
+_PROVIDER_PRIORITY_LOCK = _thr_lazy.Lock()
+_DEPRIORITIZED_UNTIL: dict[str, float] = {}
+_DEPRIORITY_BACKOFF_SECONDS = 5 * 60  # try the deprioritized provider again after 5 min
+
+
+def _mark_provider_rate_limited(name: str) -> None:
+    """Push a provider to the end of the pool for ~5 min."""
+    with _PROVIDER_PRIORITY_LOCK:
+        _DEPRIORITIZED_UNTIL[name] = time.time() + _DEPRIORITY_BACKOFF_SECONDS
+
+
+def _is_deprioritized(name: str, now: Optional[float] = None) -> bool:
+    """Is this provider currently in the backoff bucket?
+
+    Auto-clears stale entries whose backoff window has expired so the
+    dict doesn't grow forever and the provider rejoins the active pool
+    naturally on the next call.
+    """
+    until = _DEPRIORITIZED_UNTIL.get(name)
+    if until is None:
+        return False
+    cur = now if now is not None else time.time()
+    if cur >= until:
+        with _PROVIDER_PRIORITY_LOCK:
+            _DEPRIORITIZED_UNTIL.pop(name, None)
+        return False
+    return True
+
+
 @dataclass
 class _Provider:
     name: str
@@ -129,7 +165,21 @@ def _enabled_providers() -> list[_Provider]:
             "LLM provider pool: %d entries (Groq %d, Anthropic %d, Gemini %d)",
             len(out), len(groq_keys), len(anthropic_keys), len(gemini_keys),
         )
-    return out
+    # Lazy reorder — providers that recently 429'd go to the END so the
+    # chat path doesn't pay their latency walking dead keys before
+    # reaching a live one. Within each bucket the original priority is
+    # preserved (Groq beats Anthropic beats Gemini among non-rate-limited
+    # entries; among rate-limited entries the same order — but they all
+    # come AFTER active providers).
+    now = time.time()
+    active: list[_Provider] = []
+    backoff: list[_Provider] = []
+    for p in out:
+        if _is_deprioritized(p.name, now):
+            backoff.append(p)
+        else:
+            active.append(p)
+    return active + backoff
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +826,9 @@ def _openai_compat(
             log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
             if e.code == 429:
                 status = "429"
+                # Push this provider to the back of the pool for ~5 min.
+                # Next chat turn skips it on the fast path.
+                _mark_provider_rate_limited(provider.name)
             elif 400 <= e.code < 500:
                 status = "http_4xx"
             else:
