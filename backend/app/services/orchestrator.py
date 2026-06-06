@@ -48,7 +48,7 @@ def end_telemetry() -> None:
 import threading as _th
 
 from ..banking.budgets import compute_statuses, label_for
-from ..banking.recurring import detect_recurring
+from ..banking.recurring import _normalize as _normalize_desc, detect_recurring
 from ..banking.service import create_schedule, get_balance, get_history, next_run_for
 from ..context import resolve_recipient, resolve_temporal_reference, session_for
 from ..context.alias import filter_by_account_hint
@@ -741,17 +741,75 @@ def _handle_recurring(
     # Surface the structured pattern list so the UI can render a recurring
     # card. We populate recipient_name / recipient_bank here (rather than in
     # the detector) so the detector stays a pure function of (tx, ref_now).
+    # We also attach:
+    #   1. a one-tap schedule suggestion (suggested_cron + label) derived
+    #      from the pattern's typical day, so the UI can offer "Đặt lịch
+    #      ngày 21 hàng tháng" without round-tripping to the schedule
+    #      intent. is_already_scheduled skips the CTA when an active
+    #      schedule for the same contact + amount-within-±20% exists.
+    #   2. a missed-payment flag: when the pattern's expected day this
+    #      month has passed but no matching tx has occurred yet, the UI
+    #      can render an overdue badge. Description matching reuses
+    #      banking.recurring._normalize so the "same line" check agrees
+    #      with the detector's grouping.
+    existing_schedules = store.schedules_of(user_id)
+    today = now()
+    month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Days in current month via next-month rollover (avoids leap-year edges).
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    days_in_current_month = (next_month_start - month_start).days
+    today_naive = today.replace(tzinfo=None)
+    month_start_naive = month_start.replace(tzinfo=None)
+
     enriched: list = []
     for p in top:
         c = contacts_by_id.get(p.contact_id)
+        suggested_cron = f"0 9 {p.typical_day} * *"
+        already_scheduled = any(
+            s.active
+            and s.contact_id == p.contact_id
+            and abs(s.amount - p.typical_amount) <= max(p.typical_amount * 0.2, 10_000)
+            for s in existing_schedules
+        )
+        # Missed: pattern's typical day this month has passed AND no matching
+        # tx has been recorded in the current month. Clamp typical_day to the
+        # month length so a day-31 pattern in February doesn't crash.
+        expected_dom = min(p.typical_day, days_in_current_month)
+        expected_date = month_start.replace(day=expected_dom)
+        pattern_desc_norm = _normalize_desc(p.description)
+        matched_this_month = any(
+            t.contact_id == p.contact_id
+            and _normalize_desc(t.description) == pattern_desc_norm
+            and t.created_at.replace(tzinfo=None) >= month_start_naive
+            for t in txs
+        )
+        is_missed = (not matched_this_month) and expected_date < today
+        days_overdue = (
+            (today_naive - expected_date.replace(tzinfo=None)).days
+            if is_missed else 0
+        )
         enriched.append(
             p.model_copy(
                 update={
                     "recipient_name": c.display_name if c else None,
                     "recipient_bank": c.bank if c else None,
                 }
-            ).model_dump(mode="json")
+            ).model_dump(mode="json") | {
+                "suggested_cron": suggested_cron,
+                "suggested_cron_label": _cron_label(suggested_cron),
+                "is_already_scheduled": already_scheduled,
+                "is_missed": is_missed,
+                "days_overdue": days_overdue,
+            }
         )
+
+    # Sort missed first (longest-overdue → most-recent), then on-track rows
+    # retain detector order. UI can render overdue patterns prominently
+    # without having to re-sort.
+    enriched.sort(key=lambda d: (not d["is_missed"], -d["days_overdue"]))
 
     return OmniResponse(intent="recurring", text=body, recurring_patterns=enriched)
 
