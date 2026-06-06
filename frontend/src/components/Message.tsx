@@ -41,6 +41,11 @@ interface Props {
   onDraftResolved?: (resp: OmniResponse) => void;
   busy?: boolean;
   actionableDraftIds?: Set<string>;
+  /** Drafts the user cancelled via the Huỷ button. TransactionCard
+   *  uses this to suppress the success animation that otherwise fires
+   *  on any actionable→inactionable transition (verifier audit:
+   *  cancel should never look like "Đã chuyển X · Y"). */
+  cancelledDraftIds?: Set<string>;
   /** Drafts whose confirm/cancel request is currently in flight.
    *  TransactionCard locks both buttons + shows a spinner so the user
    *  can't fire a cancel that races a confirm. */
@@ -64,6 +69,7 @@ export const Message = ({
   onDraftResolved,
   busy,
   actionableDraftIds,
+  cancelledDraftIds,
   inFlightDraftIds,
   actionableScheduleDraftIds,
   ttsEnabled,
@@ -143,6 +149,7 @@ export const Message = ({
             disabled={busy}
             inFlight={inFlightDraftIds?.has(r.draft.id) ?? false}
             actionable={actionableDraftIds?.has(r.draft.id) ?? true}
+            cancelled={cancelledDraftIds?.has(r.draft.id) ?? false}
           />
         )}
         {r?.atms && r.atms.length > 0 && <AtmCard atms={r.atms} />}

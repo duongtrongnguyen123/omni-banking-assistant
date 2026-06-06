@@ -90,6 +90,12 @@ export default function App() {
   // rồi nhấn huỷ nhưng mà sao vẫn chuyển?". Cleared in the request's
   // finally block.
   const [inFlightDraftIds, setInFlightDraftIds] = useState<Set<string>>(new Set());
+  // Cancelled drafts are also in closedDraftIds (so they stop being
+  // actionable), but Message+TransactionCard need to distinguish cancel
+  // from execute so the success celebration ("Đã chuyển X · Y") doesn't
+  // fire on a cancel — verifier audit, user feedback "ấn huỷ … vẫn
+  // hiện là đã chuyển khoản được rồi".
+  const [cancelledDraftIds, setCancelledDraftIds] = useState<Set<string>>(new Set());
   const [closedScheduleDraftIds, setClosedScheduleDraftIds] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   // Bumped after every executed transfer so the suggestion strip re-ranks.
@@ -423,6 +429,13 @@ export default function App() {
       const resp = await action();
       if (closeDraftId && !resp.draft) {
         setClosedDraftIds((prev) => new Set(prev).add(closeDraftId));
+        // Mirror the cancel side into a dedicated set so TransactionCard
+        // can suppress the success celebration animation on cancel.
+        // Distinguished from confirm via actionLabel exactly like the
+        // confirmedTransfers counter below.
+        if (actionLabel === "Huỷ") {
+          setCancelledDraftIds((prev) => new Set(prev).add(closeDraftId));
+        }
         // Transfer was executed (or cancelled) — re-rank the suggestion
         // strip so the freshly-paid contact moves up or out.
         if (resp.intent === "transfer") {
@@ -1003,6 +1016,7 @@ export default function App() {
               }}
               busy={busy}
               actionableDraftIds={actionableDraftIds}
+              cancelledDraftIds={cancelledDraftIds}
               inFlightDraftIds={inFlightDraftIds}
               actionableScheduleDraftIds={actionableScheduleDraftIds}
               ttsEnabled={ttsEnabled}

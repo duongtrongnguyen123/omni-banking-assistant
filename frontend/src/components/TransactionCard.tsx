@@ -125,6 +125,11 @@ interface Props {
    *  feedback "nhập opt rồi nhấn huỷ nhưng mà sao vẫn chuyển?". */
   inFlight?: boolean;
   actionable?: boolean;
+  /** Draft was cancelled (not executed). Suppresses the success
+   *  celebration animation and the compact "Đã chuyển X · Y" receipt
+   *  that otherwise renders on the actionable→inactionable transition.
+   *  Falls to the neutral "Giao dịch này đã đóng." status. */
+  cancelled?: boolean;
 }
 
 export const TransactionCard = ({
@@ -137,6 +142,7 @@ export const TransactionCard = ({
   disabled,
   inFlight = false,
   actionable = true,
+  cancelled = false,
 }: Props) => {
   const [editingAmount, setEditingAmount] = useState(false);
   const [pendingAmount, setPendingAmount] = useState("");
@@ -153,13 +159,21 @@ export const TransactionCard = ({
 
   useEffect(() => {
     if (wasActionable.current && !actionable) {
+      // Suppress the "Đã chuyển" celebration animation on cancel. The
+      // actionable→inactionable transition fires for any reason a card
+      // stops being live (executed, cancelled, raced past) — only
+      // execute should look celebratory.
+      if (cancelled) {
+        wasActionable.current = actionable;
+        return;
+      }
       // Fire celebratory state, then auto-collapse to a compact receipt.
       setJustConfirmed(true);
       const t = window.setTimeout(() => setCollapsed(true), 4000);
       return () => window.clearTimeout(t);
     }
     wasActionable.current = actionable;
-  }, [actionable]);
+  }, [actionable, cancelled]);
   const blocked = draft.flags.some((f) => f.severity === "block");
   const hardBlocked = draft.flags.some(
     (f) => f.severity === "block" && f.code !== "insufficient_balance",
