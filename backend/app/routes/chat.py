@@ -14,6 +14,7 @@ from ..services.orchestrator import (
     cancel_contact_draft,
     cancel_draft,
     cancel_schedule_draft,
+    clear_user_module_state,
     confirm_contact_draft,
     confirm_draft,
     confirm_schedule_draft,
@@ -634,13 +635,74 @@ def cancel_schedule(draft_id: str, user_id: str = Depends(current_user)) -> Omni
 @router.post("/session/reset")
 def reset_session(user_id: str = Depends(current_user)) -> dict:
     """Clear all in-flight drafts and conversation history for the caller.
+
     Intended for testing and as the 'fresh chat' button — not exposed in
-    the UI but harmless if hit accidentally."""
+    the UI but harmless if hit accidentally.
+
+    Safety contract (stress-agent A regression, "wrong-recipient silent
+    confirm"): every per-user piece of state that a subsequent
+    confirm/cancel/OTP token could land on MUST be wiped here. If even
+    one slot survives, a future bare "ok" turn can dispatch the prior
+    flow's draft — including an awaiting-OTP transfer to the wrong
+    recipient at the wrong amount.
+
+    Slots reset:
+      * Session drafts (transfer / contact / schedule) — including drafts
+        already in ``awaiting_otp=True`` state. ``clear_draft`` drops the
+        whole serialized blob, so the OTP flag goes with it.
+      * Orchestrator module dicts (budget draft / goal draft / pending
+        split-bill queue) — these live outside the session backend and
+        ``Session.clear_*`` doesn't touch them.
+      * Idempotency / OTP-attempt caches in this module that key on
+        ``f"{user_id}:{draft_id}"`` — after reset, any new draft uses a
+        fresh UUID, but we also drop everything user-scoped so a stale
+        "already-confirmed" replay can't echo back to a new session.
+      * Conversation history at the backend layer. The previous code
+        wrote ``s.history.clear()``, which mutated the *list copy*
+        returned by the ``history`` property and never reached the
+        backend; the new ``clear_history()`` helper writes an empty
+        list through ``set_history``.
+      * The ``_LAST_SESSION_BY_USER`` marker so the next /api/chat call
+        re-enters fresh — preserving it would only matter for chat
+        archival, but resetting it costs nothing and keeps the surface
+        clean.
+    """
     s = session_for(user_id)
     # current_* are read-only properties after the Redis-sessions refactor;
     # use the clear_* methods instead so this works for memory/redis/fake-redis.
     s.clear_draft()
     s.clear_contact_draft()
     s.clear_schedule_draft()
-    s.history.clear()
+    # Backend-level history wipe (was: s.history.clear() — a no-op against
+    # the copy returned by the property).
+    s.clear_history()
+
+    # Orchestrator module-level dicts: budget draft / goal draft / split queue.
+    clear_user_module_state(user_id)
+
+    # Drop any cached confirm response / inflight / OTP-attempt counters
+    # for this user so a new draft cannot inherit them by accident.
+    prefix = f"{user_id}:"
+    with _CONFIRMED_DRAFT_LOCK:
+        stale_confirmed = [k for k in _CONFIRMED_DRAFT_RESPONSES if k.startswith(prefix)]
+        for k in stale_confirmed:
+            _CONFIRMED_DRAFT_RESPONSES.pop(k, None)
+    with _OTP_ATTEMPTS_GUARD:
+        stale_otp = [k for k in _OTP_ATTEMPTS if k.startswith(prefix)]
+        for k in stale_otp:
+            _OTP_ATTEMPTS.pop(k, None)
+    with _CONFIRM_LOCKS_GUARD:
+        stale_locks = [k for k in _CONFIRM_LOCKS if k.startswith(prefix)]
+        for k in stale_locks:
+            _CONFIRM_LOCKS.pop(k, None)
+    # Inflight set isn't lock-guarded but a discard is safe — we only
+    # remove entries that belong to this user.
+    stale_inflight = [k for k in list(_INFLIGHT_CONFIRMS) if k.startswith(prefix)]
+    for k in stale_inflight:
+        _INFLIGHT_CONFIRMS.discard(k)
+
+    # Forget the last-seen conversation marker so the next /api/chat
+    # opens a clean slot for this user.
+    _LAST_SESSION_BY_USER.pop(user_id, None)
+
     return {"ok": True, "user_id": user_id}

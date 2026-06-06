@@ -132,6 +132,26 @@ def _peek_goal_draft(user_id: str) -> Optional[GoalDraft]:
     with _drafts_lock:
         return _goal_drafts.get(user_id)
 
+
+def clear_user_module_state(user_id: str) -> None:
+    """Drop every orchestrator-module per-user slot for ``user_id``.
+
+    The orchestrator keeps three pieces of state outside the pluggable
+    session backend (budget drafts, goal drafts, the pending split-bill
+    queue). They share the user_id key with the session but aren't
+    touched by ``session.clear_*`` calls. The /api/session/reset
+    endpoint needs to wipe them too — otherwise a half-finished split
+    queue or stranded budget/goal confirmation card survives the reset
+    and a subsequent "ok" from the user gets routed to it.
+
+    Safety-critical companion to the ``Session.clear_*`` calls on the
+    /api/session/reset path."""
+    with _drafts_lock:
+        _budget_drafts.pop(user_id, None)
+        _goal_drafts.pop(user_id, None)
+        _split_queues.pop(user_id, None)
+
+
 _CONFIRM_RE = re.compile(
     # Plain confirmation tokens — must occur at message start. Expanded
     # to include polite forms (dạ / vâng), informal acks (ờ / ờ ơ), and
@@ -3091,4 +3111,5 @@ __all__ = [
     "cancel_budget_draft",
     "confirm_goal_draft",
     "cancel_goal_draft",
+    "clear_user_module_state",
 ]
