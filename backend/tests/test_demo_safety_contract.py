@@ -778,6 +778,45 @@ def test_alias_resolver_strips_possessive_tail(
     )
 
 
+# ---------------------------------------------------------------------------
+# Amount parser — wrong-money bugs (visible safety contract!)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected_amount",
+    [
+        # CRITICAL: "5 trăm" used to match the "tr" unit inside "trăm"
+        # and parse as 5_000_000 instead of 500. 10× overpay — judges
+        # confirming such a transfer would be horrified.
+        ("chuyển mẹ 5 trăm", 500),
+        ("5 trăm", 500),
+        # "5 trăm nghìn" = 500K (five hundred thousand). Used to also
+        # match "tr" and give 5M.
+        ("chuyển mẹ 5 trăm nghìn", 500_000),
+        # "1tr5" / "2tr5" = decimal-fraction form for "1.5 / 2.5 million".
+        # Used to parse as 1_005_000 / 2_005_000 — half-million underpay.
+        ("chuyển mẹ 1tr5", 1_500_000),
+        ("chuyển mẹ 2tr5", 2_500_000),
+        # Regression negatives — "5tr500" (3-digit tail) keeps the
+        # historical *1000 interpretation; "5 triệu rưỡi" still 5.5M.
+        ("chuyển mẹ 5tr500", 5_500_000),
+        ("chuyển mẹ 5 triệu rưỡi", 5_500_000),
+        ("chuyển mẹ 500k", 500_000),
+        ("chuyển mẹ 2 trieu", 2_000_000),
+    ],
+)
+def test_amount_parser_wrong_money_regressions(
+    text: str, expected_amount: int
+) -> None:
+    from app.nlp.amount import parse_amount
+    got, _ = parse_amount(text)
+    assert got == expected_amount, (
+        f"{text!r} → {got}; expected {expected_amount}. "
+        "Wrong-money parsing — judges would confirm an off-by-factor transfer."
+    )
+
+
 def test_fraud_model_threshold_constant_exists() -> None:
     """rules.evaluate() reads ``fraud_model.FRAUD_RISK_THRESHOLD``. A
     rename / reorder would silently disable the integration; assert

@@ -19,6 +19,14 @@ _UNITS = {
     "triệu": 1_000_000,
     "trieu": 1_000_000,
     "tr": 1_000_000,
+    "trăm nghìn": 100_000,  # "5 trăm nghìn" = 500K
+    "tram nghin": 100_000,
+    "trăm ngàn": 100_000,
+    "tram ngan": 100_000,
+    "trăm k": 100_000,
+    "tram k": 100_000,
+    "trăm": 100,  # bare "trăm" = 100. Mostly only useful with thousand-tail
+    "tram": 100,  # ("5 trăm nghìn"), kept here so the unit alternation catches it.
     "nghìn": 1_000,
     "nghin": 1_000,
     "ngàn": 1_000,
@@ -35,9 +43,14 @@ _UNIT_ALT = "|".join(re.escape(k) for k in _UNIT_KEYS)
 # Pattern matches "5", "5.5", "5,5"
 _NUM = r"(\d+(?:[.,]\d+)?)"
 
-# Compound like "5tr500" or "5 triệu 500" or "5tr 500k"
+# Compound like "5tr500" or "5 triệu 500" or "5tr 500k". CRITICAL: a
+# trailing letter-only negative lookahead after the unit so "tr" can't
+# match "tr" inside "trăm" — that was sending "5 trăm" through as
+# 5 000 000 (10× overpay; visible-money bug). Digits / whitespace /
+# end-of-string still match, so "1tr5" and "5tr500" keep working.
 _PRIMARY_RE = re.compile(
-    rf"{_NUM}\s*(?P<unit>{_UNIT_ALT})\s*(?:(?P<rest>\d+)\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
+    rf"{_NUM}\s*(?P<unit>{_UNIT_ALT})(?![A-Za-zÀ-ỹĂăÂâĐđÊêÔôƠơƯư])\s*"
+    rf"(?:(?P<rest>\d+)\s*(?P<rest_unit>k|nghìn|nghin|ngàn|ngan)?)?",
     re.IGNORECASE,
 )
 
@@ -82,8 +95,16 @@ def parse_amount(text: str) -> tuple[Optional[int], Optional[str]]:
             if rest_unit_kw:
                 total += rest_n * _UNITS[rest_unit_kw.lower()]
             else:
-                # "5tr500" -> 5,500,000 ; "5 triệu 500" -> 5,500,000 if unit==triệu
-                if unit >= 1_000_000:
+                # "5tr500" -> 5,500,000 ; "5 triệu 500" -> 5,500,000.
+                # CASE: single trailing digit with no unit and a ≥1M base
+                # is the colloquial decimal-fraction form. "1tr5" means
+                # 1.5 million, not 1.005 million. Likewise "2tr5" = 2.5M.
+                # Only fires when rest is a SINGLE digit (1-9) so
+                # "5tr500" (three digits) still resolves to 5.5M via
+                # the *1000 branch.
+                if unit >= 1_000_000 and len(rest) == 1:
+                    total += rest_n * (unit // 10)
+                elif unit >= 1_000_000:
                     total += rest_n * 1_000
                 else:
                     total += rest_n
