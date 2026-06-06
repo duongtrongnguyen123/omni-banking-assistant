@@ -57,6 +57,17 @@ export interface SafetyFlag {
   code: string;
   severity: "info" | "warn" | "block";
   message: string;
+  details?: AnomalyDetails | Record<string, unknown> | null;
+}
+
+export interface AnomalyDetails {
+  kind: "per_recipient";
+  recipient_name: string;
+  median: number;
+  p90: number;
+  n_samples: number;
+  ratio: number;
+  current_amount: number;
 }
 
 export interface TransactionDraft {

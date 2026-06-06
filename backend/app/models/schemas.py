@@ -149,6 +149,11 @@ class SafetyFlag(BaseModel):
     ]
     severity: Literal["info", "warn", "block"]
     message: str
+    # Structured payload — currently only populated for amount_above_average
+    # so the frontend can render a "why" box (median, p90, n_samples,
+    # ratio) under the warning. Optional so older flag emitters stay
+    # source-compatible.
+    details: Optional[dict] = None
 
 
 class TransactionDraft(BaseModel):

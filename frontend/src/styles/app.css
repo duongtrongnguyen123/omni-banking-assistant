@@ -441,6 +441,11 @@ textarea:focus-visible,
 }
 .tx-flag--warn { background: #fff3cd; color: #92400e; }
 .tx-flag--block { background: #fee2e2; color: #991b1b; }
+.tx-flag__why {
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid currentColor;
+  opacity: 0.8; font-size: 12px; line-height: 1.5;
+}
 
 .tx-actions {
   display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end;

@@ -293,12 +293,48 @@ export const TransactionCard = ({
 
       {draft.flags.length > 0 && (
         <div className="tx-flags">
-          {draft.flags.map((f, i) => (
-            <div key={i} className={`tx-flag tx-flag--${f.severity}`}>
-              {f.severity === "block" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}{" "}
-              {f.message}
-            </div>
-          ))}
+          {draft.flags.map((f, i) => {
+            const d = f.details as
+              | {
+                  kind?: string;
+                  median?: number;
+                  p90?: number;
+                  n_samples?: number;
+                  ratio?: number;
+                  current_amount?: number;
+                }
+              | null
+              | undefined;
+            const showWhy =
+              d?.kind === "per_recipient" &&
+              typeof d.median === "number" &&
+              typeof d.p90 === "number" &&
+              typeof d.n_samples === "number";
+            return (
+              <div key={i} className={`tx-flag tx-flag--${f.severity}`}>
+                <div>
+                  {f.severity === "block"
+                    ? "⛔"
+                    : f.severity === "warn"
+                    ? "⚠️"
+                    : "ℹ️"}{" "}
+                  {f.message}
+                </div>
+                {showWhy && (
+                  <div className="tx-flag__why">
+                    <div>
+                      Trung vị: <strong>{formatVND(d!.median!)}</strong> · p90:{" "}
+                      <strong>{formatVND(d!.p90!)}</strong>
+                    </div>
+                    <div>
+                      Mẫu: {d!.n_samples} giao dịch · Lần này gấp{" "}
+                      <strong>{d!.ratio?.toFixed(1)}×</strong> trung vị
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

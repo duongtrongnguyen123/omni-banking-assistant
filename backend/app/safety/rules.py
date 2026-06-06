@@ -37,25 +37,29 @@ _MODIFIED_Z_THRESHOLD = 3.5
 
 def _per_contact_baseline(
     transactions: list[Transaction], contact_id: str
-) -> Optional[tuple[int, float]]:
-    """Return ``(median_amount, mad)`` for completed transfers to
-    ``contact_id``, or ``None`` when there's too little history to be useful.
+) -> Optional[tuple[int, float, int, int]]:
+    """Return ``(median_amount, mad, p90, n_samples)`` for completed
+    transfers to ``contact_id``, or ``None`` when there's too little
+    history to be useful.
 
     Median Absolute Deviation (MAD) is preferred over std-dev here because
     one extreme tx (a 100M wire to mẹ for a property deposit) would inflate
     σ so much that subsequent normal transfers look ordinary again. MAD is
     robust to that one-shot.
     """
-    peers = [
+    peers = sorted(
         t.amount
         for t in transactions
         if t.contact_id == contact_id and t.status == "completed" and t.amount > 0
-    ]
+    )
     if len(peers) < _PER_CONTACT_MIN_SAMPLES:
         return None
     med = int(median(peers))
     mad = median(abs(a - med) for a in peers)
-    return med, float(mad)
+    # Cheap p90: nearest-rank, no interpolation needed for a UX hint.
+    p90_idx = max(0, int(round(0.9 * (len(peers) - 1))))
+    p90 = int(peers[p90_idx])
+    return med, float(mad), p90, len(peers)
 
 
 def evaluate(
@@ -117,7 +121,7 @@ def evaluate(
         # attacker chose a new contact specifically to evade per-contact stats).
         baseline = _per_contact_baseline(transactions, recipient.id)
         if baseline is not None:
-            med, mad = baseline
+            med, mad, p90, n_samples = baseline
             # Iglewicz–Hoaglin modified z. The 0.6745 constant makes mad
             # comparable to σ on a normal distribution. Falls back to a flat
             # multiplier when mad == 0 (every prior tx was the same amount).
@@ -138,6 +142,15 @@ def evaluate(
                             f"khoảng {format_vnd(med)}, lần này gấp ~{ratio:.1f} lần. "
                             "Bạn kiểm tra lại nhé."
                         ),
+                        details={
+                            "kind": "per_recipient",
+                            "recipient_name": recipient.display_name,
+                            "median": med,
+                            "p90": p90,
+                            "n_samples": n_samples,
+                            "ratio": round(ratio, 2),
+                            "current_amount": int(amount),
+                        },
                     )
                 )
         else:
