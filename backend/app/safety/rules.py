@@ -363,3 +363,17 @@ def requires_step_up(flags: list[SafetyFlag]) -> bool:
 
 def is_blocked(flags: list[SafetyFlag]) -> bool:
     return any(f.severity == "block" for f in flags)
+
+
+def auth_policy(flags: list[SafetyFlag]) -> list[str]:
+    """Risk-based auth policy for MVP.
+
+    Normal transfer: OTP.
+    Warn-level risky transfer: OTP + mock biometric.
+    Blocked transfer: no auth path until the user fixes the blocked state.
+    """
+    if is_blocked(flags):
+        return []
+    if requires_step_up(flags):
+        return ["otp", "biometric"]
+    return ["otp"]

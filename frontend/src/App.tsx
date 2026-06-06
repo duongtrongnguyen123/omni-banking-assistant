@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, friendlyApiError } from "./api/client";
 import { TOAST_EVENT_NAME, type ToastEvent } from "./hooks/useEventStream";
-import type { AtmHit, BalanceResult, ChatMessage, Contact, OmniResponse } from "./types";
+import type {
+  AtmHit,
+  BalanceResult,
+  BiometricScanResult,
+  ChatMessage,
+  Contact,
+  OmniResponse,
+} from "./types";
 import { ContactPicker } from "./components/ContactPicker";
+import { BiometricFaceScan } from "./components/BiometricFaceScan";
 import { Message } from "./components/Message";
 import { InsightsCard } from "./components/InsightsCard";
 import { BudgetCard } from "./components/BudgetCard";
@@ -75,6 +83,15 @@ export default function App() {
   // Last confirmed transfer's amount — used by the "Cùng số tiền, người
   // khác" CTA to prefill the chat input with "chuyển <amount> cho ".
   const [lastConfirmedAmount, setLastConfirmedAmount] = useState<number | null>(null);
+  // Risky transfers require an 8D face scan after OTP. When the backend
+  // says biometric is still outstanding, we stash the confirm params here
+  // and open the BiometricFaceScan overlay; on success we re-confirm with
+  // the scan attached.
+  const [pendingBio, setPendingBio] = useState<{
+    draftId: string;
+    otp: string;
+    sourceAccountId?: string;
+  } | null>(null);
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => readStoredTtsPref());
   const ttsSupported = isSpeechSupported();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -285,6 +302,44 @@ export default function App() {
     }
   };
 
+  // Confirm a transfer, attaching the OTP and (for risky transfers) the
+  // 8D face scan. When the backend reports biometric is still required,
+  // we open the BiometricFaceScan overlay and re-confirm with the scan.
+  const runConfirm = async (
+    draftId: string,
+    otp: string,
+    sourceAccountId?: string,
+    biometricScan?: BiometricScanResult,
+  ) => {
+    appendUser(biometricScan ? "Xác minh sinh trắc học" : "Xác minh OTP");
+    const pendingId = appendOmniPending();
+    setBusy(true);
+    try {
+      const resp = await api.confirm(draftId, otp, sourceAccountId, biometricScan);
+      const needsBio =
+        !!resp.draft &&
+        (resp.draft.auth_required?.includes("biometric") ?? false) &&
+        !(resp.draft.auth_completed?.includes("biometric") ?? false);
+      resolveOmni(pendingId, resp);
+      if (needsBio) {
+        // Open (or re-open, on a rejected scan) the face-scan overlay.
+        setPendingBio({ draftId, otp, sourceAccountId });
+        return;
+      }
+      if (!resp.draft) {
+        setClosedDraftIds((prev) => new Set(prev).add(draftId));
+        if (resp.intent === "transfer") {
+          setSuggestRefresh((n) => n + 1);
+          setConfirmedTransfers((n) => n + 1);
+        }
+      }
+    } catch (e) {
+      failOmni(pendingId, e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onConfirm = (draftId: string, otp: string, sourceAccountId?: string) => {
     // Capture the amount before the draft disappears so the "Cùng số
     // tiền, người khác" CTA can prefill the chat input after the
@@ -295,11 +350,7 @@ export default function App() {
         break;
       }
     }
-    sendDraftAction(
-      () => api.confirm(draftId, otp, sourceAccountId),
-      "Xác minh OTP",
-      draftId,
-    );
+    runConfirm(draftId, otp, sourceAccountId);
   };
 
   const onCancel = (draftId: string) =>
@@ -909,6 +960,20 @@ export default function App() {
           open={receiveOpen}
           onClose={() => setReceiveOpen(false)}
         />
+        {pendingBio && (
+          <BiometricFaceScan
+            open
+            challengeId={`${pendingBio.draftId}:${
+              pendingBio.otp.replace(/\D/g, "").slice(0, 6) || "no-otp"
+            }`}
+            onClose={() => setPendingBio(null)}
+            onVerified={(scan) => {
+              const p = pendingBio;
+              setPendingBio(null);
+              runConfirm(p.draftId, p.otp, p.sourceAccountId, scan);
+            }}
+          />
+        )}
         {showClearConfirm && (
           <div
             className="clear-confirm"
