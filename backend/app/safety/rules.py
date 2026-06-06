@@ -80,10 +80,12 @@ def evaluate(
     # Opt-in per caller via the `contacts` kw; None → silently skipped so
     # existing call sites stay source-compatible.
     if recipient and contacts:
-        from .lookalike import detect_lookalike
+        from .lookalike import detect_lookalike_match
 
-        twin = detect_lookalike(recipient, contacts)
-        if twin is not None:
+        match = detect_lookalike_match(recipient, contacts)
+        if match is not None:
+            twin, edit_distance = match
+            kind = "homograph" if edit_distance == 0 else "near_match"
             flags.append(
                 SafetyFlag(
                     code="lookalike_recipient",
@@ -93,6 +95,18 @@ def evaluate(
                         f"({twin.bank}, {twin.account_masked}) — chắc bạn "
                         "chọn đúng người chứ? Mình sẽ yêu cầu xác thực thêm."
                     ),
+                    details={
+                        "kind": "lookalike",
+                        "match_kind": kind,
+                        "edit_distance": edit_distance,
+                        "candidate_name": recipient.display_name,
+                        "candidate_bank": recipient.bank,
+                        "candidate_account_masked": recipient.account_masked,
+                        "twin_id": twin.id,
+                        "twin_name": twin.display_name,
+                        "twin_bank": twin.bank,
+                        "twin_account_masked": twin.account_masked,
+                    },
                 )
             )
 

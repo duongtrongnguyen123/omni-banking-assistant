@@ -74,6 +74,20 @@ def _levenshtein(a: str, b: str, *, cap: int) -> int:
     return prev[len(b)]
 
 
+def detect_lookalike_match(
+    candidate: Contact,
+    contacts: list[Contact],
+    *,
+    max_distance: int = 1,
+    min_name_len: int = 5,
+) -> Optional[tuple[Contact, int]]:
+    """Same matching contract as :func:`detect_lookalike` but returns the
+    winning twin **and** the edit distance, so callers can populate a
+    structured details payload ("homograph match" vs "1-edit typo")."""
+    twin = _detect(candidate, contacts, max_distance, min_name_len)
+    return twin
+
+
 def detect_lookalike(
     candidate: Contact,
     contacts: list[Contact],
@@ -99,6 +113,16 @@ def detect_lookalike(
       - candidate name is shorter than ``min_name_len`` after normalisation.
       - same id as a frequent contact (the candidate IS the frequent one).
     """
+    match = _detect(candidate, contacts, max_distance, min_name_len)
+    return match[0] if match else None
+
+
+def _detect(
+    candidate: Contact,
+    contacts: list[Contact],
+    max_distance: int,
+    min_name_len: int,
+) -> Optional[tuple[Contact, int]]:
     if candidate.frequent:
         return None
 
@@ -132,4 +156,4 @@ def detect_lookalike(
             if d == 0:
                 break  # perfect homograph — no point checking further
 
-    return best[1] if best else None
+    return (best[1], best[0]) if best else None
