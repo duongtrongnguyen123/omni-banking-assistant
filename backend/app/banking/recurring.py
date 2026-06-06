@@ -48,6 +48,11 @@ _NOISE_DESCRIPTIONS: frozenset[str] = frozenset({
     "", "asdf", "ok", "hi", "hey", "hihi", "hehe", "<3", "...", ".", ",",
     "123", "1234", "12345", "test", "done", "ne", "nha", "qwe", "a",
     "aaaaa", "t ck", "ck", ":)", ":(", "<", ">",
+    # Default chat-side descriptions. ``execute_transfer`` writes
+    # "Đã chuyển" (or leaves it blank) when the user didn't supply an
+    # explicit note, so three unrelated chat transfers to the same
+    # contact must NOT get flagged as recurring on description alone.
+    "da chuyen", "chuyen tien", "chuyen khoan", "chuyenkhoan", "transfer",
 })
 
 _MIN_DESC_LEN = 3

@@ -46,22 +46,41 @@ def _month_window(ref: datetime) -> tuple[datetime, datetime]:
 
 
 def _spent_this_month(
-    txs: list[Transaction], category: str, ref_now: datetime
+    txs: list[Transaction],
+    category: str,
+    ref_now: datetime,
+    budget_created_at: Optional[datetime] = None,
 ) -> int:
     """Sum positive (outgoing) tx amounts for ``category`` in the
     current month. Uncategorised "omni" transfers are excluded so
     user-defined budgets track real spending categories — chat
     transfers will still appear under whatever code the categorizer
     assigns them at execute time.
+
+    If ``budget_created_at`` is provided, tx that occurred before the
+    budget was set are excluded. This prevents a user who creates a
+    budget mid-month from immediately seeing their early-month spend
+    counted against the envelope (which would also wrongly trigger
+    ``budget_overshoot`` warnings).
     """
     start, end = _month_window(ref_now)
+    # Normalise all comparisons to naive datetimes — the store mixes
+    # tz-aware ``now()`` values with naive seed data, and Python refuses
+    # to compare across that boundary.
+    start = start.replace(tzinfo=None)
+    end = end.replace(tzinfo=None)
+    if budget_created_at is not None:
+        cutoff = max(start, budget_created_at.replace(tzinfo=None))
+    else:
+        cutoff = start
     total = 0
     for t in txs:
         if t.category != category:
             continue
         if t.status != "completed":
             continue
-        if t.created_at < start or t.created_at >= end:
+        tx_at = t.created_at.replace(tzinfo=None)
+        if tx_at < cutoff or tx_at >= end:
             continue
         if t.amount > 0:
             total += t.amount
@@ -83,7 +102,7 @@ def compute_statuses(
     txs = store.transactions_of(user_id)
     out: list[BudgetStatus] = []
     for b in budgets:
-        spent = _spent_this_month(txs, b.category, ref)
+        spent = _spent_this_month(txs, b.category, ref, b.created_at)
         remaining = b.monthly_limit_vnd - spent
         ratio = spent / b.monthly_limit_vnd if b.monthly_limit_vnd > 0 else 0.0
         out.append(

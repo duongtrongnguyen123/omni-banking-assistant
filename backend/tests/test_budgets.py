@@ -169,6 +169,25 @@ def test_compute_statuses_flags_over_budget():
     assert st.remaining_vnd < 0
 
 
+def test_compute_statuses_ignores_tx_before_budget_created():
+    """Creating a budget mid-month must not retroactively count earlier
+    spend in the same month against the new envelope — otherwise the
+    user gets a phantom ``budget_overshoot`` for spending that happened
+    before the budget existed.
+    """
+    _wipe_test_cat_tx()
+    s = get_store()
+    # 10 days of prior spend in the same month — should be excluded.
+    _add_tx(950_000, days_ago=10)
+    # Budget created "now" (after the early-month spend).
+    s.add_budget(_make_budget(_TEST_CAT, 1_000_000))
+    # New spend after the budget — should count.
+    _add_tx(100_000, days_ago=0)
+    [st] = [x for x in compute_statuses(USER) if x.category == _TEST_CAT]
+    assert st.spent_vnd == 100_000
+    assert st.ratio < 1.0
+
+
 def test_compute_statuses_ignores_other_months():
     """A transaction dated 40 days ago is in last month — must not count
     against this month's envelope."""
