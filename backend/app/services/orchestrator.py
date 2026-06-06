@@ -684,9 +684,15 @@ def _looks_like_bare_recipient(text: str) -> bool:
     Conservative — we'd rather miss a recipient hint and ask again than
     treat "ok" or "huỷ" as someone's name. Rejects:
       - longer than 30 chars (commands stay short; long → free-text)
-      - contains a digit (probably an amount or OTP)
+      - matches an amount span ("100k", "2tr", "1tr5") — the user is
+        editing the amount, not naming the recipient
+      - all-digit short input (probably an OTP / amount)
       - matches a known command word after diacritic-fold
       - empty / whitespace-only
+
+    Bare digits inside a label ("bạn cấp 3", "lớp 12") are KEPT — the
+    pre-fix rejected the whole message because of the "3" and slot-fill
+    never fired for these labels.
     """
     import re as _re
     import unicodedata as _u
@@ -694,7 +700,19 @@ def _looks_like_bare_recipient(text: str) -> bool:
     s = text.strip()
     if not s or len(s) > 30:
         return False
-    if _re.search(r"\d", s):
+    # Amount-shape rejection — digit followed by VN money unit. Plain
+    # digits without unit (a label like "Khoá 5" / "bạn cấp 3") are
+    # NOT amounts and stay eligible as recipient surfaces.
+    if _re.search(
+        r"\d+\s*(?:tr|triệu|trieu|k|nghìn|nghin|ngàn|ngan|"
+        r"tỷ|ty|tỉ|ti|đ|vnd|dong|đồng)\b",
+        s,
+        flags=_re.IGNORECASE,
+    ):
+        return False
+    # All-digit short input is almost certainly an OTP or a typed
+    # amount, not a name. Reject so it doesn't slot-fill.
+    if _re.fullmatch(r"\s*\d{1,6}\s*", s):
         return False
     folded = "".join(
         c for c in _u.normalize("NFKD", s.lower())

@@ -382,6 +382,12 @@ _ACCOUNT_HINT_RE = re.compile(
 
 def _clean_recipient(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
+    # Strip surrounding quotes / colons that appear when judges paste a
+    # label from another chat — `chuyển cho "Bạn thân" 2tr` /
+    # `chuyển cho bạn thân: 2tr` previously returned missing_recipient
+    # because the resolver tried to match `"bạn thân"` (with quotes)
+    # verbatim against aliases.
+    s = s.strip(" '\"“”‘’:-")
     # Strip leading prepositions/verbs that aren't part of the name. The
     # set covers all Vietnamese money-flow words plus the directional
     # particles "sang"/"qua" that appear in "gửi sang Minh" /
@@ -396,11 +402,23 @@ def _clean_recipient(s: str) -> str:
         s,
         flags=re.IGNORECASE,
     )
-    return s.strip(" ,.;-?!")
+    return s.strip(" ,.;-?!\"'“”‘’:")
 
 
 def extract(text: str) -> ExtractedEntities:
     out = ExtractedEntities()
+
+    # Pre-normalise punctuation that separates VN command parts. Judges
+    # paste from other chats with commas / colons / smart-quotes around
+    # the recipient label: `chuyển,bạn thân,2tr`, `chuyển cho bạn thân:
+    # 2tr`, `chuyển cho "Bạn thân" 2tr`. Replace non-numeric commas /
+    # colons / quotes with spaces so the prep + verb regexes (which
+    # require whitespace separators) can fire. Numeric commas like
+    # "5,5tr" stay intact via the digit-flanked guard.
+    text = re.sub(r"(?<!\d),(?!\d)", " ", text)
+    text = text.replace(":", " ")
+    text = re.sub(r"['\"“”‘’]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
 
     amount, span = parse_amount(text)
     if amount is not None:

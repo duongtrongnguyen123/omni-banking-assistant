@@ -2372,6 +2372,79 @@ def test_possessive_cua_toi_minh_strips_for_label_match(
     assert expected_recipient in names, (text, names)
 
 
+@pytest.mark.parametrize(
+    "text,token_in_candidate",
+    [
+        # Kinship honorifics "dì" (maternal aunt) and "cậu" (maternal
+        # uncle) weren't in the prefix-strip whitelist, so the resolver
+        # tried to match "di lan" / "cau minh" verbatim against display
+        # names and got nothing.
+        ("chuyển dì Lan 200k", "Lan"),
+        ("chuyển cậu Minh 200k", "Minh"),
+    ],
+)
+def test_kinship_di_cau_strips_for_name_match(
+    text: str, token_in_candidate: str
+) -> None:
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", text)
+    assert resp.draft is not None
+    candidates = list(resp.draft.candidates) if resp.draft else []
+    if resp.draft.recipient is not None:
+        candidates = [resp.draft.recipient] + candidates
+    assert any(
+        token_in_candidate in c.display_name for c in candidates
+    ), (text, [c.display_name for c in candidates])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Commas / colons / quotes around the label used to leak into
+        # the resolver query verbatim ("\"bạn thân\""), failing the
+        # exact alias / label match. Now pre-normalised to spaces in
+        # ``extract()`` and stripped in ``_clean_recipient``.
+        "chuyển,bạn thân,2tr",
+        "chuyển cho bạn thân: 2tr",
+        'chuyển cho "Bạn thân" 2tr',
+        "chuyển  cho   bạn thân   2tr",
+    ],
+)
+def test_punctuation_around_label_resolves_to_recipient(text: str) -> None:
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    resp = handle_message("u_an", text)
+    assert resp.draft is not None
+    assert resp.draft.recipient is not None, (text, resp.text)
+    assert resp.draft.recipient.display_name == "Vũ Quốc Bảo"
+    assert resp.draft.amount == 2_000_000
+
+
+def test_slot_fill_accepts_bare_label_with_digit() -> None:
+    """Pre-fix the slot-fill heuristic rejected any text containing a
+    digit — so after ``chuyển 2tr`` the follow-up ``bạn cấp 3`` was
+    treated as a fresh non-transfer message and the amount slot was
+    lost. The new heuristic only rejects digit + amount-unit shapes
+    (real amounts) and bare-digit-only short strings (OTPs); a label
+    with an interior digit stays eligible."""
+    from app.context.session import session_for as _sf
+
+    _sf("u_an").clear_draft()
+    t1 = handle_message("u_an", "chuyển 2tr")
+    assert t1.draft is not None
+    assert t1.draft.recipient is None
+    assert t1.draft.amount == 2_000_000
+
+    t2 = handle_message("u_an", "bạn cấp 3")
+    assert t2.draft is not None
+    assert t2.draft.recipient is not None
+    assert t2.draft.recipient.display_name == "Phạm Thuý Vy"
+    assert t2.draft.amount == 2_000_000
+
+
 def test_resolver_alias_kind_does_not_fall_through_to_names() -> None:
     """When the LLM explicitly tags ``recipient_kind="alias"`` we must
     NOT fall through to name lookup — the user said "bạn thân", not a

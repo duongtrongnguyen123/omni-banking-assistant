@@ -25,7 +25,17 @@ def _fold(s: str) -> str:
 
 
 # Family/relational prefixes that should be stripped to match name tokens.
-_RELATIONAL_PREFIXES = ("anh ", "chi ", "em ", "ban ", "co ", "chu ", "bac ", "ong ", "ba ")
+_RELATIONAL_PREFIXES = (
+    "anh ", "chi ", "em ", "ban ",
+    "co ", "chu ", "bac ", "ong ", "ba ",
+    # Additional kinship honorifics — pre-fix "chuyển dì Lan 200k" and
+    # "chuyển cậu Minh 200k" returned missing_recipient because the
+    # honorific stayed glued to the name and the resolver couldn't
+    # token-match "di lan" / "cau minh" against any display_name.
+    "di ",     # "dì Lan" (aunt — mother's side)
+    "cau ",    # "cậu Minh" (uncle — mother's side)
+    "thay ",   # "thầy <Name>" (teacher)
+)
 
 # Possessive / vocative tail tokens — "mẹ tôi" / "mẹ mình" /
 # "chị Lan ơi" / "anh Hùng nhé" / "bạn thân của tôi". None appear in
