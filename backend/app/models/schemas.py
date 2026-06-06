@@ -145,6 +145,10 @@ class SafetyFlag(BaseModel):
         # that triggers OTP step-up; never a hard block (false positives
         # on a real bank dataset are too costly to auto-cancel a transfer).
         "fraud_risk_high",
+        # This draft would push the user past their monthly budget for
+        # ``draft.category``. Soft warn — never gates the transfer; the
+        # user already opted in to the limit when they set the budget.
+        "budget_overshoot",
         "ok",
     ]
     severity: Literal["info", "warn", "block"]

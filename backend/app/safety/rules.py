@@ -70,6 +70,7 @@ def evaluate(
     transactions: list[Transaction],
     account: Optional[Account],
     user_id: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> list[SafetyFlag]:
     flags: list[SafetyFlag] = []
 
@@ -227,6 +228,41 @@ def evaluate(
                                 "threshold": fraud_model.FRAUD_RISK_THRESHOLD,
                                 "n_train": n_train,
                                 "current_amount": int(amount),
+                            },
+                        )
+                    )
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+    # Budget overshoot — soft warn when the draft would push the user
+    # past their monthly envelope for ``category``. Never gates the
+    # transfer; the user already set the limit so we just remind them.
+    if user_id and category and amount is not None and amount > 0:
+        try:
+            from ..banking.budgets import compute_status_for  # local import: cold path
+
+            status = compute_status_for(user_id, category)
+            if status is not None and status.monthly_limit_vnd > 0:
+                projected = status.spent_vnd + amount
+                if projected > status.monthly_limit_vnd:
+                    overshoot = projected - status.monthly_limit_vnd
+                    flags.append(
+                        SafetyFlag(
+                            code="budget_overshoot",
+                            severity="warn",
+                            message=(
+                                f"Lưu ý — giao dịch này sẽ vượt ngân sách "
+                                f"{status.category_label} tháng này "
+                                f"{format_vnd(overshoot)}. Bạn vẫn tiếp tục nhé?"
+                            ),
+                            details={
+                                "kind": "budget_overshoot",
+                                "category": status.category,
+                                "category_label": status.category_label,
+                                "monthly_limit_vnd": status.monthly_limit_vnd,
+                                "spent_vnd": status.spent_vnd,
+                                "projected_vnd": projected,
+                                "overshoot_vnd": overshoot,
                             },
                         )
                     )

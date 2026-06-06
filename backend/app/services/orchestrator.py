@@ -1500,6 +1500,17 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         if prediction is not None:
             amount = prediction["amount"]
 
+    # Auto-categorise BEFORE evaluate() so the safety layer can check
+    # this draft against the user's monthly budget for ``category``.
+    # Confidence floor of 0.5 keeps weak TF-IDF guesses from polluting
+    # the dataset OR producing spurious budget warnings.
+    category: Optional[str] = None
+    cat_source = description or nlu.raw_text
+    if cat_source:
+        cat, conf = categorize_description(cat_source)
+        if cat != "other" and conf >= 0.5:
+            category = cat
+
     flags = evaluate(
         amount=amount,
         recipient_candidates=candidates,
@@ -1507,18 +1518,8 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
         transactions=txs,
         account=account,
         user_id=user_id,
+        category=category,
     )
-
-    # Auto-categorise from the description (or, when blank, the raw
-    # user utterance) so the UI can render a category chip and the saved
-    # transaction is grouped correctly in history. Confidence floor of
-    # 0.5 keeps weak TF-IDF guesses from polluting the dataset.
-    category: Optional[str] = None
-    cat_source = description or nlu.raw_text
-    if cat_source:
-        cat, conf = categorize_description(cat_source)
-        if cat != "other" and conf >= 0.5:
-            category = cat
 
     recent_to_recipient = _recent_to_recipient(user_id, chosen)
 
