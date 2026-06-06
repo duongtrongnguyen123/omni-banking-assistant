@@ -71,6 +71,44 @@ def execute_transfer(
     remaining = acc.balance - amount
     if remaining < _BALANCE_LOW_THRESHOLD:
         events.publish_balance_low(user_id, balance_vnd=remaining)
+
+    # Auto-promote-to-schedule suggest: after this transfer lands, check
+    # if the (recipient, amount) pair now forms a recurring pattern of
+    # ≥3 occurrences AND no active schedule already covers it. Fail-open
+    # — detection error never breaks the transfer happy path.
+    try:
+        from .recurring import detect_recurring
+
+        all_txs = store.transactions_of(user_id, status="completed")
+        patterns = detect_recurring(all_txs)
+        for p in patterns:
+            if p.contact_id != recipient.id:
+                continue
+            # Amount within 10% of typical → same pattern.
+            if abs(p.typical_amount - amount) > max(p.typical_amount * 0.10, 10_000):
+                continue
+            if p.occurrence_count < 3:
+                continue
+            # Skip if a matching schedule is already active.
+            already_scheduled = any(
+                s.contact_id == recipient.id
+                and abs(s.amount - amount) <= max(amount * 0.10, 10_000)
+                and s.active
+                for s in store.schedules_of(user_id)
+            )
+            if already_scheduled:
+                continue
+            events.publish_recurring_suggest(
+                user_id,
+                recipient_name=recipient.display_name,
+                amount_vnd=int(p.typical_amount),
+                occurrence_count=p.occurrence_count,
+                typical_day=p.typical_day,
+            )
+            break  # one nudge per transfer
+    except Exception:  # pragma: no cover — defensive
+        pass
+
     return saved
 
 

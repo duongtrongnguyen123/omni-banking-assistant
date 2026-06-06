@@ -15,6 +15,7 @@ export type ToastKind =
   | "transfer_failed"
   | "schedule_fired"
   | "recurring_detected"
+  | "recurring_suggest"
   | "balance_low"
   | "anomaly_warning";
 
@@ -34,6 +35,7 @@ const VALID_KINDS: Record<ToastKind, true> = {
   transfer_failed: true,
   schedule_fired: true,
   recurring_detected: true,
+  recurring_suggest: true,
   balance_low: true,
   anomaly_warning: true,
 };

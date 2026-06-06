@@ -40,6 +40,10 @@ EventKind = Literal[
     "transfer_failed",
     "schedule_fired",
     "recurring_detected",
+    # Surfaced right after a transfer that completes a 3rd-or-later
+    # occurrence of a recurring pattern. UI renders with a "Đặt lịch
+    # tự động" CTA → POST /api/schedules with prefilled values.
+    "recurring_suggest",
     "balance_low",
     "anomaly_warning",
 ]
@@ -266,5 +270,34 @@ def publish_recurring_detected(
             title="Phát hiện khoản định kỳ",
             body=f"Mình nhận thấy bạn có {count} khoản chi định kỳ hàng tháng.",
             actionable_text="Mình có khoản nào trả định kỳ không?",
+        ),
+    )
+
+
+def publish_recurring_suggest(
+    user_id: str, *,
+    recipient_name: str,
+    amount_vnd: int,
+    occurrence_count: int,
+    typical_day: int,
+) -> None:
+    """Right after a transfer that closes a 3rd-or-later occurrence of
+    a recurring pattern, nudge the user to set up an auto-schedule."""
+    formatted = f"{amount_vnd:,}đ".replace(",", ".")
+    publish(
+        user_id,
+        Event(
+            kind="recurring_suggest",
+            severity="info",
+            title="Tự động hoá khoản chi này?",
+            body=(
+                f"Đây là lần thứ {occurrence_count} bạn chuyển {formatted} cho "
+                f"{recipient_name} hàng tháng (mùng {typical_day}). "
+                "Đặt lịch tự động để khỏi nhớ?"
+            ),
+            actionable_text=(
+                f"Đặt lịch chuyển {recipient_name} {formatted} "
+                f"vào mùng {typical_day} hàng tháng"
+            ),
         ),
     )
