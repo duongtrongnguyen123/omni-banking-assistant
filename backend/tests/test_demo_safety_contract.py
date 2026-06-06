@@ -1825,6 +1825,69 @@ def test_thoi_khong_chuyen_nua_still_cancels() -> None:
     assert "huỷ" in r.text.lower() or "hủy" in r.text.lower()
 
 
+def test_unconfirmed_draft_auto_cancels_after_timeout() -> None:
+    """An unconfirmed draft is dropped once its expiry passes (default 60s,
+    "tự huỷ sau 1 phút"). Tested deterministically by tampering the stored
+    envelope's expiry rather than sleeping."""
+    import json
+    import time as _t
+
+    from app.context import session as sess
+
+    # Unit: the expiry envelope.
+    inner, expired = sess._unwrap_expiry(json.dumps({"__exp": _t.time() - 1, "d": {"x": 1}}))
+    assert expired is True and inner is None
+    _, not_expired = sess._unwrap_expiry(json.dumps({"__exp": _t.time() + 99, "d": {"x": 1}}))
+    assert not_expired is False
+
+    # Facade: a draft whose stored envelope is past expiry auto-cancels on read.
+    s = sess.session_for(USER)
+    _draft_to("nam", 2_000_000)
+    assert s.current_draft is not None
+    raw = s._backend.get_draft(USER)
+    obj = json.loads(raw)
+    obj["__exp"] = _t.time() - 1  # force-expire
+    s._backend.set_draft(USER, json.dumps(obj))
+    assert s.current_draft is None, "expired draft must auto-cancel"
+    s.clear_draft()
+
+
+def test_restart_confirm_discards_old_and_starts_new() -> None:
+    """When a new transfer is pending the discard question, answering "có"
+    cancels the old draft and starts the new one (which then asks for the
+    amount it never carried over)."""
+    from app.services import orchestrator as orch
+    from app.services.orchestrator import handle_message, session_for
+
+    session_for(USER).clear_draft()
+    r1 = handle_message(USER, "chuyển cho cường 4 triệu")
+    assert r1.draft is not None and r1.draft.amount == 4_000_000
+    # Simulate the LLM having asked "huỷ giao dịch cũ?" for a fresh request.
+    orch._PENDING_RESTART[USER] = "chuyển cho mẹ"
+    r2 = handle_message(USER, "có")
+    orch._PENDING_RESTART.pop(USER, None)
+    assert r2.draft is not None and r2.draft.recipient is not None
+    assert "Lan" in r2.draft.recipient.display_name  # mẹ
+    assert r2.draft.amount is None, "the old 4tr must NOT carry into the new transfer"
+    session_for(USER).clear_draft()
+
+
+def test_restart_decline_keeps_old_draft() -> None:
+    """Answering "không" to the discard question keeps the old draft intact."""
+    from app.services import orchestrator as orch
+    from app.services.orchestrator import handle_message, session_for
+
+    session_for(USER).clear_draft()
+    handle_message(USER, "chuyển cho cường 4 triệu")
+    orch._PENDING_RESTART[USER] = "chuyển cho mẹ"
+    r = handle_message(USER, "không")
+    orch._PENDING_RESTART.pop(USER, None)
+    assert r.draft is not None and r.draft.recipient is not None
+    assert "Cường" in r.draft.recipient.display_name
+    assert r.draft.amount == 4_000_000
+    session_for(USER).clear_draft()
+
+
 def test_pure_thoi_still_cancels_draft() -> None:
     """Positive control: a *pure* "thôi" (no amount) must still cancel —
     the edit-guard only steps aside when the message names a sum."""
@@ -1929,6 +1992,55 @@ def test_named_recipient_with_amount_swaps_recipient() -> None:
     assert "Lan" in r2.draft.recipient.display_name, "must swap to mẹ, not keep Linh"
     assert r2.draft.amount == 10_000_000
     session_for(USER).clear_draft()
+
+
+def _apply_action(draft, decision):
+    from app.services.orchestrator import _apply_llm_draft_action
+
+    return _apply_llm_draft_action(USER, draft, decision)
+
+
+def test_llm_action_relative_amounts() -> None:
+    """The deterministic applier computes relative amount ops from the
+    draft's own amount / the source balance — the LLM only names the op."""
+    # gấp đôi
+    r = _apply_action(_draft_to("nam", 2_000_000), {"action": "edit", "amount_op": "multiply", "amount_operand": 2})
+    assert r.draft.amount == 4_000_000
+    # một nửa
+    r = _apply_action(_draft_to("nam", 2_000_000), {"action": "edit", "amount_op": "fraction", "amount_operand": 0.5})
+    assert r.draft.amount == 1_000_000
+    # thêm 500k
+    r = _apply_action(_draft_to("nam", 2_000_000), {"action": "edit", "amount_op": "add", "amount_operand": 500_000})
+    assert r.draft.amount == 2_500_000
+    # bớt 500k
+    r = _apply_action(_draft_to("nam", 2_000_000), {"action": "edit", "amount_op": "subtract", "amount_operand": 500_000})
+    assert r.draft.amount == 1_500_000
+
+
+def test_llm_action_all_balance_uses_account_balance() -> None:
+    """"chuyển hết số dư" → amount = the source account's balance."""
+    d = _draft_to("nam", 2_000_000)
+    bal = next(a for a in d.source_accounts if a.id == d.source_account_id).balance
+    r = _apply_action(d, {"action": "edit", "amount_op": "all_balance"})
+    assert r.draft.amount == bal
+
+
+def test_llm_action_redirect_keeps_amount() -> None:
+    """An LLM edit that only changes the recipient keeps the amount (remember
+    the transaction)."""
+    d = _draft_to("nam", 2_000_000)
+    r = _apply_action(d, {"action": "edit", "recipient_text": "Thảo"})
+    assert r.draft.recipient is not None
+    assert r.draft.recipient.display_name != "Vũ Hoàng Nam"
+    assert r.draft.amount == 2_000_000
+
+
+def test_llm_action_never_invents_amount() -> None:
+    """An edit decision with no amount fields must not change the amount —
+    the applier only does arithmetic the LLM explicitly asked for."""
+    d = _draft_to("nam", 2_000_000)
+    r = _apply_action(d, {"action": "edit", "account_hint": "phụ"})
+    assert r.draft.amount == 2_000_000  # unchanged
 
 
 def test_amount_only_edit_keeps_recipient_and_amount() -> None:

@@ -16,8 +16,11 @@ orchestrator code keeps using ``session.current_draft``,
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
+import time
 from typing import Optional
 
 from ..models.schemas import ContactDraft, ScheduleDraft, TransactionDraft
@@ -28,6 +31,52 @@ from .session_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Draft auto-cancel — an unconfirmed draft is dropped after this many
+# seconds of inactivity. The per-field TTL in session_store only fires on
+# the in-memory backend (Redis EXPIRE is per-key, not per-field), so we
+# enforce it deterministically here with an expiry stamp wrapped around the
+# draft payload. Refreshed on every ``set_*`` (each edit resets the clock).
+# ---------------------------------------------------------------------------
+
+
+def _draft_auto_cancel_seconds() -> int:
+    raw = os.environ.get("OMNI_DRAFT_AUTO_CANCEL_S", "").strip()
+    if not raw:
+        return 60
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 60
+
+
+def _wrap_expiry(model) -> str:
+    """JSON-encode a draft with an absolute expiry timestamp."""
+    return json.dumps(
+        {
+            "__exp": time.time() + _draft_auto_cancel_seconds(),
+            "d": json.loads(model.model_dump_json()),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _unwrap_expiry(raw: Optional[str]) -> tuple[Optional[str], bool]:
+    """Return (inner-draft-json, expired?). Back-compatible with a plain
+    (un-enveloped) draft payload, which is treated as never-expiring."""
+    if not raw:
+        return None, False
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return raw, False
+    if isinstance(obj, dict) and "__exp" in obj:
+        if obj["__exp"] < time.time():
+            return None, True
+        return json.dumps(obj.get("d"), ensure_ascii=False), False
+    return raw, False
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +144,14 @@ class Session:
     @property
     def current_draft(self) -> Optional[TransactionDraft]:
         raw = self._backend.get_draft(self.user_id)
-        return _decode(raw, TransactionDraft)
+        inner, expired = _unwrap_expiry(raw)
+        if expired:
+            self._backend.clear_draft(self.user_id)  # auto-cancel after timeout
+            return None
+        return _decode(inner, TransactionDraft)
 
     def set_draft(self, draft: TransactionDraft) -> None:
-        self._backend.set_draft(self.user_id, _encode(draft))
+        self._backend.set_draft(self.user_id, _wrap_expiry(draft))
 
     def clear_draft(self) -> None:
         self._backend.clear_draft(self.user_id)
@@ -110,10 +163,14 @@ class Session:
     @property
     def current_contact_draft(self) -> Optional[ContactDraft]:
         raw = self._backend.get_contact_draft(self.user_id)
-        return _decode(raw, ContactDraft)
+        inner, expired = _unwrap_expiry(raw)
+        if expired:
+            self._backend.clear_contact_draft(self.user_id)
+            return None
+        return _decode(inner, ContactDraft)
 
     def set_contact_draft(self, draft: ContactDraft) -> None:
-        self._backend.set_contact_draft(self.user_id, _encode(draft))
+        self._backend.set_contact_draft(self.user_id, _wrap_expiry(draft))
 
     def clear_contact_draft(self) -> None:
         self._backend.clear_contact_draft(self.user_id)
@@ -125,10 +182,14 @@ class Session:
     @property
     def current_schedule_draft(self) -> Optional[ScheduleDraft]:
         raw = self._backend.get_schedule_draft(self.user_id)
-        return _decode(raw, ScheduleDraft)
+        inner, expired = _unwrap_expiry(raw)
+        if expired:
+            self._backend.clear_schedule_draft(self.user_id)
+            return None
+        return _decode(inner, ScheduleDraft)
 
     def set_schedule_draft(self, draft: ScheduleDraft) -> None:
-        self._backend.set_schedule_draft(self.user_id, _encode(draft))
+        self._backend.set_schedule_draft(self.user_id, _wrap_expiry(draft))
 
     def clear_schedule_draft(self) -> None:
         self._backend.clear_schedule_draft(self.user_id)

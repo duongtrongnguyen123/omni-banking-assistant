@@ -326,6 +326,142 @@ def llm_understand(
 
 
 # ---------------------------------------------------------------------------
+# Draft-action interpreter — what does the user want to do with the
+# transfer they are currently reviewing? LLM-first so novel phrasings work
+# ("khoan, đổi người nhận thành sếp", "gấp đôi lên", "chuyển hết số dư"),
+# with the rule-based continuation as the offline fallback.
+# ---------------------------------------------------------------------------
+
+_DRAFT_ACTION_SYSTEM = """You interpret what a Vietnamese banking user wants to do
+with the PENDING money transfer they are currently reviewing on screen.
+
+You are given the pending transfer (current recipient, current amount, source
+balance) and the user's latest message. Return STRICT JSON only:
+
+{
+  "action": "confirm" | "cancel" | "otp" | "edit" | "restart" | "unclear" | "other",
+  "otp_code": string|null,
+  "recipient_text": string|null,
+  "amount_vnd": integer|null,
+  "amount_op": "add"|"subtract"|"multiply"|"fraction"|"all_balance"|null,
+  "amount_operand": number|null,
+  "account_hint": string|null
+}
+
+Decide the action:
+- "confirm": user approves AS-IS — "xác nhận", "đồng ý", "ok", "được rồi", "chuyển đi", "ừ".
+- "cancel": user calls the whole thing off WITHOUT naming a new recipient or amount —
+  "huỷ", "thôi", "thôi khỏi", "đừng chuyển nữa", "bỏ đi", "không làm nữa".
+- "otp": the message is just a 4-6 digit code → put it in otp_code.
+- "edit": user CORRECTS the pending transfer — keep the fields they didn't touch.
+  A correction has a cue: "đổi sang…", "à (thôi)…", "không, …", "mà thôi…", "sửa…",
+  "thay bằng…", "ý tôi là…", or changes only the amount/account.
+- "restart": user issues a FRESH, standalone transfer command ("chuyển cho mẹ",
+  "gửi sếp 2 triệu") with NO correction cue — they're starting over, so the pending
+  transfer's amount must NOT carry. Use this for a plain "chuyển/gửi cho X [số tiền]"
+  that reads like a brand-new request, especially when NO amount is given.
+- "unclear": user is talking about the transfer but you cannot tell what they want —
+  ask them. Do NOT guess.
+- "other": the message is NOT about this transfer at all (e.g. "số dư bao nhiêu?",
+  "tháng trước tiêu gì?", smalltalk) → let the normal flow handle it.
+
+For "edit", fill ONLY the fields the user actually changed THIS message:
+- New recipient → recipient_text = the EXACT surface they used ("bố", "chú Ba",
+  "sếp", "Minh", "dì Tư"). Copy it verbatim; do NOT resolve or guess who it is.
+- Absolute amount they stated ("3 triệu", "500k", "2tr5", "1 tỷ") → amount_vnd in VND
+  (k=1e3, tr/triệu=1e6, tỷ=1e9; "rưỡi"=+0.5 unit).
+- Relative amount change:
+    "thêm/cộng 500k"      → amount_op="add",      amount_operand=500000
+    "bớt/trừ/giảm 200k"   → amount_op="subtract", amount_operand=200000
+    "gấp đôi / x2 / nhân 2"→ amount_op="multiply", amount_operand=2
+    "gấp ba"              → amount_op="multiply", amount_operand=3
+    "một nửa / giảm nửa / phân nửa" → amount_op="fraction", amount_operand=0.5
+    "chuyển hết / tất cả / toàn bộ số dư" → amount_op="all_balance"
+- Source account ("dùng tài khoản phụ", "từ tài khoản chính", "tài khoản tiết kiệm",
+  last 4 digits) → account_hint.
+
+CRITICAL RULES:
+- NEVER invent an amount or recipient the user did not mention in THIS message.
+  If they mentioned none, leave those fields null. Do not copy values from the
+  pending transfer or from history.
+- A leading discourse particle ("thôi", "à", "à mà thôi", "khoan", "không", "ý tôi là")
+  FOLLOWED BY a real instruction is an EDIT or redirect, NOT a cancel:
+    "thôi chuyển cho bố"            → edit, recipient_text="bố"
+    "khoan, đổi người nhận thành sếp" → edit, recipient_text="sếp"
+    "không, ý tôi là dì Tư"          → edit, recipient_text="dì Tư"
+  Only treat it as cancel when NOTHING actionable follows.
+
+Examples (PENDING shown for context):
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "đổi sang chị Thảo 3 triệu"
+{"action":"edit","recipient_text":"chị Thảo","amount_vnd":3000000}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "gấp đôi lên đi"
+{"action":"edit","amount_op":"multiply","amount_operand":2}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "bớt còn một nửa thôi"
+{"action":"edit","amount_op":"fraction","amount_operand":0.5}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "chuyển hết số dư cho mẹ luôn"
+{"action":"edit","amount_op":"all_balance"}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "à thôi chuyển cho bố"
+{"action":"edit","recipient_text":"bố"}
+PENDING recipient=Cường amount=4.000.000đ. MSG: "chuyển cho mẹ"
+{"action":"restart","recipient_text":"mẹ"}
+PENDING recipient=Cường amount=4.000.000đ. MSG: "gửi sếp 2 triệu"
+{"action":"restart","recipient_text":"sếp","amount_vnd":2000000}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "dùng tài khoản phụ nhé"
+{"action":"edit","account_hint":"phụ"}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "thôi không chuyển nữa"
+{"action":"cancel"}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "xác nhận"
+{"action":"confirm"}
+PENDING recipient=mẹ amount=12.000.000đ. MSG: "123456"
+{"action":"otp","otp_code":"123456"}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "số dư còn bao nhiêu?"
+{"action":"other"}
+PENDING recipient=mẹ amount=2.000.000đ. MSG: "ờ cái kia"
+{"action":"unclear"}
+"""
+
+
+def llm_draft_action(
+    text: str, draft_ctx: dict, history: Optional[list[dict]] = None
+) -> Optional[dict]:
+    """Interpret the user's message against the pending transfer.
+
+    ``draft_ctx`` carries human-readable ``recipient`` / ``amount`` /
+    ``balance`` strings for the prompt. Returns the parsed decision dict, or
+    ``None`` when no LLM provider is reachable (caller then falls back to the
+    deterministic rule-based continuation)."""
+    providers = _enabled_providers()
+    if not providers:
+        return None
+    user_content = (
+        "GIAO DỊCH ĐANG CHỜ XÁC NHẬN:\n"
+        f"- Người nhận hiện tại: {draft_ctx.get('recipient')}\n"
+        f"- Số tiền hiện tại: {draft_ctx.get('amount')}\n"
+        f"- Số dư tài khoản nguồn: {draft_ctx.get('balance')}\n\n"
+        f'CÂU NGƯỜI DÙNG VỪA NÓI: "{text}"'
+    )
+    for p in providers:
+        data = _openai_compat(
+            provider=p,
+            system_prompt=_DRAFT_ACTION_SYSTEM,
+            history=history,
+            user_message=user_content,
+            temperature=0,
+            response_format={"type": "json_object"},
+            max_tokens=200,
+        )
+        if data is None:
+            continue
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("action"):
+            return obj
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Response phrasing
 # ---------------------------------------------------------------------------
 

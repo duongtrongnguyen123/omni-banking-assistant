@@ -69,7 +69,7 @@ from ..models.schemas import (
 )
 from ..nlp.amount import format_vnd
 from ..nlp.entities import normalize_alias
-from ..nlp.llm import llm_phrase
+from ..nlp.llm import llm_draft_action, llm_phrase
 from ..nlp.pipeline import understand
 from ..safety.rules import auth_policy, evaluate, is_blocked, requires_step_up
 from ..store import get_store, new_id, now
@@ -430,10 +430,16 @@ def _handle_message_inner(
         session.append("user", text)
         return resp
 
-    # Direct continuation paths — for any in-flight draft, "xác nhận"/"huỷ"
-    # acts on the matching draft rather than spawning a new NLU round.
+    # Direct continuation paths — for any in-flight transfer draft the user
+    # is reviewing, the LLM decides what they want (confirm / cancel / edit /
+    # redirect / relative-amount), with the deterministic rules as the
+    # offline fallback. Returns None only when the message isn't about the
+    # draft (e.g. "số dư bao nhiêu?"), in which case we continue to the
+    # normal NLU dispatch below.
     if session.current_draft is not None:
-        cont = _try_continue_draft(user_id, text, session.current_draft)
+        cont = _continue_draft_llm_first(
+            user_id, text, session.current_draft, history_msgs
+        )
         if cont is not None:
             session.append("user", text)
             session.append("omni", cont.text)
@@ -884,7 +890,16 @@ def _modify_transfer_draft(
                 draft.amount_prediction_reason = prediction.get("rationale")
                 draft.amount_prediction_confidence = prediction.get("confidence")
 
-    # Re-evaluate safety on the modified draft.
+    return _finalize_transfer_draft(user_id, draft, txs, account)
+
+
+def _finalize_transfer_draft(
+    user_id: str, draft: TransactionDraft, txs, account
+) -> OmniResponse:
+    """Re-run safety on a mutated draft, refresh the mini-ledger, persist it
+    and compose the reply. Shared by the rule-based modify path and the
+    LLM-driven draft-action path so both go through the SAME deterministic
+    safety gate (anomaly / balance / step-up)."""
     draft.flags = evaluate(
         amount=draft.amount,
         recipient_candidates=[],
@@ -896,8 +911,8 @@ def _modify_transfer_draft(
     draft.requires_step_up = requires_step_up(draft.flags)
     draft.auth_required = auth_policy(draft.flags)
     draft.auth_completed = [a for a in draft.auth_completed if a in draft.auth_required]
-    # Recipient may have changed in this edit; refresh the mini-ledger
-    # so the chat card matches the new recipient.
+    # Recipient may have changed in this edit; refresh the mini-ledger so the
+    # chat card matches the new recipient.
     draft.recent_to_recipient = _recent_to_recipient(user_id, draft.recipient)
 
     session_for(user_id).set_draft(draft)
@@ -2008,6 +2023,260 @@ def _restated_amount(text: str, draft: TransactionDraft) -> Optional[int]:
     if not m:
         return None
     return int(m.group(1)) * _draft_unit(draft.amount or 0)
+
+
+def _draft_context_for_llm(user_id: str, draft: TransactionDraft) -> dict:
+    """Human-readable snapshot of the pending draft for the LLM prompt."""
+    store = get_store()
+    account = (
+        store.account_by_id(user_id, draft.source_account_id)
+        if draft.source_account_id
+        else store.primary_account(user_id)
+    )
+    if draft.recipient is not None:
+        recipient = draft.recipient.display_name
+    elif draft.candidates:
+        recipient = "chưa rõ (" + ", ".join(c.display_name for c in draft.candidates) + ")"
+    else:
+        recipient = "chưa chọn"
+    return {
+        "recipient": recipient,
+        "amount": format_vnd(draft.amount) if draft.amount else "chưa nhập",
+        "balance": format_vnd(account.balance) if account else "không rõ",
+    }
+
+
+# When the user starts a NEW transfer while an unconfirmed draft is still
+# open, we don't silently discard the old one — we ASK first and stash the
+# new request text here, keyed by user, until they answer có/không.
+_PENDING_RESTART: dict[str, str] = {}
+
+_RESTART_YES_RE = re.compile(
+    r"^\s*(?:có|co|ừ|u|um|ừm|vâng|vang|đồng\s*ý|dong\s*y|ok|okay|được|duoc|"
+    r"huỷ|huy|hủy|đúng|dung\s*rồi|yes|y|chuyển\s*mới|moi)\b",
+    re.IGNORECASE,
+)
+_RESTART_NO_RE = re.compile(
+    r"^\s*(?:không|khong|ko|đừng|giữ|giu|khỏi|khoi|thôi\s*khỏi|no|giữ\s*lại)\b",
+    re.IGNORECASE,
+)
+
+
+def _describe_draft_short(draft: TransactionDraft) -> str:
+    """One-line human summary of a pending draft for the discard prompt."""
+    if draft.recipient is not None:
+        who = draft.recipient.display_name
+    elif draft.candidates:
+        who = " / ".join(c.display_name for c in draft.candidates)
+    else:
+        who = "chưa chọn người nhận"
+    amt = format_vnd(draft.amount) if draft.amount else "chưa nhập số tiền"
+    return f"{amt} cho {who}"
+
+
+def _start_fresh_transfer(
+    user_id: str, text: str, history_msgs: list[dict]
+) -> OmniResponse:
+    """Run a brand-new transfer request through the normal NLU + dispatch
+    (old draft already cleared by the caller)."""
+    nlu = understand(text, history=history_msgs)
+    return _dispatch_intent(user_id, nlu, history_msgs)
+
+
+def _continue_draft_llm_first(
+    user_id: str, text: str, draft: TransactionDraft, history_msgs: list[dict]
+) -> Optional[OmniResponse]:
+    # First: are we waiting for the user to answer "huỷ giao dịch cũ?" — if
+    # so this turn is that answer, not a draft edit.
+    pending = _PENDING_RESTART.get(user_id)
+    if pending is not None:
+        if _RESTART_YES_RE.search(text):
+            _PENDING_RESTART.pop(user_id, None)
+            cancel_draft(user_id, draft.id)  # discard the old draft
+            # If the answer itself carries a fuller new command, use it;
+            # otherwise replay the original new request we stashed.
+            new_text = text if _TRANSFER_VERB_RE.search(text) else pending
+            return _start_fresh_transfer(user_id, new_text, history_msgs)
+        if _RESTART_NO_RE.search(text):
+            _PENDING_RESTART.pop(user_id, None)
+            return OmniResponse(
+                intent="transfer",
+                text=(
+                    "Được, mình giữ lại giao dịch cũ. Bạn xác nhận, sửa, "
+                    "hoặc nói 'huỷ' nếu muốn bỏ nhé."
+                ),
+                draft=draft,
+            )
+        # Unclear answer → keep the old draft, drop the pending (don't loop),
+        # and ask them to be explicit. Safe default: never discard without a
+        # clear yes.
+        _PENDING_RESTART.pop(user_id, None)
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                f"Mình vẫn giữ giao dịch đang chờ ({_describe_draft_short(draft)}). "
+                "Bạn muốn tiếp tục giao dịch này, hay nói 'huỷ' để bỏ nó nhé."
+            ),
+            draft=draft,
+        )
+
+    return _continue_draft_llm_first_inner(user_id, text, draft, history_msgs)
+
+
+def _continue_draft_llm_first_inner(
+    user_id: str, text: str, draft: TransactionDraft, history_msgs: list[dict]
+) -> Optional[OmniResponse]:
+    """LLM-first continuation for an active transfer draft.
+
+    The LLM reads the pending draft + history + this message and returns a
+    structured decision (confirm / cancel / otp / edit / unclear / other),
+    so novel phrasings work ("khoan đổi sang sếp", "gấp đôi", "chuyển hết số
+    dư") instead of needing a hand-written rule each time. Returns:
+
+      * an ``OmniResponse`` when the LLM resolved the turn,
+      * ``None`` when the message isn't about the draft (action="other") —
+        the caller continues to the normal NLU dispatch,
+      * the rule-based :func:`_try_continue_draft` result when no LLM is
+        reachable (deterministic offline fallback).
+    """
+    decision = llm_draft_action(text, _draft_context_for_llm(user_id, draft), history_msgs)
+    if decision is None:
+        # No LLM → deterministic rules.
+        return _try_continue_draft(user_id, text, draft)
+
+    action = decision.get("action")
+    if action == "other":
+        return None  # not about this draft → let normal NLU handle it
+    if action == "restart":
+        # Fresh standalone transfer command ("chuyển cho mẹ") while a draft
+        # is still open and UNCONFIRMED. Don't silently discard it — ask the
+        # user to confirm cancelling the old one first, and stash the new
+        # request to replay once they say yes.
+        _PENDING_RESTART[user_id] = text
+        return OmniResponse(
+            intent="transfer",
+            text=(
+                f"Bạn đang có một giao dịch chưa hoàn tất: "
+                f"{_describe_draft_short(draft)}. Huỷ giao dịch này để bắt đầu "
+                f"giao dịch mới chứ? (có / không)"
+            ),
+            draft=draft,
+        )
+    if action == "confirm":
+        return confirm_draft(user_id, draft.id)
+    if action == "cancel":
+        return cancel_draft(user_id, draft.id)
+    if action == "otp":
+        code = (decision.get("otp_code") or "").strip()
+        if re.fullmatch(r"\d{4,6}", code):
+            return confirm_draft(user_id, draft.id, otp=code)
+        # malformed → fall back to rules
+        return _try_continue_draft(user_id, text, draft)
+    if action == "edit":
+        return _apply_llm_draft_action(user_id, draft, decision)
+    # "unclear" (or anything unexpected) → ask, never fabricate.
+    return OmniResponse(
+        intent="transfer",
+        text=(
+            "Bạn muốn đổi gì cho giao dịch này — số tiền, người nhận, "
+            "hay tài khoản nguồn? Hoặc nói 'xác nhận' / 'huỷ' nhé."
+        ),
+        draft=draft,
+    )
+
+
+def _apply_llm_draft_action(
+    user_id: str, draft: TransactionDraft, decision: dict
+) -> OmniResponse:
+    """Apply an LLM-resolved ``edit`` decision to the draft, deterministically.
+
+    Recipient/amount/account are taken ONLY from the structured decision
+    (which the prompt forbids from inventing). Relative amount ops are
+    computed here from the draft's own amount / the source balance, so the
+    LLM never has to do arithmetic. The shared safety gate then re-runs via
+    :func:`_finalize_transfer_draft`."""
+    store = get_store()
+    contacts = store.contacts_of(user_id)
+    txs = store.transactions_of(user_id)
+
+    # 1) Source account switch.
+    if decision.get("account_hint"):
+        switched = _resolve_source_account(
+            decision["account_hint"], draft.source_accounts
+        )
+        if switched is not None:
+            draft.source_account_id = switched
+    account = (
+        store.account_by_id(user_id, draft.source_account_id)
+        if draft.source_account_id
+        else store.primary_account(user_id)
+    )
+
+    # 2) Recipient change.
+    recipient_changed = False
+    rt = decision.get("recipient_text")
+    if rt:
+        cands = resolve_recipient(rt, contacts)
+        if len(cands) == 1:
+            new_rec = cands[0].contact
+            recipient_changed = (
+                draft.recipient is None or new_rec.id != draft.recipient.id
+            )
+            draft.recipient = new_rec
+            draft.candidates = []
+        else:
+            # ambiguous (>1) or unknown (0): surface it, don't keep the old
+            # recipient with a new edit — the user named someone else.
+            recipient_changed = True
+            draft.recipient = None
+            draft.candidates = [c.contact for c in cands]
+
+    # 3) Amount change — absolute or relative. Computed deterministically.
+    new_amount: Optional[int] = None
+    if decision.get("amount_vnd") is not None:
+        try:
+            new_amount = int(decision["amount_vnd"])
+        except (TypeError, ValueError):
+            new_amount = None
+    else:
+        op = decision.get("amount_op")
+        operand = decision.get("amount_operand")
+        base = draft.amount or 0
+        try:
+            if op == "add" and operand is not None:
+                new_amount = base + int(operand)
+            elif op == "subtract" and operand is not None:
+                new_amount = max(0, base - int(operand))
+            elif op == "multiply" and operand is not None:
+                new_amount = int(base * float(operand))
+            elif op == "fraction" and operand is not None:
+                new_amount = int(base * float(operand))
+            elif op == "all_balance":
+                new_amount = account.balance if account else base
+        except (TypeError, ValueError):
+            new_amount = None
+
+    if new_amount is not None and new_amount > 0:
+        draft.amount = new_amount
+        draft.predicted_amount = False
+        draft.suggested_amount = None
+        draft.amount_prediction_reason = None
+        draft.amount_prediction_confidence = None
+
+    # 4) Redirected to a new person with no amount on record yet → offer a
+    # history suggestion for THEM (chip, not auto-set). If an amount is
+    # already set, it's remembered across the recipient change.
+    if recipient_changed and draft.amount is None and draft.recipient is not None:
+        draft.suggested_amount = None
+        draft.amount_prediction_reason = None
+        draft.amount_prediction_confidence = None
+        prediction = predict_amount(user_id, draft.recipient.id)
+        if prediction is not None:
+            draft.suggested_amount = prediction.get("amount")
+            draft.amount_prediction_reason = prediction.get("rationale")
+            draft.amount_prediction_confidence = prediction.get("confidence")
+
+    return _finalize_transfer_draft(user_id, draft, txs, account)
 
 
 def _try_continue_draft(
