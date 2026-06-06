@@ -533,6 +533,18 @@ def _handle_message_inner(
         session.append("user", text)
         return resp
 
+    # Multi-turn NAPAS name inquiry: a prior turn asked for the missing half
+    # (account number or bank). Combine the answer with what we stashed before
+    # the numeric OTP / draft-continuation paths can misread it.
+    if session.current_draft is not None and session.current_draft.napas_pending:
+        resp = _continue_napas_pending(user_id, text, session.current_draft)
+        if resp is not None:
+            session.append("user", text)
+            session.append("omni", resp.text)
+            return resp
+        # Answer carried neither half → drop the pending state and fall through.
+        session.clear_draft()
+
     # Direct continuation paths — for any in-flight transfer draft the user
     # is reviewing, the LLM decides what they want (confirm / cancel / edit /
     # redirect / relative-amount), with the deterministic rules as the
@@ -2383,6 +2395,136 @@ def _msg_has_transfer_signal(nlu: NLUResult) -> bool:
     return False
 
 
+def _napas_ask_missing(
+    user_id: str,
+    *,
+    amount: Optional[int],
+    account_hint: Optional[str],
+    bank: Optional[str],
+    recipient_text: Optional[str],
+    ask_text: str,
+) -> OmniResponse:
+    """Stash the known half of a NAPAS inquiry + ask for the other.
+
+    Stored on a recipient-less draft (``napas_pending``) so the next turn's
+    one-word answer ("vcb" / a bare account number) combines instead of being
+    treated as a fresh request. No card is shown (draft omitted from response).
+    """
+    draft = TransactionDraft(
+        id=new_id("d"),
+        recipient=None,
+        candidates=[],
+        amount=amount,
+        source_text="napas_pending",
+        napas_pending={
+            "amount": amount,
+            "account_hint": account_hint,
+            "bank": bank,
+            "recipient_text": recipient_text,
+        },
+    )
+    session_for(user_id).set_draft(draft)
+    return OmniResponse(intent="transfer", text=ask_text)
+
+
+def _continue_napas_pending(
+    user_id: str, text: str, draft: TransactionDraft
+) -> Optional[OmniResponse]:
+    """Combine a one-word answer with the stashed half of a NAPAS inquiry.
+
+    Returns None when the answer carries neither an account nor a bank (the
+    user changed topic) — the caller then drops the pending state.
+    """
+    from ..models.schemas import ExtractedEntities
+    from ..nlp.entities import extract
+
+    p = draft.napas_pending or {}
+    have_acct = bool(p.get("account_hint"))
+    e = extract(text)
+    got_bank = e.bank_name
+    got_acct = "".join(ch for ch in (e.account_hint or "") if ch.isdigit())
+    # Bank was the missing half → a bare account-number answer has no "STK"
+    # prefix, so accept any long digit run as the account.
+    if not have_acct and not got_acct:
+        m = re.search(r"\d{6,}", text)
+        if m:
+            got_acct = m.group(0)
+    if not got_bank and not got_acct:
+        return None  # neither half present → user changed topic
+
+    acct = (p.get("account_hint") or got_acct or "")
+    bank = (p.get("bank") or got_bank or "")
+    amount = p.get("amount")
+    recipient_text = p.get("recipient_text")
+
+    if acct and not bank:
+        draft.napas_pending = {
+            "amount": amount, "account_hint": acct, "bank": None,
+            "recipient_text": recipient_text,
+        }
+        session_for(user_id).set_draft(draft)
+        return OmniResponse(
+            intent="transfer",
+            text=f"Tài khoản {acct} ở ngân hàng nào ạ? Bạn cho mình tên ngân hàng nhé.",
+        )
+    if bank and not acct:
+        draft.napas_pending = {
+            "amount": amount, "account_hint": None, "bank": bank,
+            "recipient_text": recipient_text,
+        }
+        session_for(user_id).set_draft(draft)
+        return OmniResponse(
+            intent="transfer",
+            text=f"Bạn cho mình số tài khoản người nhận ở {bank} nhé.",
+        )
+
+    # Both halves known → clear pending, synthesise the transfer, dispatch.
+    session_for(user_id).clear_draft()
+    syn = NLUResult(
+        intent="transfer",
+        confidence=0.9,
+        entities=ExtractedEntities(
+            account_hint=acct, bank_name=bank, amount=amount,
+            recipient_text=recipient_text,
+        ),
+        raw_text=f"chuyển {amount or ''} cho STK {acct} {bank}".strip(),
+        source="rule",
+    )
+    return _handle_transfer(user_id, syn)
+
+
+def _napas_adhoc_recipient(
+    user_id: str,
+    account_hint: str,
+    recipient_text: Optional[str] = None,
+    bank_name: Optional[str] = None,
+) -> Optional[Contact]:
+    """Build an UNSAVED Contact for a stranger via a NAPAS name inquiry.
+
+    Returns None when the account isn't in the NAPAS dataset — the caller then
+    falls through to asking who. The contact is persisted on the first
+    successful transfer (see ``confirm_draft``).
+    """
+    from ..banking import napas
+
+    row = napas.lookup(account_hint, bank_name)
+    if row is None:
+        return None
+    acct = "".join(ch for ch in (row.get("account_number") or account_hint) if ch.isdigit())
+    return Contact(
+        id=new_id("c"),
+        owner_id=user_id,
+        display_name=row["display_name"],
+        bank=row.get("bank") or bank_name or "",
+        account_number=acct,
+        account_masked="*" + acct[-3:],
+        aliases=[],
+        label=None,
+        verified=True,  # NAPAS-confirmed holder name
+        frequent=False,
+    )
+
+
 def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     store = get_store()
     contacts = store.contacts_of(user_id)
@@ -2416,6 +2558,40 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
     chosen: Optional[Contact] = None
     if len(candidates) == 1:
         chosen = candidates[0].contact
+
+    # Stranger path: recipient not in the contact book, but a real account
+    # number was given → NAPAS name inquiry. Transact with the looked-up
+    # holder (persisted to contacts on first successful transfer, see
+    # confirm_draft). Falls through to "ask who" when NAPAS has no match.
+    if chosen is None and not candidates and (e.account_hint or e.bank_name):
+        acct = "".join(ch for ch in (e.account_hint or "") if ch.isdigit())
+        bank = (e.bank_name or "").strip()
+        # Business rule: a NAPAS name inquiry needs BOTH the account number
+        # AND the bank. If only one is given, ask for the missing half.
+        if acct and not bank:
+            return _napas_ask_missing(
+                user_id, amount=e.amount, account_hint=acct, bank=None,
+                recipient_text=e.recipient_text,
+                ask_text=f"Tài khoản {acct} ở ngân hàng nào ạ? Bạn cho mình tên ngân hàng nhé.",
+            )
+        if bank and not acct:
+            return _napas_ask_missing(
+                user_id, amount=e.amount, account_hint=None, bank=bank,
+                recipient_text=e.recipient_text,
+                ask_text=f"Bạn cho mình số tài khoản người nhận ở {bank} nhé.",
+            )
+        # Both present → NAPAS name inquiry.
+        adhoc = _napas_adhoc_recipient(user_id, acct, e.recipient_text, bank)
+        if adhoc is not None:
+            chosen = adhoc
+        else:
+            return OmniResponse(
+                intent="transfer",
+                text=(
+                    f"Không tìm thấy tài khoản {acct} tại {bank}. "
+                    "Bạn kiểm tra lại số tài khoản và ngân hàng giúp mình nhé."
+                ),
+            )
 
     # Resolve temporal reference using the chosen recipient (if any) for higher precision
     amount = e.amount
@@ -3413,12 +3589,31 @@ def _execute_and_record(
     except Exception:  # pragma: no cover - counter must never roll back transfer
         pass
 
+    # First-transfer auto-save: a stranger transacted via NAPAS name inquiry
+    # isn't in the contact book yet. Persist them so next time "chuyển cho
+    # <tên>" resolves directly. Best-effort — a save failure must never roll
+    # back the transfer the user already saw confirmed.
+    saved_new_contact = False
+    try:
+        rcp = draft.recipient
+        if (
+            rcp is not None
+            and store.get_contact(rcp.id) is None
+            and store.find_contact_by_account(user_id, rcp.account_number) is None
+        ):
+            store.add_contact(rcp)
+            saved_new_contact = True
+    except Exception:  # pragma: no cover — saving is best-effort
+        pass
+
     session.clear_draft()
     otp_note = " (đã xác minh OTP)" if otp_used else ""
     text = (
         f"Đã chuyển {format_vnd(tx.amount)} cho {draft.recipient.display_name} "  # type: ignore[union-attr]
         f"({draft.recipient.bank}){otp_note}. Mã giao dịch: {tx.id}."  # type: ignore[union-attr]
     )
+    if saved_new_contact:
+        text += f" Đã lưu {draft.recipient.display_name} vào danh bạ."  # type: ignore[union-attr]
     session.append("omni", text)
 
     # File-based audit trail — SBV-style "5-year immutable record".

@@ -212,6 +212,11 @@ class TransactionDraft(BaseModel):
     description: str = ""
     source_text: str = ""
     reference_transaction_id: Optional[str] = None
+    # Multi-turn NAPAS name-inquiry state. Set when transferring to a stranger
+    # by account but only ONE of {account number, bank} was given — we stash
+    # the known half here, ask for the other, then combine next turn. Holds
+    # {amount, account_hint, bank, recipient_text}. None for normal drafts.
+    napas_pending: Optional[dict] = None
     flags: list[SafetyFlag] = Field(default_factory=list)
     requires_step_up: bool = False
     awaiting_otp: bool = False

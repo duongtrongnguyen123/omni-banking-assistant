@@ -404,23 +404,58 @@ _SELF_PRONOUNS_DIACRITIC = {
 # (VCB, TCB, …) and full ("Vietcombank") forms are common in chat;
 # we normalise to the canonical bank label used in ``data/atms.json`` so
 # the route can filter directly.
+# Bank name + abbreviation gazetteer. Matched as a diacritic-folded substring,
+# so "Vietcombank" / "vcb" / "ngoai thuong" all resolve to "Vietcombank".
+# Canonical names on the right MUST match the strings in napas_accounts.json
+# for the name-inquiry bank check to pass. Longer/more-specific needles are
+# listed first; short ones use spaces to avoid matching inside other words
+# (e.g. " mb " must not hit "sacomBANK"). No need for an exact match — many
+# colloquial abbreviations map to the same canonical bank.
 _ATM_BANK_ALIASES: list[tuple[str, str]] = [
-    ("vietcombank", "Vietcombank"),
-    ("vcb", "Vietcombank"),
-    ("techcombank", "Techcombank"),
-    ("techcom", "Techcombank"),
-    ("tcb", "Techcombank"),
-    ("bidv", "BIDV"),
-    ("agribank", "Agribank"),
-    ("mb bank", "MB Bank"),
-    ("mbbank", "MB Bank"),
-    ("mb ", "MB Bank"),
+    # Vietcombank
+    ("vietcombank", "Vietcombank"), ("ngoai thuong", "Vietcombank"),
+    ("vietcom", "Vietcombank"), ("vcb", "Vietcombank"),
+    # Techcombank
+    ("techcombank", "Techcombank"), ("ky thuong", "Techcombank"),
+    ("techcom", "Techcombank"), ("tcb", "Techcombank"),
+    # BIDV
+    ("bidv", "BIDV"), ("dau tu va phat trien", "BIDV"),
+    ("dau tu phat trien", "BIDV"),
+    # VietinBank
+    ("vietinbank", "VietinBank"), ("cong thuong", "VietinBank"),
+    ("vietin", "VietinBank"), ("ctg", "VietinBank"),
+    # MB Bank (Military) — spaced short forms avoid matching "sacombank"
+    ("mbbank", "MB Bank"), ("mb bank", "MB Bank"), ("quan doi", "MB Bank"),
+    ("military", "MB Bank"), (" mbb", "MB Bank"),
+    # Leading space only: matches "trieu mb" / "cho mb" / "... mb" at end of
+    # line, but NOT "sacomBANK" (no space before its "mb").
     (" mb", "MB Bank"),
-    ("vpbank", "VPBank"),
-    ("vpb", "VPBank"),
-    ("acb", "ACB"),
-    ("sacombank", "Sacombank"),
-    ("stb", "Sacombank"),
+    # ACB
+    ("acb", "ACB"), ("a chau", "ACB"),
+    # VPBank
+    ("vpbank", "VPBank"), ("thinh vuong", "VPBank"), ("vpb", "VPBank"),
+    # TPBank
+    ("tpbank", "TPBank"), ("tien phong", "TPBank"), ("tpb", "TPBank"),
+    # Sacombank
+    ("sacombank", "Sacombank"), ("sai gon thuong tin", "Sacombank"),
+    ("sacom", "Sacombank"), ("stb", "Sacombank"),
+    # HDBank
+    ("hdbank", "HDBank"), ("hd bank", "HDBank"), ("hdb", "HDBank"),
+    # SHB
+    ("shb", "SHB"), ("sai gon ha noi", "SHB"),
+    # --- Other common VN banks (not in the demo dataset, but understood) ---
+    ("agribank", "Agribank"), ("agri", "Agribank"), ("nong nghiep", "Agribank"),
+    ("vibank", "VIB"), ("vib", "VIB"),
+    ("scb", "SCB"),
+    ("msb", "MSB"), ("maritime", "MSB"), ("hang hai", "MSB"),
+    ("ocb", "OCB"), ("phuong dong", "OCB"),
+    ("seabank", "SeABank"),
+    ("eximbank", "Eximbank"), ("exim", "Eximbank"), ("eib", "Eximbank"),
+    ("lpbank", "LPBank"), ("lienviet", "LPBank"), ("lien viet", "LPBank"),
+    ("pvcombank", "PVcomBank"), ("pvcb", "PVcomBank"),
+    ("nam a", "Nam A Bank"), ("namabank", "Nam A Bank"),
+    ("kienlongbank", "KienlongBank"), ("kienlong", "KienlongBank"),
+    ("abbank", "ABBank"),
 ]
 
 
@@ -639,5 +674,9 @@ def extract(text: str) -> ExtractedEntities:
     bank = extract_atm_bank(text)
     if bank:
         out.atm_bank = bank
+        # Same canonical bank name also feeds the transfer path (NAPAS name
+        # inquiry needs the bank alongside the account number).
+        if not out.bank_name:
+            out.bank_name = bank
 
     return out

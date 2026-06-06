@@ -1800,12 +1800,14 @@ textarea:focus-visible,
 
 .phone__contacts-btn {
   width: 44px; height: 44px; border-radius: 50%;
-  background: var(--orange-soft); color: var(--orange);
-  border: 0; cursor: pointer;
+  /* Match the mic / QR buttons so the three left icons read as one balanced
+     set instead of one filled-orange odd-one-out. */
+  background: #f4f3fa; color: var(--ink);
+  border: 1px solid var(--line); cursor: pointer;
   display: grid; place-items: center;
   transition: background .15s, transform .05s;
 }
-.phone__contacts-btn:hover { background: #ffe0c2; transform: translateY(-1px); }
+.phone__contacts-btn:hover { background: #ebe9f4; transform: translateY(-1px); }
 
 .picker {
   position: absolute; inset: 0;
