@@ -3246,8 +3246,28 @@ textarea:focus-visible,
     position: static;
   }
 
-  /* The desktop info panel is hidden on phones. */
-  .sidebar { display: none; }
+  /* On phones the info panel becomes a full-screen slide-in drawer so the
+     budget / goal / insights cards (with progress bars) stay reviewable.
+     The floating "i" button opens it; tapping "←" closes it. The aside is
+     only mounted when showSidebar is true, so no backdrop is needed. */
+  .sidebar {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    margin: 0;
+    max-width: none;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+    padding: calc(58px + env(safe-area-inset-top)) 14px
+             calc(20px + env(safe-area-inset-bottom));
+  }
+  /* Shrink the brand so the drawer leads with the actual cards. */
+  .sidebar__brand { font-size: 24px; margin-bottom: 4px; }
+  .sidebar__brand span { font-size: 16px; }
+  .sidebar__lead { font-size: 13px; margin-bottom: 12px; }
+  /* Keep the open/close toggle above the drawer so "←" stays tappable. */
+  .sidebar-toggle { z-index: 70; }
 
   /* The OS already shows a status bar; hide the mock one and respect the notch. */
   .phone__statusbar { display: none; }

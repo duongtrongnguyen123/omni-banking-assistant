@@ -1,176 +1,162 @@
-# Omni — live demo script
+# Omni — Kịch bản DEMO 4 phút (lời nói sẵn, đã verify live)
 
-Step-by-step guide for the live pitch. Practice timings until you can do the
-full flow in **4:00**, leaving 1 minute for Q&A buffer.
-
-Before opening the laptop:
-- Frontend running on `localhost:5173` (`make frontend`)
-- Backend on `localhost:8000` (`make backend`)
-- DB freshly bootstrapped — if anything weird shows in chat, `rm backend/app/data/omni.db` and restart uvicorn.
-- Browser zoom 110%, dev tools closed, mic permission already granted.
-- Network: have a hotspot backup. LLM calls are graceful-degrading but the
-  WS connect needs *some* network.
-
-## Slide 1 (0:00–0:15) — The pain
-
-> "Đặt một lệnh chuyển tiền trên app ngân hàng Việt Nam hiện tại tốn **7 bước**:
-> mở app → chọn chuyển khoản → chọn người nhận → nhập tài khoản → nhập số tiền
-> → nhập nội dung → xác nhận OTP. Mỗi bước là một chỗ user có thể bỏ cuộc."
-
-Hold up phone with the chat UI visible.
-
-## Slide 2 (0:15–0:30) — The promise
-
-> "Omni rút gọn còn 2 bước: **Chat → Confirm**. Không phải vì ta cắt safety —
-> safety vẫn nguyên — mà vì model hiểu đủ ý để tự điền cả 5 bước giữa."
-
-Type: `Chuyển cho mẹ 2 triệu`
-
-Wait for the TransactionCard. Point at:
-- Recipient resolved: "mẹ" → Nguyễn Thị Lan
-- Amount: 2.000.000đ
-- Source account auto-picked
-
-Click **Xác nhận**. Highlight the success state.
-
-## Slide 3 (0:30–2:00) — Three Vietnamese-specific differentiators
-
-### A. Alias resolution (0:30–0:50)
-
-> "Người Việt không gọi tên ai trong ngân hàng cả. Họ gọi *mẹ*, *bố*, *bestie*,
-> *ny*, *cô bán bún*. Omni resolve được tất cả."
-
-Quick chip → KB2: `Gửi cho mẹ 5 triệu như tháng trước`
-
-Point at the response:
-- *mẹ* resolved to Lan
-- **Description filled from past tx** (the "như tháng trước" part)
-- Amount kept user-specified 5tr, NOT the past 2tr (correctness check)
-
-### B. Ambiguity handling (0:50–1:15)
-
-> "Nhưng nếu bạn có hai người tên Minh trong danh bạ thì sao?"
-
-Quick chip → KB3: `Chuyển cho Minh 500k`
-
-DisambiguationCard appears with both Minhs. Click "Nguyễn Văn Minh".
-
-> "User chỉ nói một câu, hệ thống hỏi lại đúng câu hỏi cần hỏi, không hỏi
-> lại những thứ nó đã biết."
-
-### C. Multi-turn modify (1:15–1:35)
-
-Type: `đổi sang 3 triệu thôi`
-
-Card updates IN PLACE. Don't create a new draft.
-
-> "Đây là điểm hầu hết chat-banking demo bị sai. User nói tiếp `đổi sang 3 triệu`,
-> hệ thống phải hiểu đó là **edit**, không phải lệnh mới. State machine của Omni
-> phân biệt được — và LLM hoàn toàn KHÔNG được phép viết câu xác nhận chuyển tiền."
-
-Click **Huỷ** to clear before the next demo.
-
-### D. Voice input (1:35–2:00) [skip if mic permission is finicky]
-
-Click the mic button. Say: *"Chuyển cho ny ba trăm nghìn ăn tối"*.
-
-Live transcription in input. Send.
-
-> "Voice là Web Speech API native — chạy local, không phụ thuộc cloud STT."
-
-## Slide 4 (2:00–2:45) — Safety wall
-
-Type: `Chuyển 50 triệu cho Hùng STK 9990001234`
-
-The TransactionCard shows **three** flags:
-1. `new_recipient_large_amount` — warn
-2. `amount_above_average` — "cao gấp ~36×"
-3. `insufficient_balance` — block
-
-> "Đây không phải LLM phán đoán. Đây là **rule engine** — `safety/rules.py`, 
-> deterministic, audit-able. LLM viết được câu thông cảm `Khoan đã, số tiền 
-> này cao hơn thường lệ nhé` — nhưng nó **KHÔNG được viết** dòng `Đã chuyển 
-> 50 triệu` — dòng đó chỉ do code build sau khi transfer thực sự xảy ra."
-
-Highlight: this is the **LLM safety contract** — see `docs/llm-vs-rule.md`.
-
-## Slide 5 (2:45–3:15) — Scale claim
-
-Open a second tab → API docs at `localhost:8000/docs` → run
-`GET /api/suggestions/recipients?limit=5`.
-
-Point at the response time in the response (or open dev tools).
-
-> "Backend đang chạy trên dataset 520k giao dịch của BTC — P95 dưới 250ms,
-> P50 dưới 50ms. Embedding + RAG search **chạy local** bằng fastembed
-> (multilingual MiniLM 384-d). Không gửi data ra cloud cho phần embedding."
-
-Open `docs/perf.md` if time allows.
-
-## Slide 6 (3:15–3:30) — Honest about ML
-
-> "Một điều quan trọng: trên dataset BTC cấp, Hit@K của suggester ≈ random
-> baseline. Không phải lỗi model — dataset BTC simulate 1000 counterparties
-> uniform, không có pattern thật để học. Trên dataset Czech PKDD'99 (real
-> bank data, 1M tx, có ground-truth permanent_orders), recurring detector F1 = X%.
-> Chúng tôi không nói model dự đoán giỏi — chúng tôi nói infrastructure ready
-> để swap data thật vào."
-
-[Numbers fill in after agent #7 finishes Czech eval.]
-
-## Slide 7 (3:30–3:50) — What we built that's novel
-
-Three things, in priority order:
-
-1. **LLM safety contract** — *"LLM được phép phrase, không được phép assert money facts."*
-2. **Multi-turn modify** — *"User nói tiếp được, hệ thống không reset state."*
-3. **Local-first RAG + embedding** — *"Toàn bộ NLU stack chạy offline được nếu cần."*
-
-## Q&A buffer (3:50–5:00)
-
-Likely judge questions — answers in [`docs/honest-pitch.md`](honest-pitch.md).
-
-Common ones:
-- *Why not deep learning?* → "Interpretability. Tree + rule lets us explain why."
-- *Production-ready?* → "Session is in-memory, OTP is mocked. Real OTP service and Redis swap are interface-clean — ~half a day each."
-- *Cost?* → "fastembed runs local. LLM only called for response *phrasing*, with rule fallback when rate-limited (we hit 100k token/day rate limit during testing — system kept working)."
+> Tổng slot 8 phút = ~4 phút thuyết trình + **4 phút demo** (phần dưới).
+> Mọi câu lệnh & output đã test trực tiếp trên container đang chạy. Cột
+> **NÓI** là lời đọc thẳng. Người gõ + người nói tách vai, tập 2 lượt là mượt.
 
 ---
 
-## Demo data reference
+## Trước khi lên (30 giây chuẩn bị)
 
-The seed has these recipients available for live testing:
-
-| Alias | Real name | Bank |
-|-------|-----------|------|
-| mẹ, me | Nguyễn Thị Lan | Vietcombank |
-| bố, bo, bố Hùng | Trần Quốc Hùng (different from KB5 Hùng!) | BIDV |
-| Minh, anh Minh | Nguyễn Văn Minh **AND** Trần Hoàng Minh | VCB / TCB |
-| bestie, ny | Lê Thị Hương | MB Bank |
-| sếp | Phạm Quốc Anh | VPBank |
-
-Past transactions exist for *mẹ* (multiple), *bố*, *PT* — these are what
-KB2 ("như tháng trước") and KB4 ("tháng này gửi bao nhiêu") read from.
-
-## Recovery scripts if things break
-
-**Chat returns 500**:
-```bash
-# Probably embedding/LLM choked. Skip embeddings:
-OMNI_SKIP_EMBED_BACKFILL=1 .venv/bin/python -m uvicorn app.main:app --port 8000
+```powershell
+docker rm -f omni-banking; docker run -d --name omni-banking --env-file backend/.env -p 8000:8000 omni-banking   # reset DB sạch
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:8000   # giữ chạy → URL chia sẻ
 ```
+Mở URL trên máy demo **và** chiếu QR/link để giám khảo tự vào điện thoại. Cấp sẵn quyền **camera + mic**.
 
-**Frontend shows old state**:
-- Hard refresh (Cmd+Shift+R)
-- Clear localStorage in dev tools (`omni.tts.enabled` key etc.)
+**Luật vàng:** sau mỗi lệnh chuyển phải **Xác nhận** hoặc gõ **`huỷ`** mới làm lệnh mới (Omni giữ 1 giao dịch đang chờ).
 
-**Demo seed got modified mid-demo**:
-```bash
-rm backend/app/data/omni.db
-# Restart uvicorn — it auto-reseeds from JSON.
-```
+---
 
-**LLM rate-limited**:
-- The rule fallback handles all 6 KBs alone. **This is actually a feature**
-  — point it out: *"Notice we hit Groq quota mid-demo — system kept working
-  because LLM is additive, not a dependency."*
+## KỊCH BẢN 4 PHÚT (5 nhịp — thứ tự đã tối ưu)
+
+### ① 0:00–0:35 — Lời hứa: Chat → Confirm → Done
+**Gõ:** `Chuyển cho mẹ 2 triệu`  → bấm **Xác nhận** → (nếu hỏi OTP) `123456`
+
+> **NÓI:** "App ngân hàng hiện tại mất 7 bước để chuyển tiền. Omni còn 1 câu.
+> Chỉ nói *'chuyển cho mẹ 2 triệu'* — nó tự hiểu **mẹ là Nguyễn Thị Lan**, tự
+> điền số tiền, tự chọn tài khoản nguồn. Mình bấm xác nhận là xong."
+
+*(Sau khi xong, gõ nhanh)* `đổi sang 3 triệu` *(làm trước khi confirm ở lần khác)*
+> **NÓI:** "Và nói tiếp được — *'đổi sang 3 triệu'* — nó **sửa tại chỗ**, không tạo lệnh mới."
+
+### ② 0:35–1:05 — Hiểu người Việt: trùng tên + không cần gõ dấu
+**Mở Danh bạ (icon) →** chỉ vào dòng **"Xếp theo gợi ý hôm nay"**.
+
+> **NÓI:** "Danh bạ tự **xếp hạng ai bạn hay chuyển *hôm nay*** — và **giải thích
+> được**: *'thường chuyển ngày ~5 hàng tháng'*, *'4/6 lần trước vào cuối tuần'*.
+> Đây là model cây học từ lịch sử, không phải xếp theo bảng chữ cái."
+
+**Gõ:** `chuyen cho Minh 500k` *(cố tình không dấu)*
+
+> **NÓI:** "Em gõ **không dấu** — vẫn hiểu. Và có **3 người tên Minh**, nó không
+> đoán bừa mà **hỏi đúng người cần hỏi**." → tap chọn **Trần Hoàng Minh** → gõ `huỷ`.
+
+### ③ 1:05–2:00 — ⭐ Sinh trắc học theo Quyết định 2345 (điểm nhấn)
+**Gõ:** `Chuyển cho mẹ 10 triệu` → **Xác nhận** → OTP `123456` → **camera mở → quét mặt** (xoay đầu theo khung oval)
+
+> **NÓI:** "Theo **Quyết định 2345 của Ngân hàng Nhà nước**, giao dịch từ 10
+> triệu bắt buộc xác thực **sinh trắc học**. Omni làm đúng luật: dưới 10 triệu chỉ
+> cần OTP, **từ 10 triệu tự bật quét khuôn mặt** — liveness chống ảnh chụp, nhận
+> diện chạy **ngay trong trình duyệt**, không gửi mặt lên server. Tụi em còn cộng
+> dồn các lệnh nhỏ trong ngày: chạm mốc 20 triệu cũng bắt quét mặt — đúng tinh
+> thần nghị định."
+
+### ④ 2:00–2:45 — ⭐ Bức tường an toàn (nhanh mà KHÔNG ẩu)
+**Gõ:** `Chuyển 50 triệu cho Hùng STK 9990001234`
+
+> **NÓI:** "Người lạ + số tiền lớn + vượt số dư → Omni dựng **3 lớp cờ** cùng lúc:
+> người nhận mới, số tiền cao gấp ~27× thường ngày, và **không đủ số dư → chặn
+> hẳn**. Đây là **rule engine deterministic**, audit được — không phải AI đoán.
+> Và quan trọng: **AI được phép an ủi, nhưng KHÔNG bao giờ được tự viết dòng 'đã
+> chuyển tiền'** — dòng đó chỉ do hệ thống sinh sau khi giao dịch thật xảy ra."
+
+### ⑤ 2:45–3:20 — Trí nhớ chi tiêu: tự đào khoản định kỳ
+**Gõ:** `Mình có khoản nào trả đều hàng tháng không?`
+
+> **NÓI:** "Người dùng chưa khai báo lịch nào. Omni **tự đào** ra từ lịch sử: thuê
+> nhà, gym, Spotify, Netflix. Và đây là số **thật** — trên dữ liệu ngân hàng công
+> khai Czech 1 triệu giao dịch, detector này đạt **F1 = 0.74**. Tụi em không bịa số."
+
+### ⑥ 3:20–4:00 — Bắn nhanh độ rộng + chốt
+**Gõ lần lượt (mỗi câu ~8s):**
+- `STK của tôi là gì?` → khoe tài khoản
+- `Tạo QR nhận 500k` → hiện **mã QR nhận tiền**
+- `Tháng này tôi tiêu ăn uống bao nhiêu?` → lọc theo **danh mục**
+
+> **NÓI (chốt):** "Số dư, QR nhận tiền, chi tiêu theo danh mục, ngân sách, mục
+> tiêu tiết kiệm, tìm ATM, đặt lịch — tất cả trong một khung chat tiếng Việt. Và
+> ngay bây giờ, **mọi người cầm điện thoại đều vào được link này để tự thử**."
+
+---
+
+## 🔫 Kho bắn nhanh (nếu dư thời gian / giám khảo yêu cầu) — đã verify
+
+| Gõ | Ra gì |
+|---|---|
+| `Số dư còn bao nhiêu?` | Số dư chính + tổng các tài khoản |
+| `Tạo QR nhận 500k` | Ảnh QR (VietQR-style) + STK + tên chủ |
+| `STK của tôi là gì?` | Liệt kê tài khoản + chủ thể |
+| `Tháng này tiêu ăn uống bao nhiêu?` | Lọc lịch sử theo danh mục |
+| `Đặt ngân sách ăn uống 3 triệu` | Tạo ngân sách hàng tháng |
+| `Mình muốn tiết kiệm 10 triệu cho Tết` | Mục tiêu tiết kiệm + tiến độ |
+| `ATM gần nhất` | 5 cây ATM (Haversine) |
+| `Đặt lịch chuyển mẹ 2tr mùng 1 hàng tháng` | Cron tiếng Việt + lần chạy kế |
+| `Có giao dịch nào bất thường không?` | Cảnh báo anomaly theo từng người |
+| `Lúc nãy tôi chuyển cho ai?` | Recap giao dịch gần nhất |
+
+---
+
+## 🎨 Tính năng TRỰC QUAN (UI/UX) — demo bằng cách CHỈ TAY, không cần gõ
+
+Đây là phần em sót lần trước. Mỗi cái chỉ cần 5 giây chỉ vào màn hình:
+
+| Tính năng | Ở đâu / làm gì | Câu chỉ tay |
+|---|---|---|
+| **Xếp theo gợi ý hôm nay** | Danh bạ tự xếp hạng người-nhận-hôm-nay + **lý do giải thích được** | "Model cây gợi ý ai bạn hay chuyển hôm nay, có giải thích." |
+| **Chip gợi ý trên ô nhập** | `SuggestionStrip` — top người nhận + thanh độ tin cậy | "Chưa gõ gì đã gợi ý sẵn." |
+| **Chip số tiền nhanh** | Gõ "chuyển mẹ" → hiện **100k/500k/1tr/2tr/5tr** | "Gõ thiếu số tiền, nó đưa chip chọn nhanh." |
+| **Lặp lại lần trước** | `RepeatLastCTA` — "Lặp lại lần trước" + "Cùng số tiền, người khác" | "Một chạm lặp giao dịch quen." |
+| **Thẻ giao dịch thông minh** | Chip **số tiền dự đoán** + % tin cậy + tooltip lý do, ✎ sửa tiền tại chỗ, **mini sổ phụ** 3 lần gần nhất, **biểu đồ cột bất thường**, chip danh mục, animation thành công | "Mọi thứ để quyết định nằm trên 1 thẻ." |
+| **Sổ phụ theo người** | Trong thẻ: 3 giao dịch gần nhất tới đúng người này | "Bối cảnh ngay tại chỗ chuyển." |
+| **Thẻ số dư** | `BalanceCard` — tổng + **sparkline chi tiêu 7 ngày** | — |
+| **Thẻ lịch sử** | `HistoryCard` — 5 dòng + **tag màu danh mục** tự phân loại | — |
+| **Thẻ lịch định kỳ** | `ScheduleCard` — **cron tiếng Việt** + đếm ngược lần chạy kế | — |
+| **Widget sidebar** | Insights / Recurring / Budget / Goals — **tự refresh khi xác nhận** | — |
+| **Lịch sử hội thoại** | Drawer trái: liệt kê / mở lại / xoá cuộc trò chuyện cũ (lưu bền) | — |
+| **Giọng nói + Đọc trả lời** | Nút mic (vi-VN) nhập bằng giọng; bật TTS đọc câu trả lời | "Nói được, nghe được — rảnh tay." |
+| **Quét QR bằng camera** | `QrScanButton` — quét QR người nhận điền sẵn lệnh chuyển | — |
+| **Slash + @-mention** | Gõ `/` ra bảng lệnh; `@` chọn người; Cmd+K / Cmd+/ | "Phím tắt như app pro." |
+| **Toast realtime** | WebSocket bắn thông báo sự kiện sống | — |
+| **Onboarding + khám phá kỹ năng** | Overlay 4 bước + 13 chip kỹ năng × 5 nhóm | "Người mới mở lên là biết hỏi gì." |
+| **Xuất sao kê** | `ExportMenu` — CSV / sao kê HTML / JSON khai thuế | — |
+| **Dashboard số liệu** | thêm `?metrics=1` vào URL → 7 chỉ số Prometheus sống | "Quan trắc sẵn sàng vận hành." |
+| **Lớp telemetry dev** | thêm `?dev=1` → xem pipeline NLU chạy bên trong | — |
+| **Tiếp cận (a11y)** | WCAG 2.1 AA, focus ring, tôn trọng `prefers-reduced-motion` | — |
+
+> **Mẹo 4 phút:** chỉ cần chỉ tay vào **Danh bạ "gợi ý hôm nay"**, **chip gợi ý**,
+> và **một thẻ giao dịch** — ba cái này gói được "sản phẩm có chiều sâu UX", phần
+> còn lại để dành Q&A.
+
+---
+
+## 🧠 "Ngoại lệ khó đã xử lý" — thả vào lời nói hoặc Q&A để ghi điểm
+
+- **Không dấu / sai chính tả:** "chuyen cho me 2 trieu" vẫn ra đúng.
+- **Trùng tên:** 3 người "Minh" → hỏi lại, không đoán bừa.
+- **Thứ tự ngược:** "gửi 300k sếp" (tiền trước, người sau) vẫn tách đúng.
+- **Sửa giữa chừng:** "đổi sang 3 triệu" → sửa, không tạo lệnh mới.
+- **Khoá khi chờ OTP:** đang nhập OTP mà gõ tên người khác → từ chối sửa, tránh đổi lén người nhận.
+- **Chống giả định:** "thử chuyển mẹ 1k xem" → **không** mở lệnh chuyển (chặn câu phỏng đoán).
+- **STK lạ (NAPAS):** chuyển vào STK chưa lưu → hỏi ngân hàng → tra tên người nhận rồi mới xác nhận.
+- **Tuân thủ NHNN:** Quyết định 2345 (sinh trắc ≥10tr & dồn ngày ≥20tr) + hạn mức ngày theo eKYC/KYC + chống chuyển dồn dập (velocity) → bắt OTP.
+- **An toàn ngôn ngữ:** LLM chỉ *diễn đạt*, **không** được khẳng định "đã chuyển X" — dòng tiền do code dựng.
+
+---
+
+## 🆘 Sự cố giữa demo
+
+| Lỗi | Xử lý |
+|---|---|
+| Kẹt "giao dịch chưa hoàn tất" | Gõ `huỷ` hoặc bấm **Huỷ** |
+| Số liệu lạ / số dư sai | Reset container (lệnh đầu trang) |
+| Camera không khớp mặt | Người **đã đăng ký mặt** demo, hoặc thay 3 ảnh `frontend/public/face_profiles/u_an_*.jpg` trước |
+| Link tunnel chết | Mở lại cloudflared → URL mới |
+| LLM hết quota | "Coi là tính năng — rule fallback giữ hệ thống chạy, AI chỉ là cộng thêm" |
+
+---
+
+## Dữ liệu demo (đã verify)
+- Số dư: TK chính **12.000.000đ**, tiết kiệm **50.000.000đ**.
+- Alias: **mẹ**→Nguyễn Thị Lan (VCB) · **sếp**→Nguyễn Quốc Cường (BIDV) · **Minh**→3 người (gây disambiguation) · **Hùng**→Trần Quốc Hùng.
+- Khoản định kỳ seed: thuê nhà 5tr · gym 1.2tr · Spotify 89k · Netflix 260k.

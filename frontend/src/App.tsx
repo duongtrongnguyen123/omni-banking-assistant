@@ -1127,13 +1127,19 @@ export default function App() {
               }}
               onDraftResolved={(messageId, resp) => {
                 // Swap the response on the originating message so the
-                // card re-renders with its new state (e.g. budget
-                // confirmed → success card). Without this the
-                // BudgetDraftCard / GoalDraftCard previously relied on
-                // an in-place mutation that React never saw.
+                // card re-renders with its new state (the budget / goal
+                // draft becomes null, so its confirm card disappears).
+                // ALSO refresh the bubble's visible text: the bubble is
+                // rendered from `message.text`, so without this the
+                // success line ("Đã lưu ngân sách…" / "Đã tạo mục
+                // tiêu…") that the confirm endpoint returns in
+                // `resp.text` would never appear — the card would vanish
+                // and the chat would look like it gave no reply.
                 setMessages((prev) =>
                   prev.map((m) =>
-                    m.id === messageId ? { ...m, response: resp } : m,
+                    m.id === messageId
+                      ? { ...m, response: resp, text: resp.text ?? m.text }
+                      : m,
                   ),
                 );
                 // A budget or goal draft was confirmed/cancelled. Bump
