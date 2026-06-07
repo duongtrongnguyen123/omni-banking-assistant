@@ -1,0 +1,50 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# One-click deploy on https://dashboard.render.com/blueprints/new — point at
+# this repo and Render creates the service below. Subsequent pushes to main
+# auto-redeploy.
+#
+# Architecture:
+#   • Single web service. The Dockerfile at repo root multi-stage-builds the
+#     Vite frontend, then bakes it into the FastAPI image — FastAPI serves
+#     both /api/* (orchestrator) and / (static UI) from the same origin so we
+#     don't need CORS or a separate static-site service.
+#   • Free tier (starter plan = $0/month). Spins down after 15 min idle;
+#     first request after sleep takes ~30s. For continuous availability
+#     bump ``plan: standard`` ($7/month) and remove the suspend behaviour.
+#   • No persistent disk on free plan — chat_sessions / chat_messages get
+#     wiped on every redeploy. For the hackathon demo this is acceptable
+#     (judges see a fresh seed each visit). To keep history across restarts,
+#     either move to ``plan: standard`` with a ``disk:`` mount, or add a
+#     Render Postgres service and set ``DATABASE_URL`` + ``DATA_BACKEND=postgres``.
+
+services:
+  - type: web
+    name: omni-banking
+    runtime: docker
+    plan: free
+    region: singapore   # closest free region to Vietnam — Oregon is the other
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health/live
+    envVars:
+      # Skip outbound LLM calls — Groq pool is exhausted and Gemini quota
+      # is denied, so the demo runs rule-based NLU. Remove this env var
+      # once you've topped up an LLM provider.
+      - key: OMNI_OFFLINE_DEMO
+        value: "1"
+      # Production-style CORS allow-list. Render injects the public URL as
+      # RENDER_EXTERNAL_URL, but the static UI is served from the same
+      # origin so CORS isn't actually needed — we keep this empty to keep
+      # the default localhost entries from leaking into prod responses.
+      - key: CORS_ORIGINS
+        value: ""
+      # Skip the embedding backfill at startup — it loads a 90MB ONNX
+      # model and blows free-tier RAM (512 MB cap). The runtime still
+      # falls back to lexical search for "cô bán bún" style queries.
+      - key: OMNI_SKIP_EMBED_BACKFILL
+        value: "1"
+      # Quiet down the schedule ticker on free tier — it's a no-op without
+      # a persistent DB anyway.
+      - key: OMNI_DISABLE_SCHEDULE_TICK
+        value: "1"
