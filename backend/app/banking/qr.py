@@ -93,23 +93,43 @@ def _tlv(tag: str, value: str) -> str:
 
 def _parse_tlv(blob: str) -> dict[str, str]:
     """Walk the TLV blob into a {tag: value} mapping. Unknown tags are
-    kept as-is so a future format upgrade can carry through."""
+    kept as-is so a future format upgrade can carry through.
+
+    Validation is strict: tags must be ASCII alphanumeric and length
+    bytes must be exactly two ASCII digits. ``int()`` would otherwise
+    happily parse ``" 5"``, ``"+9"`` or ``"-1"`` — the negative case
+    produces ``end < start`` and silently returns an empty value, which
+    is corruption masquerading as a successful decode. Likewise a tag
+    byte of ``0x00`` / ``0xFF`` would either crash ``decode("ascii")``
+    or yield a phantom field, so we reject non-alnum tags up-front.
+    """
     out: dict[str, str] = {}
     raw = blob.encode("utf-8")
     i = 0
     while i < len(raw):
         if i + 4 > len(raw):
             raise ValueError("Truncated TLV header")
-        tag = raw[i : i + 2].decode("ascii")
         try:
-            length = int(raw[i + 2 : i + 4].decode("ascii"))
-        except ValueError as e:
+            tag = raw[i : i + 2].decode("ascii")
+        except UnicodeDecodeError as e:
+            raise ValueError("Tag không hợp lệ") from e
+        if not tag.isalnum():
+            raise ValueError("Tag không hợp lệ")
+        try:
+            length_str = raw[i + 2 : i + 4].decode("ascii")
+        except UnicodeDecodeError as e:
             raise ValueError("Invalid TLV length") from e
+        if not length_str.isdigit():
+            raise ValueError("Invalid TLV length")
+        length = int(length_str)
         start = i + 4
         end = start + length
         if end > len(raw):
             raise ValueError(f"Truncated TLV value for tag {tag!r}")
-        value = raw[start:end].decode("utf-8")
+        try:
+            value = raw[start:end].decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise ValueError(f"Invalid UTF-8 value for tag {tag!r}") from e
         out[tag] = value
         i = end
     return out
