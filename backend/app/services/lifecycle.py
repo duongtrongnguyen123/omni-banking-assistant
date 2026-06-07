@@ -227,14 +227,43 @@ def readiness_snapshot(user_id: Optional[str] = None) -> dict[str, Any]:
 
     checks = {
         "sqlite": _check_sqlite(),
+        "sqlite_integrity": _check_sqlite_integrity(),
         "suggester": _check_suggester(user_id),
         "embedder": _check_embedder(),
         "redis": _check_redis(),
     }
     # ``n/a`` for redis counts as "not blocking readiness".
-    blocking = {k: v for k, v in checks.items() if v != "n/a"}
+    # ``sqlite_integrity`` is a string status — only ``broken`` should
+    # block readiness; ``ok`` / ``repaired`` are both fine to take
+    # traffic on. ``unknown`` means startup hasn't completed yet, so
+    # we treat it as pass to avoid a startup-race 503.
+    blocking: dict[str, Any] = {}
+    for k, v in checks.items():
+        if k == "sqlite_integrity":
+            blocking[k] = v != "broken"
+            continue
+        if v == "n/a":
+            continue
+        blocking[k] = v
     ready = all(bool(v) for v in blocking.values())
     return {"checks": checks, "ready": ready}
+
+
+def _check_sqlite_integrity() -> str:
+    """Return cached SQLite integrity status: ``ok|repaired|broken|unknown``.
+
+    Read-only — the actual integrity_check + REINDEX runs once at
+    startup in :func:`app.db.connection._self_heal_sqlite`. Probing
+    on every readiness call would walk the whole DB (expensive on a
+    large file), defeating the point of a cheap probe.
+    """
+    try:
+        from ..db.connection import integrity_status
+
+        return integrity_status()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("sqlite integrity probe failed: %s", exc)
+        return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +283,27 @@ async def _run_startup_hooks() -> None:
     The function returns once the synchronous backfill is *kicked off*
     in a thread — we don't block process start on it, but we do log
     the result when it finishes.
+
+    Before either of the above, we run a synchronous SQLite integrity
+    check + REINDEX repair pass. The motivating incident: a corrupted
+    ``ix_chat_messages_session`` index silently broke chat_log session
+    lookup during a live demo, causing every turn to mint a fresh
+    session id and wipe the in-flight TransactionDraft. The self-heal
+    must finish before the first ``/api/chat`` arrives so chat_log
+    queries see a healthy file.
     """
     import asyncio
     import os
+
+    # SQLite self-heal — synchronous, must finish before any route
+    # handler reads. Never raises; worst case it logs ERROR and the
+    # process continues with a degraded DB (surfaced via /health/ready).
+    try:
+        from ..db.connection import _self_heal_sqlite
+
+        _self_heal_sqlite()
+    except Exception as exc:  # noqa: BLE001
+        log.error("sqlite self-heal entry failed: %r", exc)
 
     from ..config import get_settings
 
