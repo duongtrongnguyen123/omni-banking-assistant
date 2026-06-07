@@ -161,21 +161,6 @@ def _enabled_providers() -> list[_Provider]:
                 s.groq_model,
             )
         )
-    # Anthropic / Claude — sits AFTER Groq (Groq is the fastest free
-    # provider in the pool) and BEFORE Gemini. Uses Anthropic's
-    # OpenAI-compatible endpoint so the existing ``_openai_compat`` call
-    # path works without changes. Same numbered-pool collector so users
-    # can spread quota across multiple keys.
-    anthropic_keys = _collect_keys("ANTHROPIC_API_KEY", s.anthropic_api_key)
-    for i, key in enumerate(anthropic_keys):
-        out.append(
-            _Provider(
-                f"anthropic#{i + 1}" if len(anthropic_keys) > 1 else "anthropic",
-                "https://api.anthropic.com/v1/chat/completions",
-                key,
-                s.anthropic_model,
-            )
-        )
     gemini_keys = _collect_keys("GEMINI_API_KEY", s.gemini_api_key)
     for i, key in enumerate(gemini_keys):
         out.append(
@@ -188,8 +173,8 @@ def _enabled_providers() -> list[_Provider]:
         )
     if len(out) > 2:
         log.info(
-            "LLM provider pool: %d entries (Groq %d, Anthropic %d, Gemini %d)",
-            len(out), len(groq_keys), len(anthropic_keys), len(gemini_keys),
+            "LLM provider pool: %d entries (Groq %d, Gemini %d)",
+            len(out), len(groq_keys), len(gemini_keys),
         )
     # Lazy reorder — providers that recently 429'd go to the END so the
     # chat path doesn't pay their latency walking dead keys before
