@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -46,16 +47,56 @@ except ImportError:  # pragma: no cover
 from ..models.schemas import Contact, Transaction
 
 logger = logging.getLogger(__name__)
+_LOG = logger  # alias kept for code that grepped for `_LOG` style.
 
 # Tuning knobs ---------------------------------------------------------------
 
-FRAUD_RISK_THRESHOLD = 0.5
+_DEFAULT_FRAUD_RISK_THRESHOLD = 0.5
+"""Hard-coded default used when ``OMNI_FRAUD_RISK_THRESHOLD`` is unset or
+unparseable. Kept private — production code should read
+``FRAUD_RISK_THRESHOLD`` so an operator can retune at deploy time."""
+
+
+def _recompute_threshold() -> float:
+    """Re-read ``OMNI_FRAUD_RISK_THRESHOLD`` from the environment.
+
+    Exposed for tests that monkeypatch ``os.environ``. Bad inputs
+    (non-numeric, out of [0, 1]) are logged at WARNING and the default
+    is preserved — the rule engine must never see a NaN threshold.
+    """
+    raw = os.environ.get("OMNI_FRAUD_RISK_THRESHOLD")
+    if raw is None or raw.strip() == "":
+        return _DEFAULT_FRAUD_RISK_THRESHOLD
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        _LOG.warning(
+            "OMNI_FRAUD_RISK_THRESHOLD=%r is not a number; keeping default %.2f",
+            raw,
+            _DEFAULT_FRAUD_RISK_THRESHOLD,
+        )
+        return _DEFAULT_FRAUD_RISK_THRESHOLD
+    if not math.isfinite(parsed) or parsed < 0.0 or parsed > 1.0:
+        _LOG.warning(
+            "OMNI_FRAUD_RISK_THRESHOLD=%r outside [0, 1]; keeping default %.2f",
+            raw,
+            _DEFAULT_FRAUD_RISK_THRESHOLD,
+        )
+        return _DEFAULT_FRAUD_RISK_THRESHOLD
+    return parsed
+
+
+FRAUD_RISK_THRESHOLD = _recompute_threshold()
 """Score above which `fraud_risk_high` flag is raised.
 
 Calibrated from public-dataset eval (BankSim 0.75 recall, PaySim 0.74
 recall both at threshold 0.5 → 0.95-band). Earlier 0.7 default dropped
 recall to ~0.13 — mis-calibrated and documented as such in
-``docs/eval-real-data.md`` since 2026-06-06."""
+``docs/eval-real-data.md`` since 2026-06-06.
+
+Override at deploy time via ``OMNI_FRAUD_RISK_THRESHOLD`` (float in
+``[0, 1]``). Bad values fall back to ``_DEFAULT_FRAUD_RISK_THRESHOLD``
+and emit a ``_LOG.warning``."""
 
 MIN_TX_FOR_TRAINING = 50
 """Skip users with fewer than this many completed outgoing tx."""
@@ -121,7 +162,19 @@ class _UserModel:
 
 
 _models: dict[str, _UserModel] = {}
-"""Process-local cache of per-user models."""
+"""Process-local cache of per-user models.
+
+Uvicorn dispatches requests onto a thread pool, so ``_models`` and
+``_last_retrain_attempt`` are visible to concurrent ``score_draft`` /
+``train_user`` calls. Guard every read/write with ``_models_lock`` and
+take a *snapshot* reference (the immutable ``_UserModel`` dataclass) out
+of the dict under the lock — sklearn ``predict_proba`` runs lock-free
+on the snapshot so a parallel retrain can't swap the model mid-flight.
+"""
+
+_models_lock = threading.Lock()
+"""Guards ``_models`` and ``_last_retrain_attempt``. Hold only for the
+duration of dict ops + snapshot read; never around sklearn calls."""
 
 # Lazy-retrain bookkeeping ---------------------------------------------------
 #
@@ -419,10 +472,14 @@ def train_user(
         reference_now = datetime.now(timezone.utc)
     rows = _trim_training_set(txs, reference_now)
     fitted = _fit_one(rows)
-    if fitted is None:
-        _models.pop(user_id, None)
-        return None
-    _models[user_id] = fitted
+    # Mutate the shared cache under the lock so concurrent ``score_draft``
+    # calls see either the old model or the new one — never a partially
+    # constructed dict entry.
+    with _models_lock:
+        if fitted is None:
+            _models.pop(user_id, None)
+            return None
+        _models[user_id] = fitted
     return fitted
 
 
@@ -467,8 +524,17 @@ def _calibrate(raw: float, p50: float, p95: float) -> float:
 
     Centred at p95 so that ~5% of training rows score above 0.5 and only
     truly tail-end outliers cross 0.7.
+
+    Flat-history guard: when a user has constant-amount history (e.g. 50
+    identical salary credits) ``p95 - p50`` collapses to ~0, the absolute
+    floor ``1e-6`` survives, and any outlier saturates the sigmoid to
+    ``1.0``. We instead floor the spread to ``5%`` of ``|p95|`` (the
+    natural scale of raw scores) with ``1e-3`` as an absolute backstop —
+    so a 2x outlier on flat history lands in the mid-range (0.5–0.8)
+    where the rule engine can still escalate proportionally instead of
+    treating every blip as catastrophic.
     """
-    spread = max(p95 - p50, 1e-6)
+    spread = max(p95 - p50, abs(p95) * 0.05, 1e-3)
     z = (raw - p95) / spread
     # Steeper than a vanilla sigmoid so the transition is decisive.
     return 1.0 / (1.0 + math.exp(-3.0 * z))
@@ -509,7 +575,8 @@ def _maybe_lazy_retrain(
 
     cooldown_ok = True
     if not new_contact:
-        last_attempt = _last_retrain_attempt.get(user_id, 0.0)
+        with _models_lock:
+            last_attempt = _last_retrain_attempt.get(user_id, 0.0)
         cooldown_ok = (time.monotonic() - last_attempt) >= LAZY_RETRAIN_COOLDOWN_SEC
 
     if not new_contact and not cooldown_ok:
@@ -536,10 +603,12 @@ def _maybe_lazy_retrain(
         )
         trained_at = _ensure_aware(fitted.trained_at)
         if latest is None or latest <= trained_at:
-            _last_retrain_attempt[user_id] = time.monotonic()
+            with _models_lock:
+                _last_retrain_attempt[user_id] = time.monotonic()
             return fitted
 
-    _last_retrain_attempt[user_id] = time.monotonic()
+    with _models_lock:
+        _last_retrain_attempt[user_id] = time.monotonic()
     refreshed = train_user(user_id, txs)
     return refreshed if refreshed is not None else fitted
 
@@ -563,12 +632,19 @@ def score_draft(
         return None
     if amount is None or amount <= 0:
         return None
-    fitted = _models.get(user_id)
+    # Snapshot the cached model under the lock — a parallel ``train_user``
+    # can mutate ``_models[user_id]`` immediately after we release. Holding
+    # the immutable ``_UserModel`` reference lets us run sklearn lock-free
+    # without worrying about mid-flight swap.
+    with _models_lock:
+        fitted = _models.get(user_id)
     cid = contact_id or (recipient.id if recipient else None)
 
     # Lazy retrain if the snapshot is stale (new contact seen this session,
     # or fresh tx since last fit). Keeps ``is_new_recipient`` honest after
-    # the first transfer to a contact added mid-demo.
+    # the first transfer to a contact added mid-demo. ``_maybe_lazy_retrain``
+    # may itself swap the cache entry — what it returns is the model we
+    # should score against right now.
     fitted = _maybe_lazy_retrain(user_id, fitted, cid)
     if fitted is None:
         return None
@@ -592,12 +668,14 @@ def score_draft(
 
 def clear_models() -> None:
     """Used by eval scripts that want to rebuild from scratch."""
-    _models.clear()
-    _last_retrain_attempt.clear()
+    with _models_lock:
+        _models.clear()
+        _last_retrain_attempt.clear()
 
 
 def loaded_user_ids() -> list[str]:
-    return list(_models.keys())
+    with _models_lock:
+        return list(_models.keys())
 
 
 __all__ = [
@@ -610,4 +688,5 @@ __all__ = [
     "score_draft",
     "clear_models",
     "loaded_user_ids",
+    "_recompute_threshold",
 ]

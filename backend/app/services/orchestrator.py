@@ -818,7 +818,22 @@ def _handle_message_inner(
     # assistant still remembers context on the fallback path.
     _rule_history_followup_rescue(nlu, history_msgs)
 
-    resp = _dispatch_intent(user_id, nlu, history_msgs)
+    # Zombie-draft guard: if an intent handler raises *after* it has stashed
+    # a half-built draft in the session (e.g. ``set_draft`` succeeds, then a
+    # downstream lookup blows up), the next turn would enter the draft-
+    # continuation branch and try to reconcile a draft the user never saw.
+    # Clear non-OTP-awaiting drafts so "huỷ" / a fresh request can land
+    # cleanly. OTP-awaiting drafts MUST survive a transient error — the
+    # user already passed the confirm gate and the transfer may have
+    # partially executed; dropping it would break the cancel/retry
+    # semantics enforced by ``_INFLIGHT_CONFIRMS`` in routes/chat.py.
+    try:
+        resp = _dispatch_intent(user_id, nlu, history_msgs)
+    except Exception:
+        stale = session.current_draft
+        if stale is not None and not stale.awaiting_otp:
+            session.clear_draft()
+        raise
     session.append("user", text)
     session.append("omni", resp.text)
     return resp
