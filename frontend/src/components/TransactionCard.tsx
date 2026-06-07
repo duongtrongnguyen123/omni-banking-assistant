@@ -242,8 +242,20 @@ export const TransactionCard = ({
       )
     : undefined;
 
-  // Compact receipt rendered after the 4s celebration auto-collapses.
-  if ((collapsed || (completed && !actionable)) && r && draft.amount != null) {
+  // Compact receipt rendered after the 4s celebration auto-collapses, OR
+  // when the card was loaded from history already completed (no
+  // actionable→inactionable transition to animate). ``wasActionable.current``
+  // captures the INITIAL ``actionable`` on mount, so it's true for fresh
+  // drafts and false for historical replays. Gating on ``!wasActionable.current``
+  // keeps the fresh confirm path alive — letting the useEffect below set
+  // ``justConfirmed`` and render the celebration — instead of short-circuiting
+  // straight to the receipt and skipping the animation the user expects.
+  const loadedFromHistory = !wasActionable.current;
+  if (
+    (collapsed || (completed && !actionable && loadedFromHistory)) &&
+    r &&
+    draft.amount != null
+  ) {
     const time = confirmedAt.toLocaleTimeString("vi-VN", {
       hour: "2-digit",
       minute: "2-digit",
