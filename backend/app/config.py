@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-1.5-flash"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    # OpenRouter — third-tier fallback when Groq + Gemini exhaust their
+    # daily quotas. The default model is a known-free multilingual one;
+    # override via OPENROUTER_MODEL if it disappears (the free roster
+    # rotates monthly). Pool keys live in OPENROUTER_API_KEY_1..N.
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemma-4-26b-a4b-it:free"
+    # OpenRouter convention: send HTTP-Referer + X-Title so the call
+    # is attributed to our app in their leaderboard. Cosmetic, not
+    # enforced — but recommended by their docs.
+    openrouter_referer: str = "https://github.com/duongtrongnguyen123/omni-banking-assistant"
+    openrouter_title: str = "Omni Banking Assistant"
     # Speech-to-text via Groq whisper-large-v3 (OpenAI-compatible audio API).
     groq_stt_model: str = "whisper-large-v3"
     groq_base_url: str = "https://api.groq.com/openai/v1"
