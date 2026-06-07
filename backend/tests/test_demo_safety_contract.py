@@ -3798,3 +3798,48 @@ def test_fraud_model_lazy_retrain_throttled_by_cooldown(
         "cooldown failed — retrained inside the throttle window"
     )
 
+
+
+# ---------------------------------------------------------------------------
+# receive_qr — tạo mã nhận tiền 2tr routes here, not to transfer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        # The 'mã nhận tiền' phrasing without the literal 'qr' token.
+        # Pre-fix 'tạo mã nhận tiền 2tr' fell to the Tier-3 transfer
+        # fallback because '2tr' is a digit-tail — judges generating a
+        # QR with an amount baked in got a confused transfer draft.
+        'tạo mã nhận tiền 2tr',
+        'tạo mã nhận tiền',
+        'mã nhận tiền',
+        'mã nhận tiền của mình',
+        'muốn nhận tiền',
+        'cho mình nhận tiền',
+    ],
+)
+def test_ma_nhan_tien_routes_receive_qr(text: str) -> None:
+    intent, _ = classify(text)
+    assert intent == 'receive_qr', text
+
+
+@pytest.mark.parametrize(
+    'text,expected',
+    [
+        # CRITICAL negative — 'nhân tiện' (by the way) folds to the same
+        # ASCII sequence as 'nhận tiền' (the dot under nhận disappears
+        # under strip_diacritics). Must NOT route to receive_qr.
+        ('nhân tiện cho mình hỏi', 'unknown'),
+        ('nhân tiện gửi mẹ 2 triệu', 'transfer'),
+        # Original transfers/balances stay routed.
+        ('gửi mẹ 2 triệu', 'transfer'),
+        ('số dư', 'balance'),
+        ('tháng này tiêu bao nhiêu', 'history'),
+    ],
+)
+def test_ma_nhan_tien_does_not_eat_other_intents(text: str, expected: str) -> None:
+    intent, _ = classify(text)
+    assert intent == expected, (text, intent)
+
