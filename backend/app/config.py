@@ -26,12 +26,6 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-1.5-flash"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
-    # Anthropic / Claude — uses the OpenAI-compatible endpoint at
-    # ``https://api.anthropic.com/v1/chat/completions``. Default Haiku
-    # 4.5 is fast + cheap; override to ``claude-sonnet-4-6`` if you
-    # want higher-quality classification on the creative long tail.
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-haiku-4-5-20251001"
     # Speech-to-text via Groq whisper-large-v3 (OpenAI-compatible audio API).
     groq_stt_model: str = "whisper-large-v3"
     groq_base_url: str = "https://api.groq.com/openai/v1"
