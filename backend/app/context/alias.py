@@ -7,11 +7,32 @@ or ask for disambiguation.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import unicodedata
 from typing import Optional
 
 from ..models.schemas import Contact, ResolvedRecipient
+
+log = logging.getLogger("omni.context.alias")
+
+
+def _rag_fallback_enabled() -> bool:
+    """RAG fuzzy-alias fallback feature flag.
+
+    Default OFF — the exact / token / prefix / label hits in
+    :func:`_lookup_in_aliases` + :func:`_lookup_in_names` cover the vast
+    majority of real queries, and the embedding/lexical fallbacks have
+    historically returned noisy candidates on cold queries. The flag
+    keeps the RAG code path available for the slide-deck demo and for
+    operators who want to re-enable it after re-tuning the cutoffs.
+
+    Set ``OMNI_RAG_ALIAS=1`` to enable.
+    """
+    return (os.environ.get("OMNI_RAG_ALIAS", "0") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _fold(s: str) -> str:
@@ -174,19 +195,44 @@ def resolve_recipient(
     if kind == "name":
         return _lookup_in_names(query, query_stripped, contacts)
 
-    # kind is None — try alias-first, then name. No semantic fallback.
-    # The previous behaviour promoted alias-shaped surfaces ("cô Lan",
-    # "anh Minh") to a hard kind="alias" via _looks_like_alias_kind and
-    # blocked the name fall-through entirely. That made "cô Lan" return
-    # 0 even though stripping "cô" + token-matching "Lan" would have
-    # surfaced ambiguity between the two Lans in the user's book.
+    # kind is None — try alias-first, then name. No semantic fallback by
+    # default. The previous behaviour promoted alias-shaped surfaces ("cô
+    # Lan", "anh Minh") to a hard kind="alias" via _looks_like_alias_kind
+    # and blocked the name fall-through entirely. That made "cô Lan"
+    # return 0 even though stripping "cô" + token-matching "Lan" would
+    # have surfaced ambiguity between the two Lans in the user's book.
     # Alias-first ordering still keeps "bạn thân" / "mẹ" routed correctly;
     # the fall-through only kicks in when no alias matches, and name
     # lookup is strict exact/token (no embedding noise).
     matches = _lookup_in_aliases(query, query_stripped, query_tail, contacts)
     if matches:
         return matches
-    return _lookup_in_names(query, query_stripped, contacts)
+    name_matches = _lookup_in_names(query, query_stripped, contacts)
+    if name_matches:
+        return name_matches
+
+    # RAG fuzzy fallback — gated behind ``OMNI_RAG_ALIAS=1``. Lexical
+    # (token-overlap) goes first because it's cheap and deterministic;
+    # the embedding match is only consulted when lexical comes back
+    # empty. Both feed into ``ResolvedRecipient`` with
+    # ``matched_from="history"`` so the orchestrator can surface them
+    # as lower-confidence candidates that still need user confirmation.
+    if _rag_fallback_enabled():
+        lex = _lexical_match(surface, contacts)
+        if lex:
+            log.debug(
+                "RAG lexical match for %r returned %d candidate(s)",
+                surface, len(lex),
+            )
+            return lex
+        emb = _embedding_match(surface, contacts)
+        if emb:
+            log.debug(
+                "RAG embedding match for %r returned %d candidate(s)",
+                surface, len(emb),
+            )
+            return emb
+    return []
 
 
 def _lookup_in_aliases(

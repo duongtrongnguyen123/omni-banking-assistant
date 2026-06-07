@@ -39,7 +39,22 @@ log = logging.getLogger("omni.ml.suggester")
 
 # Per-user cached state. Keyed by user_id because the model is small enough
 # to keep one per user instead of multiplexing.
-_LOCK = threading.Lock()
+#
+# Thread-safety: ``suggest`` runs from FastAPI's threadpool (one request
+# per worker thread) and may be invoked concurrently for the same
+# ``user_id``. sklearn does NOT guarantee ``predict_proba`` is safe under
+# concurrent calls on the same fitted estimator, and ``train_for`` may
+# overwrite ``_STATE[user_id]`` mid-read. We use an RLock because
+# ``suggest`` may transitively call ``train_for`` (cold-start path) while
+# the lock is held — a plain ``Lock`` would deadlock. Read pattern:
+#     with _LOCK: snapshot = _STATE.get(user_id)
+# We snapshot the dict reference and the fitted-model reference under the
+# lock, then drop the lock before ``predict_proba`` to keep concurrent
+# suggestions for OTHER users moving. Worst case for a single user is two
+# threads end up calling ``predict_proba`` on the same model, which we
+# serialise via a dedicated per-model inference lock attached to the
+# state dict.
+_LOCK = threading.RLock()
 _STATE: dict[str, dict[str, Any]] = {}
 
 
@@ -211,6 +226,7 @@ def train_for(user_id: str, txs: Optional[list] = None) -> Optional[dict]:
             _STATE[user_id] = {
                 "model": None, "labels": labels, "prior": prior, "n": total,
                 "contact_stats": contact_stats,
+                "infer_lock": threading.Lock(),
             }
         return {"trained_on": total, "labels": len(labels), "kind": "freq-only"}
 
@@ -244,6 +260,7 @@ def train_for(user_id: str, txs: Optional[list] = None) -> Optional[dict]:
             "prior": prior,
             "n": total,
             "contact_stats": contact_stats,
+            "infer_lock": threading.Lock(),
         }
     return {"trained_on": total, "labels": len(labels), "kind": "random_forest"}
 
@@ -301,13 +318,35 @@ def suggest(
     """
     when = when or datetime.now().astimezone()
 
-    state = _STATE.get(user_id)
+    # Snapshot the per-user state under the lock so a concurrent
+    # ``train_for`` can't swap the dict mid-read. After the snapshot we
+    # work entirely off local references — even if ``_STATE[user_id]``
+    # gets overwritten, the captured ``model`` / ``labels`` / ``prior``
+    # / ``contact_stats`` stay coherent for the duration of this call.
+    with _LOCK:
+        state = _STATE.get(user_id)
     if state is None:
         train_for(user_id)
-        state = _STATE.get(user_id)
+        with _LOCK:
+            state = _STATE.get(user_id)
+
+    # Local refs — released from the lock so other users' suggestions
+    # aren't serialised on ours.
+    model = None
+    labels: list = []
+    prior: dict = {}
+    contact_stats: dict = {}
+    infer_lock: Optional[threading.Lock] = None
+    n_tx = 0
+    if state is not None:
+        model = state.get("model")
+        labels = list(state.get("labels", []))
+        prior = dict(state.get("prior", {}))
+        contact_stats = state.get("contact_stats", {})
+        infer_lock = state.get("infer_lock")
+        n_tx = state.get("n", 0)
 
     # Auto-pick weights from data size when caller didn't override.
-    n_tx = state["n"] if state else 0
     auto = _auto_weights(n_tx)
     tw = tree_weight if tree_weight is not None else auto[0]
     fw = freq_weight if freq_weight is not None else auto[1]
@@ -319,14 +358,23 @@ def suggest(
     scored: list[tuple[str, float]] = []
     if state is not None:
         tree_proba: dict[str, float] = {}
-        if state["model"] is not None:
-            proba = state["model"].predict_proba([_feature_vec(when)])[0]
-            tree_proba = dict(zip(state["labels"], proba))
+        if model is not None:
+            # sklearn's ``predict_proba`` is NOT documented as thread-safe
+            # under concurrent calls on the same fitted estimator.
+            # Serialise per-user so two requests for the same user hitting
+            # the model simultaneously can't race; cross-user suggestions
+            # still run in parallel (each has its own ``infer_lock``).
+            features = [_feature_vec(when)]
+            if infer_lock is not None:
+                with infer_lock:
+                    proba = model.predict_proba(features)[0]
+            else:
+                proba = model.predict_proba(features)[0]
+            tree_proba = dict(zip(labels, proba))
 
-        contact_stats = state.get("contact_stats", {})
-        for cid in state["prior"]:
+        for cid in prior:
             p_tree = float(tree_proba.get(cid, 0.0))
-            p_freq = state["prior"][cid]
+            p_freq = prior[cid]
             p_rule = _rule_score(contact_stats.get(cid), when)
             mixed = tw * p_tree + fw * p_freq + rw * p_rule
             scored.append((cid, mixed))

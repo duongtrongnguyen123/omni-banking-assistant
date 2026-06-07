@@ -608,14 +608,21 @@ def llm_understand(
     # references as co-references against the in-flight draft. Pass the
     # composed prompt instead of the static one so every provider in the
     # pool sees the same context-augmented instructions.
+    #
+    # Privacy: the CURRENT DRAFT line carries USER-PII (recipient display
+    # name, amount, free-text description). Under ``redact`` mode this
+    # JSON blob must be routed through the same redactor as
+    # ``user_message`` — otherwise account numbers / names / amounts ship
+    # to Groq/Gemini un-redacted even though the user opted into
+    # redaction. The static ``_NLU_SYSTEM`` literal is OUR text (no PII)
+    # and is left alone.
     sys_prompt = _NLU_SYSTEM
     if current_draft:
         try:
-            sys_prompt = (
-                _NLU_SYSTEM
-                + "\n\nCURRENT DRAFT: "
-                + json.dumps(current_draft, ensure_ascii=False)
-            )
+            draft_json = json.dumps(current_draft, ensure_ascii=False)
+            if privacy.get_mode() == "redact":
+                draft_json, _ = redact(draft_json)
+            sys_prompt = _NLU_SYSTEM + "\n\nCURRENT DRAFT: " + draft_json
         except (TypeError, ValueError):
             # Defensive: a non-serialisable value in the draft snapshot
             # must never break the NLU path. Fall back to the static
