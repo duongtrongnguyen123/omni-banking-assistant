@@ -19,7 +19,8 @@ import csv
 import io
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
+from urllib.parse import quote as _urlquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -124,6 +125,72 @@ def _vnd(amount: int) -> str:
     return f"{s}đ"
 
 
+# --- Injection-hardening helpers ------------------------------------------- #
+
+
+# Characters that Excel / LibreOffice / Numbers interpret as the start of a
+# formula. Tab and CR are included because some spreadsheet importers strip
+# leading whitespace before parsing, exposing a `=` that follows.
+_CSV_DANGEROUS_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value: Any) -> Any:
+    """Defang CSV formula injection.
+
+    If the first character of the stringified value (after stripping leading
+    whitespace) is in `_CSV_DANGEROUS_PREFIXES`, prepend a single quote so the
+    spreadsheet treats the cell as text. Non-string values that are already
+    safely numeric (int/float) are passed through untouched — the csv writer
+    will format them correctly and they cannot start with a formula char.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    s = str(value)
+    stripped = s.lstrip()
+    if stripped and stripped[0] in _CSV_DANGEROUS_PREFIXES:
+        return "'" + s
+    return s
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    """Build an RFC 5987-safe `Content-Disposition: attachment` header value.
+
+    Always emits both the ASCII fallback (`filename="..."`) and the
+    percent-encoded UTF-8 form (`filename*=UTF-8''...`). The ASCII fallback
+    strips non-ASCII and replaces double quotes/backslashes so the header
+    cannot be split or terminated early. Modern browsers prefer `filename*`
+    when present; legacy clients fall back to `filename`.
+    """
+    # ASCII-only fallback: drop non-ASCII, neutralise quote/backslash/CRLF.
+    ascii_only = filename.encode("ascii", "ignore").decode("ascii")
+    ascii_safe = (
+        ascii_only.replace("\\", "_")
+        .replace('"', "_")
+        .replace("\r", "_")
+        .replace("\n", "_")
+    )
+    if not ascii_safe:
+        ascii_safe = "download"
+    # RFC 5987: percent-encode everything except a tiny safe set.
+    encoded = _urlquote(filename, safe="")
+    return f'attachment; filename="{ascii_safe}"; filename*=UTF-8\'\'{encoded}'
+
+
+def _brace_safe(s: str) -> str:
+    """Escape `{` and `}` so the string survives a subsequent `str.format()`.
+
+    `str.format()` does not re-parse substituted *values*, so this is
+    belt-and-braces hardening rather than a fix for an exploitable bug today.
+    But it guards against future refactors that might chain a second format
+    pass over user-controlled fields, and it documents the contract: any
+    user-derived string entering the Sao kê template gets brace-defanged
+    before substitution.
+    """
+    return s.replace("{", "{{").replace("}", "}}")
+
+
 # --------------------------------------------------------------------------- #
 # A. CSV statement
 # --------------------------------------------------------------------------- #
@@ -160,17 +227,21 @@ def export_transactions_csv(
     txs.sort(key=lambda t: t.created_at)
     for t in txs:
         name, bank = _contact_view(t.contact_id)
+        # _safe_cell defangs any cell whose first char would be interpreted
+        # as the start of a spreadsheet formula (=, +, -, @, \t, \r). Without
+        # this a description like `=cmd|"/c calc"!A1` would auto-execute when
+        # the recipient opens the file in Excel.
         writer.writerow(
             [
-                t.id,
-                _aware(t.created_at).isoformat(),
-                name,
-                bank,
-                t.amount,
-                t.description,
-                t.category,
-                t.status,
-                src_bank,
+                _safe_cell(t.id),
+                _safe_cell(_aware(t.created_at).isoformat()),
+                _safe_cell(name),
+                _safe_cell(bank),
+                _safe_cell(t.amount),
+                _safe_cell(t.description),
+                _safe_cell(t.category),
+                _safe_cell(t.status),
+                _safe_cell(src_bank),
             ]
         )
 
@@ -179,7 +250,7 @@ def export_transactions_csv(
     return Response(
         content=csv_bytes,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition_attachment(filename)},
     )
 
 
@@ -396,6 +467,17 @@ def export_sao_ke_html(
         f"{(end - timedelta(days=1)).strftime('%d/%m/%Y')}"
     )
 
+    # NOTE on Sao kê template safety:
+    #   `str.format()` substitutes named placeholders in the *template
+    #   literal*; substituted *values* are NOT re-parsed. That means a
+    #   contact name like `Joe {hack}` arrives in the output verbatim
+    #   without raising KeyError. We still keep `_brace_safe` available as
+    #   a documented helper for any future refactor that chains a second
+    #   format pass over user-controlled strings (where the threat would
+    #   actually materialise). A regression test in
+    #   `tests/test_export.py::test_sao_ke_brace_injection_is_safe` pins
+    #   this behaviour so a silent regression to a vulnerable template
+    #   engine would fail loudly.
     html = _HTML_TEMPLATE.format(
         month_label=month_label,
         user_name=_escape_html(user_name),
