@@ -551,6 +551,19 @@ toast_published_total = _register(
     )
 )
 
+# DB self-heal — incremented once per startup integrity_check pass.
+# Labels: result=ok|repaired|broken. ``ok`` is the steady state;
+# ``repaired`` means a REINDEX cleaned the file at startup; ``broken``
+# means even after REINDEX the DB still has integrity_check errors
+# (operator must restore from .bak).
+sqlite_repair_total = _register(
+    Counter(
+        "omni_sqlite_repair_total",
+        "Number of SQLite integrity-check + REINDEX attempts at startup, by outcome.",
+        labels=("result",),
+    )
+)
+
 
 __all__ = [
     "Counter",
@@ -566,4 +579,5 @@ __all__ = [
     "llm_latency_seconds",
     "session_active",
     "toast_published_total",
+    "sqlite_repair_total",
 ]
