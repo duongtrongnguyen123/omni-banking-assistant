@@ -2547,6 +2547,30 @@ def _handle_transfer(user_id: str, nlu: NLUResult) -> OmniResponse:
             text="Bạn muốn chuyển bao nhiêu và cho ai ạ?",
         )
 
+    # Bare non-transfer message guard (Bug C). A short token like "STK", "QR",
+    # "ATM", "ơ", "abc" must never mint a transfer draft — even if the LLM's
+    # FOLLOW-UP rule re-emitted ``intent=transfer`` with stale slots from
+    # earlier turns. ``_msg_has_transfer_signal`` accepts a leaked
+    # ``temporal_reference`` from the LLM as a transfer signal; tighten here
+    # so that signal counts only when the text itself also names a recipient
+    # (rule-grounded), names an amount, or carries a transfer verb. Users who
+    # legitimately want a suggestion can type something containing a
+    # transfer verb ("Omni gợi ý chuyển ai bây giờ").
+    raw = nlu.raw_text or ""
+    has_verb = bool(_TRANSFER_VERB_RE.search(raw))
+    from ..nlp.amount import parse_amount as _pa_guard
+    typed_amount_in_raw = _pa_guard(raw)[0] is not None
+    from ..nlp.entities import extract as _rule_extract_guard
+    rule_recipient = _rule_extract_guard(raw).recipient_text
+    if not has_verb and not typed_amount_in_raw and not rule_recipient:
+        return OmniResponse(
+            intent="unknown",
+            text=(
+                "Mình chưa rõ ý bạn. Bạn thử nói cụ thể hơn nhé — ví dụ "
+                "\"chuyển cho mẹ 2 triệu\" hoặc \"tháng này tiêu bao nhiêu?\""
+            ),
+        )
+
     e = nlu.entities
 
     candidates = (
@@ -2948,6 +2972,26 @@ def _continue_draft_llm_first_inner(
         # malformed → fall back to rules
         return _try_continue_draft(user_id, text, draft)
     if action == "edit":
+        # SAFETY GUARDRAIL: when the LLM tagged the message as "edit" but it's
+        # really a bare recipient swap with no cue (e.g. pending=Bố 2tr →
+        # message="bạn thân" → LLM emits edit + recipient_text), preserving
+        # the pending amount silently redirects 2.000.000đ to a different
+        # person. The few-shots forbid this but the LLM can still slip; refuse
+        # in code. Conditions: recipient_text present AND different from
+        # current AND no amount/account change in the SAME turn AND no
+        # correction-cue in the raw text. Convert to restart (prompts the user
+        # to confirm cancelling the old draft) instead of silently mutating.
+        if _should_force_restart_over_edit(draft, decision, text):
+            _PENDING_RESTART[user_id] = text
+            return OmniResponse(
+                intent="transfer",
+                text=(
+                    f"Bạn đang có một giao dịch chưa hoàn tất: "
+                    f"{_describe_draft_short(draft)}. Huỷ giao dịch này để bắt đầu "
+                    f"giao dịch mới chứ? (có / không)"
+                ),
+                draft=draft,
+            )
         return _apply_llm_draft_action(user_id, draft, decision)
     # "unclear" (or anything unexpected) → ask, never fabricate.
     return OmniResponse(
@@ -2958,6 +3002,67 @@ def _continue_draft_llm_first_inner(
         ),
         draft=draft,
     )
+
+
+# Vietnamese correction cues that signal "I'm changing my mind about the
+# pending transfer" — when one of these prefixes (or appears alongside) a new
+# recipient surface, treating the message as an edit is safe (amount carries).
+# Without ANY of these cues, a bare recipient swap is a fresh request that
+# must NOT inherit the pending amount silently.
+_EDIT_CORRECTION_CUE_RE = re.compile(
+    r"\b(?:đổi|doi|sửa|sua|à\s*thôi|a\s*thoi|à\b|a\b|khoan|không(?:\s*phải)?|"
+    r"khong(?:\s*phai)?|ý\s*tôi|y\s*toi|nhầm|nham|thay\s+(?:bằng|bang)|"
+    r"mà\s*thôi|ma\s*thoi)\b",
+    re.IGNORECASE,
+)
+
+
+def _should_force_restart_over_edit(
+    draft: TransactionDraft, decision: dict, raw_text: str
+) -> bool:
+    """Convert an LLM ``edit`` decision into ``restart`` when it would silently
+    redirect money to a different person.
+
+    A bare recipient surface ("bạn thân", "sếp", "Minh") with NO correction
+    cue ("đổi/à/sửa/khoan/không/ý tôi là") and NO transfer verb is a money-
+    redirect risk if the orchestrator preserves the pending amount. Detect
+    that shape and route through the polite restart prompt instead. The
+    user only loses a single "có / không" turn — much cheaper than a silent
+    swap of recipient.
+    """
+    rt = (decision.get("recipient_text") or "").strip()
+    if not rt:
+        return False
+    # Only fire when the message actually changes the recipient AND keeps
+    # every other slot untouched. If the LLM also asked for an amount/account
+    # change in the SAME turn, the user is consciously editing both slots —
+    # honour the edit.
+    if decision.get("amount_vnd") is not None:
+        return False
+    if decision.get("amount_op") is not None:
+        return False
+    if decision.get("account_hint"):
+        return False
+    # Must be a recipient swap: there's a current recipient AND the new
+    # surface doesn't match it. (We do a cheap surface comparison; the
+    # resolver re-validates downstream.)
+    if draft.recipient is None:
+        return False
+    current = (draft.recipient.display_name or "").strip().lower()
+    if not current:
+        return False
+    # If user message has a correction cue OR a transfer verb, trust the LLM.
+    text = raw_text or ""
+    if _EDIT_CORRECTION_CUE_RE.search(text):
+        return False
+    if _TRANSFER_VERB_RE.search(text):
+        return False
+    # If the new recipient surface IS the current recipient (re-stating who),
+    # there's nothing to redirect — let the edit no-op through.
+    rt_low = rt.lower()
+    if rt_low == current or rt_low in current or current in rt_low:
+        return False
+    return True
 
 
 def _apply_llm_draft_action(
@@ -3774,6 +3879,11 @@ def cancel_draft(user_id: str, draft_id: str) -> OmniResponse:
     session = session_for(user_id)
     if session.current_draft and session.current_draft.id == draft_id:
         session.clear_draft()
+    # Drop any stashed "huỷ giao dịch cũ?" continuation state — otherwise the
+    # next bare reply (e.g. "STK", "ơ") would be interpreted as the answer to
+    # a prompt that no longer exists, reviving the discarded draft or
+    # rendering a ghost "Mình vẫn giữ giao dịch đang chờ (…)" message.
+    _PENDING_RESTART.pop(user_id, None)
     text = "Đã huỷ giao dịch."
     session.append("user", "Huỷ giao dịch")
     session.append("omni", text)

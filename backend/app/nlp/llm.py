@@ -675,12 +675,21 @@ Decide the action:
   "huỷ", "thôi", "thôi khỏi", "đừng chuyển nữa", "bỏ đi", "không làm nữa".
 - "otp": the message is just a 4-6 digit code → put it in otp_code.
 - "edit": user CORRECTS the pending transfer — keep the fields they didn't touch.
-  A correction has a cue: "đổi sang…", "à (thôi)…", "không, …", "mà thôi…", "sửa…",
-  "thay bằng…", "ý tôi là…", or changes only the amount/account.
-- "restart": user issues a FRESH, standalone transfer command ("chuyển cho mẹ",
-  "gửi sếp 2 triệu") with NO correction cue — they're starting over, so the pending
-  transfer's amount must NOT carry. Use this for a plain "chuyển/gửi cho X [số tiền]"
-  that reads like a brand-new request, especially when NO amount is given.
+  A correction REQUIRES one of these signals:
+    (a) an explicit correction cue: "đổi sang…", "à (thôi)…", "không, …",
+        "mà thôi…", "sửa…", "thay bằng…", "ý tôi là…", "khoan…", OR
+    (b) the message changes ONLY the amount or account (recipient unchanged), OR
+    (c) the message changes BOTH recipient AND amount together with a cue.
+  A BARE recipient surface (e.g. "bạn thân", "sếp", "Minh", "bố") with NO cue
+  and NO transfer verb is NEVER "edit" — it is "restart". Carrying the pending
+  amount onto a different person without an explicit cue is a money-redirect
+  bug; classify as restart so the orchestrator can prompt for confirmation.
+- "restart": user issues a FRESH transfer reference — a plain transfer verb
+  ("chuyển cho mẹ", "gửi sếp 2 triệu"), OR a bare recipient surface naming a
+  DIFFERENT person without a correction cue ("bạn thân", "sếp", "Minh"). They
+  are pivoting to a new request, so the pending transfer's amount must NOT
+  carry. Use this whenever the message names a person OTHER than the pending
+  recipient without "đổi/à/sửa/khoan/không/ý tôi là".
 - "unclear": user is talking about the transfer but you cannot tell what they want —
   ask them. Do NOT guess.
 - "other": the message is NOT about this transfer at all (e.g. "số dư bao nhiêu?",
@@ -727,6 +736,14 @@ PENDING recipient=Cường amount=4.000.000đ. MSG: "chuyển cho mẹ"
 {"action":"restart","recipient_text":"mẹ"}
 PENDING recipient=Cường amount=4.000.000đ. MSG: "gửi sếp 2 triệu"
 {"action":"restart","recipient_text":"sếp","amount_vnd":2000000}
+PENDING recipient=bố amount=2.000.000đ. MSG: "bạn thân"
+{"action":"restart","recipient_text":"bạn thân"}
+PENDING recipient=mẹ amount=1.000.000đ. MSG: "sếp"
+{"action":"restart","recipient_text":"sếp"}
+PENDING recipient=mẹ amount=1.000.000đ. MSG: "chị Thảo 500k"
+{"action":"restart","recipient_text":"chị Thảo","amount_vnd":500000}
+PENDING recipient=bố amount=2.000.000đ. MSG: "à thôi bạn thân"
+{"action":"edit","recipient_text":"bạn thân"}
 PENDING recipient=mẹ amount=2.000.000đ. MSG: "dùng tài khoản phụ nhé"
 {"action":"edit","account_hint":"phụ"}
 PENDING recipient=mẹ amount=2.000.000đ. MSG: "thôi không chuyển nữa"
