@@ -40,11 +40,60 @@ log = logging.getLogger("omni.nlu.llm")
 import threading as _thr_lazy
 _PROVIDER_PRIORITY_LOCK = _thr_lazy.Lock()
 _DEPRIORITIZED_UNTIL: dict[str, float] = {}
-_DEPRIORITY_BACKOFF_SECONDS = 5 * 60  # try the deprioritized provider again after 5 min
+_DEPRIORITY_BACKOFF_SECONDS = 60 * 60  # try the deprioritized provider again after 60 min
+"""How long a dead provider stays at the END of the chain.
+
+Tuned for the realistic failure mode: Groq's free tier resets DAILY
+(TPD), not per-minute. The old 5-minute window meant we retried a
+TPD-exhausted key 12× an hour, each retry paying ~150 ms in walk-tax
+across every other request in the meantime. 60 min covers most TPD
+reset boundaries while still letting a real recovery (org temporarily
+restricted then re-enabled by support) rejoin within an hour."""
+
+# Hard wall-time cap on a single chain walk. When providers keep
+# failing slowly enough that we cross this budget, abandon the LLM
+# path and let the caller fall through to rule-based. Prevents a
+# 38-entry pool from turning a chat turn into a multi-second loading
+# spinner when the upstream is degraded.
+_CHAIN_DEADLINE_SECONDS = 5.0
+
+# Per-request HTTP timeout. Tuned down from 20 s. Both Groq and Gemini
+# return 2xx in well under 2 s on the happy path; 4xx/5xx error responses
+# come back in 100-300 ms. A long timeout only helps when a provider's
+# TCP connect itself hangs (rare). 5 s gives plenty of headroom on a
+# bad cellular connection without bloating tail latency.
+_PROVIDER_TIMEOUT_SECONDS = 5
+
+
+def _walk_providers(providers: "list[_Provider]"):
+    """Iterate providers honouring the chain-deadline wall-clock cap.
+
+    The four NLU / draft-action / phrase / categorise paths all walk
+    the provider list the same way: try each in order, fall through
+    on a None response. Without a deadline, a slow chain of failing
+    providers makes a single chat turn take seconds. This wrapper
+    short-circuits the walk once the cumulative wall time exceeds
+    ``_CHAIN_DEADLINE_SECONDS`` — the caller's rule-based fallback
+    then takes over. Logs once when the cap trips so operators can
+    correlate slow chat turns to a degraded upstream.
+    """
+    t0 = time.perf_counter()
+    for idx, p in enumerate(providers):
+        if time.perf_counter() - t0 > _CHAIN_DEADLINE_SECONDS:
+            log.warning(
+                "LLM chain deadline %.1fs exceeded after %d providers; abandoning to rule",
+                _CHAIN_DEADLINE_SECONDS, idx,
+            )
+            return
+        yield p
 
 
 def _mark_provider_rate_limited(name: str) -> None:
-    """Push a provider to the end of the pool for ~5 min."""
+    """Push a provider to the end of the pool for ``_DEPRIORITY_BACKOFF_SECONDS``.
+
+    Also called for 401/403 (auth failures) — a revoked key shouldn't
+    be re-attempted every chat turn. The name is kept for back-compat
+    even though it's no longer literally rate-limit-only."""
     with _PROVIDER_PRIORITY_LOCK:
         _DEPRIORITIZED_UNTIL[name] = time.time() + _DEPRIORITY_BACKOFF_SECONDS
 
@@ -613,7 +662,7 @@ def llm_understand(
             # must never break the NLU path. Fall back to the static
             # prompt — coref handling degrades but routing stays correct.
             sys_prompt = _NLU_SYSTEM
-    for p in providers:
+    for p in _walk_providers(providers):
         data = _openai_compat(
             provider=p,
             system_prompt=sys_prompt,
@@ -770,7 +819,7 @@ def llm_draft_action(
         f"- Số dư tài khoản nguồn: {draft_ctx.get('balance')}\n\n"
         f'CÂU NGƯỜI DÙNG VỪA NÓI: "{text}"'
     )
-    for p in providers:
+    for p in _walk_providers(providers):
         data = _openai_compat(
             provider=p,
             system_prompt=_DRAFT_ACTION_SYSTEM,
@@ -841,7 +890,7 @@ def llm_phrase(
             note="llm_phrase suppressed by local-only mode",
         )
         return None
-    for p in providers:
+    for p in _walk_providers(providers):
         text = _openai_compat(
             provider=p,
             system_prompt=_PHRASE_SYSTEM,
@@ -957,7 +1006,7 @@ def llm_categorize(description: str) -> Optional[tuple[str, float]]:
     # Lazy import to avoid circular dep between nlp/llm.py and ml/categorizer.py.
     from ..ml.categorizer import CATEGORIES as _CANONICAL
 
-    for p in providers:
+    for p in _walk_providers(providers):
         data = _openai_compat(
             provider=p,
             system_prompt=_CATEGORIZE_SYSTEM,
@@ -1090,7 +1139,7 @@ def _openai_compat(
     t0 = time.perf_counter()
     try:
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with urllib.request.urlopen(req, timeout=_PROVIDER_TIMEOUT_SECONDS) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             choices = payload.get("choices") or []
             # Gemini may return a top-level list rather than a dict when erroring,
@@ -1117,8 +1166,16 @@ def _openai_compat(
             log.warning("%s HTTP %s: %s", provider.name, e.code, body_text)
             if e.code == 429:
                 status = "429"
-                # Push this provider to the back of the pool for ~5 min.
+                # Push this provider to the back of the pool.
                 # Next chat turn skips it on the fast path.
+                _mark_provider_rate_limited(provider.name)
+            elif e.code in (401, 403):
+                # Auth failure or org-restricted (the live failure mode
+                # we saw on day-of-demo for ~10 Groq keys). These never
+                # recover within a session, so deprioritize them just
+                # like a rate-limit — otherwise every chat turn pays
+                # ~150 ms × N keys of pure walk-tax.
+                status = "http_4xx"
                 _mark_provider_rate_limited(provider.name)
             elif 400 <= e.code < 500:
                 status = "http_4xx"
