@@ -121,22 +121,37 @@ def handle_insights(
             parts.append("Mình chưa phát hiện giao dịch nào bất thường gần đây.")
 
     if asks_compare or (not parts and not asks_subs):
+        # New categories (``delta_pct=None``) have no comparable baseline —
+        # rank them after any category with a real delta but still surface
+        # them as "(mới)" so users see the new spend line.
         deltas = sorted(
             (
-                (cat, vals.get("this", 0), vals.get("last", 0), vals.get("delta_pct", 0))
+                (
+                    cat,
+                    vals.get("this", 0),
+                    vals.get("last", 0),
+                    vals.get("delta_pct"),
+                    bool(vals.get("is_new", False)),
+                )
                 for cat, vals in mom.items()
             ),
-            key=lambda x: abs(x[3]),
+            key=lambda x: (0 if x[3] is None else 1, abs(x[3]) if x[3] is not None else 0),
             reverse=True,
         )[:3]
         if deltas:
             lines = []
-            for cat, this_v, last_v, pct in deltas:
-                arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "→")
-                lines.append(
-                    f"• {_label(cat)}: {format_vnd(this_v)} {arrow} "
-                    f"{abs(pct):.0f}% so với {format_vnd(last_v)} tháng trước"
-                )
+            for cat, this_v, last_v, pct, is_new in deltas:
+                if pct is None or is_new:
+                    lines.append(
+                        f"• {_label(cat)}: {format_vnd(this_v)} (mới — "
+                        f"chưa có tháng trước để so sánh)"
+                    )
+                else:
+                    arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "→")
+                    lines.append(
+                        f"• {_label(cat)}: {format_vnd(this_v)} {arrow} "
+                        f"{abs(pct):.0f}% so với {format_vnd(last_v)} tháng trước"
+                    )
             parts.append(
                 "Tháng này so với tháng trước:\n" + "\n".join(lines)
             )

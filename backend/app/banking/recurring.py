@@ -37,10 +37,27 @@ from collections import defaultdict
 from datetime import datetime
 from statistics import median
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from ..models.schemas import Transaction
+
+# Bucketing must happen in the user's wall-clock timezone, not UTC, or a
+# tx stamped ``2026-06-01T00:30:00+00:00`` (May 31 23:30 ICT) lands in
+# June instead of May and breaks the month-bucket detector at month edges.
+_LOCAL_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _to_local_naive(dt: datetime) -> datetime:
+    """Return ``dt`` rebased to ICT wall-clock then stripped of tzinfo.
+
+    Naive inputs are assumed to already be in ICT (legacy seed data) and
+    passed through unchanged.
+    """
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(_LOCAL_TZ).replace(tzinfo=None)
 
 # Single-token chat clutter from the simulated dataset. Anything in this set
 # (after lowercase + strip) is dropped before pattern detection runs.
@@ -123,9 +140,15 @@ def detect_recurring(
     if not completed:
         return []
     if ref_now is None:
-        ref_now = max(t.created_at for t in completed).replace(tzinfo=None)
+        ref_now = _to_local_naive(max(t.created_at for t in completed))
     else:
-        ref_now = ref_now.replace(tzinfo=None)
+        ref_now = _to_local_naive(ref_now)
+
+    # Pre-compute local wall-clock timestamps once so every downstream
+    # ``.year`` / ``.month`` / ``.day`` read sees ICT, not UTC.
+    local_by_tx: dict[str, datetime] = {
+        t.id: _to_local_naive(t.created_at) for t in completed
+    }
 
     groups: dict[tuple[str, str], list[Transaction]] = defaultdict(list)
     for t in completed:
@@ -139,7 +162,9 @@ def detect_recurring(
         if len(members) < min_occurrences:
             continue
 
-        months = sorted({(t.created_at.year, t.created_at.month) for t in members})
+        months = sorted({
+            (local_by_tx[t.id].year, local_by_tx[t.id].month) for t in members
+        })
         if len(months) < min_months:
             continue
 
@@ -155,10 +180,10 @@ def detect_recurring(
             continue
 
         amounts = [t.amount for t in members]
-        days = [t.created_at.day for t in members]
-        sorted_by_date = sorted(members, key=lambda t: t.created_at)
-        last_seen = sorted_by_date[-1].created_at.replace(tzinfo=None)
-        first_seen = sorted_by_date[0].created_at.replace(tzinfo=None)
+        days = [local_by_tx[t.id].day for t in members]
+        sorted_by_date = sorted(members, key=lambda t: local_by_tx[t.id])
+        last_seen = local_by_tx[sorted_by_date[-1].id]
+        first_seen = local_by_tx[sorted_by_date[0].id]
 
         typical_amount = int(median(amounts))
         typical_day = int(median(days))
