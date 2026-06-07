@@ -31,7 +31,10 @@ class Settings(BaseSettings):
     # override via OPENROUTER_MODEL if it disappears (the free roster
     # rotates monthly). Pool keys live in OPENROUTER_API_KEY_1..N.
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemma-4-26b-a4b-it:free"
+    # Live probe (Jun 7): the 26b sibling was upstream-throttled by
+    # Google AI Studio while the 31b returned VN replies cleanly. Pin
+    # to 31b so the demo's first request doesn't bounce on a 429.
+    openrouter_model: str = "google/gemma-4-31b-it:free"
     # OpenRouter convention: send HTTP-Referer + X-Title so the call
     # is attributed to our app in their leaderboard. Cosmetic, not
     # enforced — but recommended by their docs.
