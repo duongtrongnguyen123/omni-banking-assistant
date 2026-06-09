@@ -57,6 +57,15 @@ def _bootstrap_test_env() -> None:
     # downloads ~120MB on first run.
     os.environ["OMNI_SKIP_EMBED_BACKFILL"] = "1"
 
+    # Clobber OMNI_OFFLINE_DEMO from the dev ``.env``. Dotenv reload picks
+    # it up via override=False and would otherwise force
+    # ``settings.offline_demo=True`` for every test, which makes
+    # ``_enabled_providers`` return [] and silently breaks tests that pin
+    # the LLM provider chain (e.g. the privacy-prompt suite that mocks
+    # urlopen and asserts the request was captured). Setting "" rather
+    # than popping so override=False can't re-introduce the value.
+    os.environ["OMNI_OFFLINE_DEMO"] = ""
+
     # Default to the in-memory session backend so we don't accidentally
     # talk to a Redis instance configured in the dev shell. Tests that
     # need to exercise the Redis wire path construct
