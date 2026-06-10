@@ -57,6 +57,16 @@ _HIGH: list[tuple[Intent, list[str]]] = [
         "qr cua toi", "qr của tôi",
         "qr tk", "qr tài khoản",
         "vietqr",
+        # "tạo mã nhận tiền 2tr" / "mã nhận tiền của mình" — the
+        # generate-QR phrasing without the literal "qr" token. Pre-fix
+        # these fell to the Tier-3 transfer fallback (the "2tr" digit
+        # tail) and opened a confused transfer draft. The receive_qr
+        # handler already accepts an optional amount + description so
+        # "tạo mã nhận tiền 2tr" bakes 2tr into the generated QR.
+        "tao ma nhan tien", "tạo mã nhận tiền",
+        "ma nhan tien", "mã nhận tiền",
+        "muon nhan tien", "muốn nhận tiền",
+        "cho minh nhan tien", "cho mình nhận tiền",
     ]),
     # my_account — "STK của tôi", "số tài khoản của tôi". Read-only
     # inbound info so someone else can transfer in.

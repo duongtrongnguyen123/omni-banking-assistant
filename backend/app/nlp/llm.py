@@ -20,7 +20,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..config import get_settings
@@ -73,6 +73,11 @@ class _Provider:
     url: str
     api_key: str
     model: str
+    # Per-provider headers that get merged into the request. Used by
+    # OpenRouter for its HTTP-Referer / X-Title leaderboard attribution.
+    # Empty dict for Groq / Gemini (they ignore unknown headers anyway,
+    # but skipping the merge keeps the wire clean).
+    extra_headers: dict = field(default_factory=dict)
 
 
 def _collect_keys(prefix: str, primary: str) -> list[str]:
@@ -171,10 +176,30 @@ def _enabled_providers() -> list[_Provider]:
                 s.gemini_model,
             )
         )
+    # Third tier: OpenRouter free models. Picks up when Groq + Gemini have
+    # both exhausted their daily quotas (the "load mãi không trả lời" failure
+    # mode the user reported). Default model is a multilingual free option;
+    # override via OPENROUTER_MODEL if the free roster rotates. Pool keys live
+    # in OPENROUTER_API_KEY_1..N exactly like the Groq pool above.
+    openrouter_keys = _collect_keys("OPENROUTER_API_KEY", s.openrouter_api_key)
+    or_extra = {
+        "HTTP-Referer": s.openrouter_referer,
+        "X-Title": s.openrouter_title,
+    }
+    for i, key in enumerate(openrouter_keys):
+        out.append(
+            _Provider(
+                f"openrouter#{i + 1}" if len(openrouter_keys) > 1 else "openrouter",
+                "https://openrouter.ai/api/v1/chat/completions",
+                key,
+                s.openrouter_model,
+                extra_headers=or_extra,
+            )
+        )
     if len(out) > 2:
         log.info(
-            "LLM provider pool: %d entries (Groq %d, Gemini %d)",
-            len(out), len(groq_keys), len(gemini_keys),
+            "LLM provider pool: %d entries (Groq %d, Gemini %d, OpenRouter %d)",
+            len(out), len(groq_keys), len(gemini_keys), len(openrouter_keys),
         )
     # Lazy reorder — providers that recently 429'd go to the END so the
     # chat path doesn't pay their latency walking dead keys before
@@ -1070,16 +1095,22 @@ def _openai_compat(
         redaction_breakdown=total_breakdown if mode == "redact" else {},
     )
 
+    req_headers = {
+        "Authorization": f"Bearer {provider.api_key}",
+        "Content-Type": "application/json",
+        # Cloudflare in front of Groq blocks the default Python-urllib UA.
+        "User-Agent": "omni-nlu/0.1 (+banking-assistant)",
+        "Accept": "application/json",
+    }
+    # Per-provider overrides — OpenRouter's HTTP-Referer + X-Title for
+    # leaderboard attribution. Last write wins so a provider can override
+    # User-Agent if it needs to (none do today).
+    if provider.extra_headers:
+        req_headers.update(provider.extra_headers)
     req = urllib.request.Request(
         provider.url,
         data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {provider.api_key}",
-            "Content-Type": "application/json",
-            # Cloudflare in front of Groq blocks the default Python-urllib UA.
-            "User-Agent": "omni-nlu/0.1 (+banking-assistant)",
-            "Accept": "application/json",
-        },
+        headers=req_headers,
         method="POST",
     )
     # ``status`` is one of: ``ok`` (2xx), ``429`` (rate-limited — the
