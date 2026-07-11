@@ -37,17 +37,17 @@ Chi tiết trace end-to-end 1 giao dịch: [`docs/architecture.md`](docs/archite
 
 ### Hiểu ngôn ngữ tự nhiên tiếng Việt
 
-- **Alias resolution 5 bước**: exact → token → prefix → embedding RAG. "mẹ" → Nguyễn Thị Lan, "cô bán bún chợ Hôm" → contact đúng
+- **Alias resolution 5 bước**: exact → token → prefix → embedding RAG. "mẹ" → Nguyễn Thị Lan, "quán bún quen gần nhà" → contact đúng dù tên trong danh bạ dài dòng
 - **Temporal reference**: "như tháng trước", "hôm qua", "tuần này", "năm ngoái" → mỗi cụm map sang window riêng
 - **Amount parsing**: "5 triệu", "1tr5", "500k", "hai mươi lăm nghìn", "một củ", "5 chai" — cover 12+ cách gõ số tiền
 - **Colloquial banking**: "còn bao nhiêu tiền", "cạn ví chưa", "lương về chưa" → intent balance đúng, không leak sang history
 
-### An toàn (multi-layer)
+### An toàn nhiều lớp
 
-- **Rule engine**: 5 flag class — ambiguous / missing / new+large / anomaly / insufficient. Mỗi flag có `details` structured để UI dựng "why" panel
-- **Isolation Forest fraud** score (per-user model, calibrated) → drive OTP step-up
-- **Race condition guards**: `_INFLIGHT_CONFIRMS` set + `inFlightDraftIds` frontend lock (cancel không thể race confirm sau khi OTP đã nhập)
-- **Biometric face scan 8D** cho các giao dịch high-risk (client-side, không upload frame ra cloud)
+- **Kiểm tra trước khi chuyển**: hệ thống nhận diện 5 tình huống cần cảnh báo — người nhận chưa rõ, thiếu thông tin, người mới + số tiền lớn, số tiền lệch quá xa thói quen, tài khoản không đủ. Mỗi cảnh báo đi kèm lý do cụ thể để giao diện có thể hiển thị rõ *tại sao lại cảnh báo*, không chỉ một icon đỏ vô nghĩa.
+- **Phát hiện giao dịch bất thường**: mô hình Isolation Forest huấn luyện riêng theo từng người dùng, so sánh giao dịch hiện tại với thói quen chi tiêu cá nhân. Nếu bất thường → tự động yêu cầu xác thực OTP thêm.
+- **Chống race điều khiển**: người dùng bấm Xác nhận rồi lỡ tay bấm Huỷ ngay sau đó không thể phá vỡ trạng thái. Cả frontend lẫn backend đều khoá luồng: khi confirm đang xử lý thì cancel bị từ chối lịch sự. Loại bỏ tình huống *"tiền vẫn chuyển mà UI báo đã huỷ"*.
+- **Xác thực khuôn mặt**: các giao dịch nguy cơ cao (số tiền lớn, người nhận mới) yêu cầu quét khuôn mặt 8 hướng trực tiếp trên máy. Ảnh khuôn mặt **không rời khỏi máy người dùng** — chỉ signature (vector đặc trưng đã mã hoá) được gửi lên server để đối chiếu.
 
 ### LLM chain — provider-agnostic với automatic failover
 
