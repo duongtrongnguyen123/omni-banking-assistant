@@ -33,38 +33,7 @@ Chi tiết trace end-to-end 1 giao dịch: [`docs/architecture.md`](docs/archite
 
 ---
 
-## Kết quả đo được (dùng dataset công khai, không phải seed tự tạo)
-
-Đánh giá trên **3 dataset thực tế công khai** để tránh chuyện "tự chấm điểm chính mình". Chi tiết method: [`docs/eval-real-data.md`](docs/eval-real-data.md).
-
-### Suggester — dự đoán người nhận tiếp theo
-
-| Dataset | Hit@1 | Hit@3 | Hit@5 |
-|---|---|---|---|
-| **BankSim 594k giao dịch (labelled merchant)** | **0.81** | **0.92** | **0.97** |
-
-Best ablation: `tree + freq` (RandomForest + frequency prior). Rule scorer chỉ giúp trên dataset VN — locale-gated.
-
-### Phát hiện thanh toán định kỳ
-
-| Dataset | Precision | Recall | F1 |
-|---|---|---|---|
-| **Czech PKDD'99** (dataset ngân hàng thật, có ground-truth `permanent_orders`) | **0.69** | **0.80** | **0.74** |
-
-20/25 lệnh chuyển định kỳ được phát hiện chỉ từ luồng giao dịch, không cần bất cứ metadata nào. 9 "false positive" thực chất là các khoản khách hàng chuyển định kỳ nhưng chưa đăng ký hệ thống — hữu ích, không phải lỗi.
-
-### Fraud Isolation Forest
-
-Trên **BankSim 7200 giao dịch fraud có label**:
-- Median anomaly score: fraud **0.58** vs legit **0.22**
-- Ở threshold 0.5: **recall 0.75** · precision 0.14 · FP-rate-on-legit 0.11
-- Đủ mạnh để làm signal **OTP step-up**, chưa đủ để autoblock
-
-Toàn bộ eval chạy <20s trên 520k-row contest DB (in-memory sau initial SELECT).
-
----
-
-## Các tính năng nổi bật
+## Tính năng
 
 ### Hiểu ngôn ngữ tự nhiên tiếng Việt
 
@@ -114,6 +83,37 @@ Chi tiết: [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md), [`docs/perf.md`](docs/
 | **Categorizer** | TF-IDF + rule (13 category), <2ms, precision 0.95 | `ml/categorizer.py` |
 | **Insights** | MoM delta, per-recipient z/MAD anomaly, subscription detection | `ml/insights.py` |
 | **Recurring miner** | Bucket-by-month pattern miner, không cần schedule config | `banking/recurring.py` |
+
+---
+
+## Kết quả benchmark
+
+Các thành phần ML/NLU ở trên được eval trên **3 dataset công khai** (không dùng seed tự tạo) để tránh circular scoring. Method chi tiết: [`docs/eval-real-data.md`](docs/eval-real-data.md).
+
+### Suggester — dự đoán người nhận tiếp theo
+
+| Dataset | Hit@1 | Hit@3 | Hit@5 |
+|---|---|---|---|
+| **BankSim 594k giao dịch (labelled merchant)** | **0.81** | **0.92** | **0.97** |
+
+Best ablation: `tree + freq` (RandomForest + frequency prior). Rule scorer chỉ giúp trên dataset VN — locale-gated.
+
+### Phát hiện thanh toán định kỳ
+
+| Dataset | Precision | Recall | F1 |
+|---|---|---|---|
+| **Czech PKDD'99** (dataset ngân hàng thật, có ground-truth `permanent_orders`) | **0.69** | **0.80** | **0.74** |
+
+20/25 lệnh chuyển định kỳ được phát hiện chỉ từ luồng giao dịch, không cần bất cứ metadata nào. 9 "false positive" thực chất là các khoản khách hàng chuyển định kỳ nhưng chưa đăng ký hệ thống — hữu ích, không phải lỗi.
+
+### Fraud Isolation Forest
+
+Trên **BankSim 7200 giao dịch fraud có label**:
+- Median anomaly score: fraud **0.58** vs legit **0.22**
+- Ở threshold 0.5: **recall 0.75** · precision 0.14 · FP-rate-on-legit 0.11
+- Đủ mạnh để làm signal **OTP step-up**, chưa đủ để autoblock
+
+Toàn bộ eval chạy <20s trên 520k-row contest DB (in-memory sau initial SELECT).
 
 ---
 
