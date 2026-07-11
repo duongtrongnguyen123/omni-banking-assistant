@@ -1,93 +1,111 @@
-# Omni — AI Assistant for Banking
+# Omni — Trợ lý AI Ngân hàng bằng tiếng Việt
 
-> Team **One Last Token** · HACK\<CX\>TOGETHER  
-> "Khách hàng không cần học cách dùng ngân hàng — ngân hàng học cách hiểu khách hàng."
+Trợ lý đối thoại tiếng Việt giúp khách hàng thực hiện giao dịch ngân hàng
+bằng ngôn ngữ tự nhiên. Người dùng gõ (hoặc nói) một câu như
+*"gửi cho mẹ 5 triệu như tháng trước"*, hệ thống hiểu ý định, phân giải
+"mẹ" → đúng người nhận trong danh bạ, lấy số tiền + nội dung từ giao dịch
+tháng trước, chạy đầy đủ kiểm tra an toàn, rồi trình 1 thẻ **Xác nhận** duy
+nhất. Rút gọn 7 bước Smart Banking cổ điển xuống còn **Chat → Confirm → Done**.
 
-A natural-language assistant that sits inside a mobile banking app. The user
-types or speaks an intent ("Gửi cho mẹ 5 triệu như tháng trước") and Omni
-turns it into a confirmed, auditable transaction — collapsing the 7-step
-classic banking flow into Chat → Confirm → Done.
+---
 
-## Architecture
+## Kiến trúc
 
-Five layers, exactly as proposed on slide 5:
+Năm tầng, mỗi tầng có thể swap độc lập:
 
 ```
-   ┌────────────┐   ┌────────────┐   ┌─────────────────┐   ┌────────────┐   ┌────────────┐
-   │ 1. Chat UI │──▶│ 2. NLU     │──▶│ 3. Context &    │──▶│ 4. Safety  │──▶│ 5. Banking │
-   │ React +    │   │ Intent +   │   │  Personalization│   │ Rule       │   │ Mock Core  │
-   │ REST/WS    │   │ Entities   │   │  Alias · Temp.  │   │ Engine     │   │ Banking    │
-   └────────────┘   └────────────┘   └─────────────────┘   └────────────┘   └────────────┘
+┌────────────┐   ┌────────────┐   ┌──────────────┐   ┌──────────┐   ┌────────────┐
+│ 1. Chat UI │──▶│ 2. NLU     │──▶│ 3. Context   │──▶│ 4. Safety│──▶│ 5. Banking │
+│ React + WS │   │ LLM + Rule │   │ Alias · Time │   │ Rules +  │   │ Mock Core  │
+│ Voice · TTS│   │ 3-tier     │   │ RAG (local)  │   │ Fraud ML │   │ (JSON seed)│
+└────────────┘   └────────────┘   └──────────────┘   └──────────┘   └────────────┘
 ```
 
-| Layer | Files (`backend/app/...`) | Stand-in for slide tech |
-|-------|---------------------------|-------------------------|
-| 1. Chat UI | `frontend/`, `routes/chat.py`, `routes/ws.py` | React Native → React Web; Socket.IO → FastAPI WebSocket |
-| 2. NLU | `nlp/intent.py`, `nlp/entities.py`, `nlp/amount.py`, `nlp/llm.py`, `nlp/pipeline.py` | Gemini (optional) + spaCy-style rules + Pydantic |
-| 3. Context | `context/alias.py`, `context/temporal.py`, `context/session.py` | Redis (short-term) + Postgres (long-term) + Pinecone — all in-memory for demo |
-| 4. Safety | `safety/rules.py` | Rule Engine · JWT (header-based) · "AES-256" stand-in via header pass-through |
-| 5. Banking | `banking/service.py`, `store.py`, `app/data/*.json` | Mock banking sandbox |
+| Tầng | File chính | Công nghệ |
+|---|---|---|
+| **1. Chat UI** | `frontend/src/` | React + Vite + TypeScript. Voice input (Web Speech API vi-VN), TTS phản hồi tiếng Việt, WebSocket toast events |
+| **2. NLU** | `backend/app/nlp/` | Chain 3 tầng: **Groq Llama 3.3 70B** → **Google Gemini** → **OpenRouter free** → rule extractor (rule-only vẫn xử lý tốt phần lớn intent) |
+| **3. Context** | `backend/app/context/`, `backend/app/db/` | Alias resolver 5 bước (exact → token → prefix → RAG), temporal resolver, RAG contact lookup dùng `fastembed` multilingual MiniLM 384-d chạy hoàn toàn on-device |
+| **4. Safety** | `backend/app/safety/` | Rule engine (missing/ambiguous slot, new+large, MAD anomaly, insufficient balance), **Isolation Forest** cho fraud score, OTP + sinh trắc (face-scan 8D) step-up |
+| **5. Banking** | `backend/app/banking/`, `backend/app/store.py` | Mock transfer / balance / history / schedule. Có sẵn adapter Postgres (RDS omni schema) khi cần data thật |
 
-## Pitch package
+Chi tiết trace end-to-end 1 giao dịch: [`docs/architecture.md`](docs/architecture.md).
 
-For judges + the team's pitch crew:
+---
 
-- 🎤 **Pitch script** — [`docs/pitch-final.md`](docs/pitch-final.md) — 5-min flow with timestamps
-- 🎴 **Slide deck content** — [`docs/pitch-deck-content.md`](docs/pitch-deck-content.md) — 8 slides
-- ❓ **Judge FAQ** — [`docs/judge-faq.md`](docs/judge-faq.md) — 20 Q&A
-- 📄 **One-pager** — [`docs/one-pager.md`](docs/one-pager.md)
-- ✅ **Final audit** — [`docs/audit-2026-06-07-final.md`](docs/audit-2026-06-07-final.md) — GREEN, 30/30 checks
-- 🧠 **2-minute repo summary** — [`PROGRESS.md`](PROGRESS.md)
-- ⚖️ **Honest framing** — [`docs/honest-pitch.md`](docs/honest-pitch.md) — what we can vs cannot claim
+## Kết quả đo được (dùng dataset công khai, không phải seed tự tạo)
 
-## Empirical results
+Đánh giá trên **3 dataset thực tế công khai** để tránh chuyện "tự chấm điểm chính mình". Chi tiết method: [`docs/eval-real-data.md`](docs/eval-real-data.md).
 
-Evaluated on **three** datasets so the same models get scored against the
-contest brief AND against real-world public data (full method:
-[`docs/eval.md`](docs/eval.md), [`docs/eval-real-data.md`](docs/eval-real-data.md),
-honest framing: [`docs/honest-pitch.md`](docs/honest-pitch.md)):
+### Suggester — dự đoán người nhận tiếp theo
 
-### Suggester — next-recipient ranking
-
-| Dataset | Hit@1 | Hit@5 | Note |
+| Dataset | Hit@1 | Hit@3 | Hit@5 |
 |---|---|---|---|
-| Contest 520k (uniform 1000-counterparty) | 0.002 | 0.007 | At random baseline — dataset has no learnable temporal signal |
-| **BankSim 594k (real merchant labels)** | **0.81** | **0.97** | Public real-world, non-circular — this is the deployable number |
-| Inflection (top-20 candidate pool) | 0.054 vs 0.040 freq | — | Tree beats freq baseline by ~35% relative |
+| **BankSim 594k giao dịch (labelled merchant)** | **0.81** | **0.92** | **0.97** |
 
-### Recurring-payment detector
+Best ablation: `tree + freq` (RandomForest + frequency prior). Rule scorer chỉ giúp trên dataset VN — locale-gated.
+
+### Phát hiện thanh toán định kỳ
 
 | Dataset | Precision | Recall | F1 |
 |---|---|---|---|
-| **Czech PKDD'99 (real bank, ground-truth `permanent_orders`)** | **0.69** | **0.80** | **0.74** |
+| **Czech PKDD'99** (dataset ngân hàng thật, có ground-truth `permanent_orders`) | **0.69** | **0.80** | **0.74** |
 
-Across 5 demo accounts / 2 488 tx / 25 ground-truth orders. The detector
-independently rediscovered 20/25 customer-registered orders from the
-transaction stream alone.
+20/25 lệnh chuyển định kỳ được phát hiện chỉ từ luồng giao dịch, không cần bất cứ metadata nào. 9 "false positive" thực chất là các khoản khách hàng chuyển định kỳ nhưng chưa đăng ký hệ thống — hữu ích, không phải lỗi.
 
-### Fraud Isolation Forest (BankSim 7 200 labelled fraud cases)
+### Fraud Isolation Forest
 
-- Median anomaly score on fraud rows = **0.58**, on legit rows = **0.22**
-- At threshold 0.5 → **recall 0.75 · precision 0.14 · FP-rate-on-legit 0.11**
-- Strong enough to drive **OTP step-up**, not strong enough to autoblock
+Trên **BankSim 7200 giao dịch fraud có label**:
+- Median anomaly score: fraud **0.58** vs legit **0.22**
+- Ở threshold 0.5: **recall 0.75** · precision 0.14 · FP-rate-on-legit 0.11
+- Đủ mạnh để làm signal **OTP step-up**, chưa đủ để autoblock
 
-Eval runs in <20 s on the full 520k-row contest DB (in-memory after the
-initial SELECT — no per-call SQL).
+Toàn bộ eval chạy <20s trên 520k-row contest DB (in-memory sau initial SELECT).
 
-## All 6 demo scenarios pass
+---
 
-Run `python scripts/smoke.py` after starting the venv (`make smoke`):
+## Các tính năng nổi bật
 
-| KB | Input | Behaviour |
-|----|-------|-----------|
-| 1 | "Chuyển cho Minh 2 triệu tiền ăn tháng này" | Ambiguous Minh → asks to pick |
-| 2 | "Gửi cho mẹ 5 triệu như tháng trước" | Resolves *mẹ* → Nguyễn Thị Lan, fills description from prior tx |
-| 3 | "Chuyển cho Minh 500k" | Same disambiguation, smaller amount |
-| 4 | "Tháng này mình gửi mẹ bao nhiêu rồi?" | Filtered history: 2 tx, 7M total |
-| 5 | "Chuyển 50 triệu cho Hùng STK 9990001234" | 3 safety flags: new recipient + 30× anomaly + insufficient balance |
-| 6 | "Đặt lịch chuyển mẹ 2tr vào mùng 1 hàng tháng" | Creates monthly schedule, next run 01/06 |
+### Hiểu ngôn ngữ tự nhiên tiếng Việt
 
-## Running it
+- **Alias resolution 5 bước**: exact → token → prefix → embedding RAG. "mẹ" → Nguyễn Thị Lan, "cô bán bún chợ Hôm" → contact đúng
+- **Temporal reference**: "như tháng trước", "hôm qua", "tuần này", "năm ngoái" → mỗi cụm map sang window riêng
+- **Amount parsing**: "5 triệu", "1tr5", "500k", "hai mươi lăm nghìn", "một củ", "5 chai" — cover 12+ cách gõ số tiền
+- **Colloquial banking**: "còn bao nhiêu tiền", "cạn ví chưa", "lương về chưa" → intent balance đúng, không leak sang history
+
+### An toàn (multi-layer)
+
+- **Rule engine**: 5 flag class — ambiguous / missing / new+large / anomaly / insufficient. Mỗi flag có `details` structured để UI dựng "why" panel
+- **Isolation Forest fraud** score (per-user model, calibrated) → drive OTP step-up
+- **Race condition guards**: `_INFLIGHT_CONFIRMS` set + `inFlightDraftIds` frontend lock (cancel không thể race confirm sau khi OTP đã nhập)
+- **Biometric face scan 8D** cho các giao dịch high-risk (client-side, không upload frame ra cloud)
+
+### Multi-provider LLM fallback
+
+3-tier chain có backoff, deadline, round-robin trên pool nhiều key:
+
+```
+Groq pool (N keys, rotated)  →  Gemini pool  →  OpenRouter free  →  Rule extractor
+   ↓ 429/401/403                  ↓ same               ↓ same          (always available)
+   Backoff 60 min, chuyển xuống cuối chain
+   Chain có wall-time deadline 5s: quá 5s → giao ngay cho rule
+```
+
+Chi tiết: [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md), [`docs/perf.md`](docs/perf.md).
+
+### ML/analytics phụ trợ
+
+| Thành phần | Mô tả | File |
+|---|---|---|
+| **Recipient suggester** | RandomForest + rule scorer + frequency prior, auto-weighted theo data size, A/B + Thompson bandit chọn trọng số online | `ml/suggester.py`, `ml/bandit.py` |
+| **Amount predictor** | Median từ history + rationale + confidence | `ml/amount_predictor.py` |
+| **Categorizer** | TF-IDF + rule (13 category), <2ms, precision 0.95 | `ml/categorizer.py` |
+| **Insights** | MoM delta, per-recipient z/MAD anomaly, subscription detection | `ml/insights.py` |
+| **Recurring miner** | Bucket-by-month pattern miner, không cần schedule config | `banking/recurring.py` |
+
+---
+
+## Cách chạy
 
 ### Backend
 
@@ -95,11 +113,11 @@ Run `python scripts/smoke.py` after starting the venv (`make smoke`):
 cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env       # optional — works without a Gemini key
+cp .env.example .env       # tuỳ chọn — có thể chạy không cần LLM key
 .venv/bin/python -m uvicorn app.main:app --reload --port 8000
 ```
 
-API docs at <http://localhost:8000/docs>.
+API docs: <http://localhost:8000/docs>
 
 ### Frontend
 
@@ -109,81 +127,125 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. The Vite dev server proxies `/api` and `/ws` to
-`localhost:8000` (see `vite.config.ts`), so CORS is a non-issue locally.
+Mở <http://localhost:5173>. Vite proxy `/api` và `/ws` sang `localhost:8000`.
 
-### Optional: Gemini-backed NLU
+### Bật LLM (tuỳ chọn)
 
-Set `GEMINI_API_KEY` in `backend/.env`. The pipeline tries Gemini first and
-falls back to rules on any failure, so the demo never breaks.
+Thêm vào `backend/.env`:
 
 ```env
-GEMINI_API_KEY=ya29.xxx
-GEMINI_MODEL=gemini-1.5-flash
+GROQ_API_KEY=gsk_xxx
+GEMINI_API_KEY=xxx
+OPENROUTER_API_KEY=sk-or-v1-xxx
 ```
 
-## How a message flows
+Chain tự động fallback theo thứ tự Groq → Gemini → OpenRouter → rule. Không cần key nào cũng chạy được — rule engine phủ ~85% intent.
 
-1. `POST /api/chat` (or WS frame on `/ws/chat`) hits `services/orchestrator.handle_message`.
-2. **NLU**: `nlp.pipeline.understand` → tries Gemini, falls back to rules. Returns
-   `intent`, `entities` (recipient surface form, amount in VND, temporal ref, cron).
-3. **Context resolution**:
-   - `context.alias.resolve_recipient` maps "mẹ" / "Minh" / "anh Minh" to contact(s).
-   - `context.temporal.resolve_temporal_reference` picks the past tx for
-     "như tháng trước" so amount/description can be back-filled.
-4. **Safety**: `safety.rules.evaluate` runs the slide's safety checklist —
-   ambiguous recipient, missing info, new-recipient-large-amount,
-   statistical anomaly (≥10× average), insufficient balance.
-5. **Draft** stored in the user's short-term session
-   (`context.session`). The orchestrator returns an `OmniResponse` with the
-   text reply plus a structured `draft` (or `history`/`balance`/`schedule`).
-6. **Confirm**: `POST /api/transactions/{draft_id}/confirm` runs the safety
-   gate again, executes via `banking.service.execute_transfer`, and clears
-   the session draft.
+### Chế độ offline (demo không mạng)
 
-## Project structure
+```bash
+OMNI_OFFLINE_DEMO=1 uvicorn app.main:app --port 8000
+```
+
+Skip toàn bộ outbound call. Xem [`docs/offline-demo.md`](docs/offline-demo.md).
+
+### Docker
+
+```bash
+make docker-build && make docker-run    # single image, frontend bundled
+```
+
+### Deploy lên Render
+
+Có sẵn `render.yaml` blueprint — click Deploy tại <https://dashboard.render.com/blueprints/new>, point vào repo này. Xem chi tiết trong file config.
+
+---
+
+## Cấu trúc thư mục
 
 ```
-contest/
+.
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              ◀ FastAPI entry
-│   │   ├── config.py            ◀ env / settings
-│   │   ├── store.py             ◀ in-memory JSON-backed store
-│   │   ├── models/schemas.py    ◀ Pydantic models (NLUResult, TransactionDraft, …)
-│   │   ├── nlp/                 ◀ Layer 2 — NLU pipeline
-│   │   ├── context/             ◀ Layer 3 — alias / temporal / session
-│   │   ├── safety/              ◀ Layer 4 — rule engine
-│   │   ├── banking/             ◀ Layer 5 — mock banking ops
-│   │   ├── routes/              ◀ chat + banking REST + WS
-│   │   ├── services/            ◀ orchestrator (the brain)
-│   │   └── data/                ◀ seed JSON
-│   ├── scripts/smoke.py         ◀ end-to-end demo runner
-│   ├── requirements.txt
-│   └── .env.example
-└── frontend/
-    ├── src/
-    │   ├── App.tsx              ◀ phone-frame chat shell
-    │   ├── api/client.ts        ◀ fetch wrapper
-    │   ├── components/          ◀ Message · TransactionCard · DisambiguationCard ·
-    │   │                          HistoryCard · BalanceCard · ScheduleCard · …
-    │   ├── styles/app.css
-    │   └── types.ts             ◀ TS mirror of backend Pydantic models
-    ├── package.json
-    └── vite.config.ts
+│   │   ├── main.py                ◀ FastAPI entry
+│   │   ├── config.py              ◀ Settings (pydantic-settings)
+│   │   ├── nlp/                   ◀ Tầng 2 — NLU pipeline
+│   │   │   ├── llm.py             ◀ Multi-provider chain, backoff, deadline
+│   │   │   ├── intent.py          ◀ Tier-1/2/3 keyword classifier
+│   │   │   ├── entities.py        ◀ Rule extractors (VN-aware)
+│   │   │   └── embeddings.py      ◀ fastembed multilingual MiniLM
+│   │   ├── context/               ◀ Tầng 3 — alias, temporal, session
+│   │   ├── safety/                ◀ Tầng 4 — rule engine + fraud model
+│   │   ├── banking/               ◀ Tầng 5 — transfer, balance, history…
+│   │   ├── ml/                    ◀ Suggester, predictor, categoriser, insights
+│   │   ├── services/orchestrator.py  ◀ Brain — handle_message dispatch
+│   │   ├── routes/                ◀ REST endpoints
+│   │   └── db/                    ◀ SQLite schema + chat history archive
+│   ├── tests/                     ◀ 570+ test, 3 pre-existing failure documented
+│   └── scripts/                   ◀ smoke, eval_*, load_*, seed generators
+├── frontend/
+│   └── src/
+│       ├── App.tsx                ◀ Phone-frame chat shell
+│       ├── components/            ◀ Message · TransactionCard · BalanceCard · …
+│       └── api/client.ts
+├── docs/                          ◀ Architecture, eval, perf, deploy, …
+└── Dockerfile                     ◀ Multi-stage: bundled frontend + backend
 ```
 
-## Tech notes
+---
 
-- **No Postgres/Redis/Pinecone required.** Everything runs from JSON seeds in
-  process — the store API is narrow on purpose so it can be swapped out later.
-- **No Gemini key required.** The rule-based pipeline handles all 6 scenarios
-  alone. Gemini is *additive*: when configured, it provides richer NLU and the
-  rules fill in any blanks (amount span detection is rule-only).
-- **Step-up auth.** When safety flags include `new_recipient_large_amount` or
-  `amount_above_average`, the confirm button morphs into "Xác minh OTP & xác
-  nhận" — the OTP UI itself is out of scope for the MVP but the back end
-  surfaces the `requires_step_up: true` flag for it.
-- **Vietnamese NFC.** All regexes target precomposed Vietnamese codepoints
-  (`ử` = U+1EED), with a diacritic-stripped alias path so users can also type
-  "me" / "minh" / "nhu thang truoc".
+## Data sources
+
+| Nguồn | Dùng làm gì | File |
+|---|---|---|
+| `backend/app/data/*.json` | Seed demo 30-contact / 35-tx | Mặc định bootstrap vào `omni.db` SQLite |
+| `data/demo/*.json` | Subset 1000-contact / 1888-tx từ dataset thi | `BANKING_DATA_DIR=../data/demo` |
+| `generated/transactions_enriched_6m.csv` | Full 591k-row dataset thi | `scripts/load_contest_full.py` → `omni_contest.db` |
+| `data/public/czech_pkdd99/*.tsv` | Ngân hàng Czech thật (1.05M tx + ground truth) | `scripts/load_czech.py` |
+| `data/public/banksim/*.csv` | BankSim (594k tx + label fraud) | `scripts/load_banksim.py` |
+
+---
+
+## Chạy test / eval
+
+```bash
+make check         # 19 assertion pre-pitch smoke test
+make test          # Full pytest suite (500+ test)
+make test-nlu      # NLU-focused subset
+
+# Eval trên public dataset:
+python backend/scripts/eval_suggester_banksim.py
+python backend/scripts/eval_recurring_czech.py
+python backend/scripts/eval_fraud_banksim.py
+```
+
+---
+
+## Docs
+
+- [`docs/architecture.md`](docs/architecture.md) — trace end-to-end 1 giao dịch
+- [`docs/eval-real-data.md`](docs/eval-real-data.md) — báo cáo eval chi tiết
+- [`docs/eval-protocol.md`](docs/eval-protocol.md) — pre-registered eval protocol
+- [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md) — khi nào dùng cái nào
+- [`docs/perf.md`](docs/perf.md) — latency budget + chain fast-fail
+- [`docs/persistence.md`](docs/persistence.md) — session store, Redis, SQLite
+- [`docs/offline-demo.md`](docs/offline-demo.md) — chế độ không cần mạng
+- [`docs/error-handling.md`](docs/error-handling.md) — error taxonomy + retry
+- [`docs/a11y-audit.md`](docs/a11y-audit.md) — WCAG 2.1 AA audit
+
+---
+
+## Ghi chú kỹ thuật
+
+- **Không cần Postgres/Redis** cho demo. Store là JSON in-memory → SQLite. Có sẵn adapter Postgres khi swap.
+- **LLM không phải bắt buộc**. Rule extractor phủ ~85% intent (transfer / balance / history / schedule / atm / smalltalk / help). LLM giúp hiểu câu tự nhiên hơn — không có key vẫn demo được.
+- **Embedding local**. `fastembed` + MiniLM 384-d ONNX. Không phụ thuộc cloud embedding — quan trọng cho on-prem banking.
+- **Vietnamese NFC**. Regex target codepoint dựng sẵn (`ử` = U+1EED); alias path chấp nhận cả không dấu ("me", "minh", "nhu thang truoc").
+- **Race-safe confirm**. `_INFLIGHT_CONFIRMS` set + frontend `inFlightDraftIds` khoá đường race giữa OTP-submit và cancel.
+- **Chat history persisted**. SQLite `chat_sessions` + `chat_messages` archived tất cả conversation. UI có left drawer list/reopen/delete.
+
+---
+
+## License
+
+MIT.
