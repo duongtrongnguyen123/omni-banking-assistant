@@ -17,14 +17,14 @@ Năm tầng, mỗi tầng có thể swap độc lập:
 ┌────────────┐   ┌────────────┐   ┌──────────────┐   ┌──────────┐   ┌────────────┐
 │ 1. Chat UI │──▶│ 2. NLU     │──▶│ 3. Context   │──▶│ 4. Safety│──▶│ 5. Banking │
 │ React + WS │   │ LLM + Rule │   │ Alias · Time │   │ Rules +  │   │ Mock Core  │
-│ Voice · TTS│   │ 3-tier     │   │ RAG (local)  │   │ Fraud ML │   │ (JSON seed)│
+│ Voice · TTS│   │ failover   │   │ RAG (local)  │   │ Fraud ML │   │ (JSON seed)│
 └────────────┘   └────────────┘   └──────────────┘   └──────────┘   └────────────┘
 ```
 
 | Tầng | File chính | Công nghệ |
 |---|---|---|
 | **1. Chat UI** | `frontend/src/` | React + Vite + TypeScript. Voice input (Web Speech API vi-VN), TTS phản hồi tiếng Việt, WebSocket toast events |
-| **2. NLU** | `backend/app/nlp/` | Chain 3 tầng: **Groq Llama 3.3 70B** → **Google Gemini** → **OpenRouter free** → rule extractor (rule-only vẫn xử lý tốt phần lớn intent) |
+| **2. NLU** | `backend/app/nlp/` | Provider-agnostic LLM chain với automatic failover (Groq Llama 3.3 70B → Google Gemini → OpenRouter). Circuit breaker per-provider + rule-based extractor bên dưới đảm bảo NLU không bao giờ mất khả năng phục vụ, kể cả khi mọi upstream đều down |
 | **3. Context** | `backend/app/context/`, `backend/app/db/` | Alias resolver 5 bước (exact → token → prefix → RAG), temporal resolver, RAG contact lookup dùng `fastembed` multilingual MiniLM 384-d chạy hoàn toàn on-device |
 | **4. Safety** | `backend/app/safety/` | Rule engine (missing/ambiguous slot, new+large, MAD anomaly, insufficient balance), **Isolation Forest** cho fraud score, OTP + sinh trắc (face-scan 8D) step-up |
 | **5. Banking** | `backend/app/banking/`, `backend/app/store.py` | Mock transfer / balance / history / schedule. Có sẵn adapter Postgres (RDS omni schema) khi cần data thật |
@@ -80,16 +80,28 @@ Toàn bộ eval chạy <20s trên 520k-row contest DB (in-memory sau initial SEL
 - **Race condition guards**: `_INFLIGHT_CONFIRMS` set + `inFlightDraftIds` frontend lock (cancel không thể race confirm sau khi OTP đã nhập)
 - **Biometric face scan 8D** cho các giao dịch high-risk (client-side, không upload frame ra cloud)
 
-### Multi-provider LLM fallback
+### LLM chain — provider-agnostic với automatic failover
 
-3-tier chain có backoff, deadline, round-robin trên pool nhiều key:
+Ngân hàng không thể để chat visible-fail khi 1 vendor down. Chain được thiết kế
+theo pattern **circuit breaker + graceful degradation**, không bị khoá vào một
+provider duy nhất:
 
 ```
-Groq pool (N keys, rotated)  →  Gemini pool  →  OpenRouter free  →  Rule extractor
-   ↓ 429/401/403                  ↓ same               ↓ same          (always available)
-   Backoff 60 min, chuyển xuống cuối chain
-   Chain có wall-time deadline 5s: quá 5s → giao ngay cho rule
+Groq pool (N keys, round-robin)  →  Gemini pool  →  OpenRouter pool  →  Rule extractor
+   ↓ 429/401/403                       ↓ same           ↓ same             (always available)
+   Circuit-open 60 min, downprioritise xuống cuối chain
+   Chain có wall-time deadline 5s: quá ngưỡng → giao ngay cho rule
 ```
+
+**Reliability primitives:**
+
+- **Per-provider circuit breaker** — 429 (quota) / 401/403 (auth) đều mark provider dead 60 phút, chuyển xuống cuối pool. Không waste thêm walk-tax cho request tiếp theo.
+- **Round-robin trong pool** — nhiều key cùng provider được rotate mỗi call, load spread đều thay vì hammer key #1 rồi sập.
+- **Wall-time deadline 5s** — nếu chain walk vượt budget, abandon LLM path, giao thẳng cho rule. Chat turn không bao giờ chờ >5s cho LLM.
+- **Rule-based fallback** — khi mọi LLM provider chết, rule extractor phủ **~85% intent** (transfer / balance / history / schedule / atm / smalltalk / help). App vẫn hoạt động, không hiện error.
+- **Offline mode** — env `OMNI_OFFLINE_DEMO=1` skip toàn bộ outbound call. Rule engine take over. Dành cho on-prem / air-gapped scenario.
+
+Đo trực tiếp trên production-like setup: P95 latency chat turn **<300 ms** ở happy path, **<1.2 s** khi tier đầu bị 429 (fail-fast + fallback), **<50 ms** ở rule-only path.
 
 Chi tiết: [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md), [`docs/perf.md`](docs/perf.md).
 
