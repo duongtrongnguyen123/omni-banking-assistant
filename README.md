@@ -7,7 +7,7 @@ bằng ngôn ngữ tự nhiên. Người dùng gõ (hoặc nói) một câu như
 tháng trước, chạy đầy đủ kiểm tra an toàn, rồi trình 1 thẻ **Xác nhận** duy
 nhất. Rút gọn 7 bước Smart Banking cổ điển xuống còn **Chat → Confirm → Done**.
 
-📄 **Slide overview**: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — pitch deck ngắn về project (xem [Origin](#origin) cuối README cho hackathon context).
+🎥 **Demo video**: [Google Drive](https://drive.google.com/file/d/1H-GmweorkTF68HbdMgOjjysuTBMmTKHR/view) · 📄 **Slide overview**: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — xem [Origin](#origin) cuối README cho hackathon context.
 
 ---
 
