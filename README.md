@@ -7,7 +7,7 @@ bằng ngôn ngữ tự nhiên. Người dùng gõ (hoặc nói) một câu như
 tháng trước, chạy đầy đủ kiểm tra an toàn, rồi trình 1 thẻ **Xác nhận** duy
 nhất. Rút gọn 7 bước Smart Banking cổ điển xuống còn **Chat → Confirm → Done**.
 
-📄 **Slide overview**: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — pitch deck ở vòng chung kết HACK<CX>TOGETHER 2026 (top 24 trong 86 team; xem [Origin](#origin) cuối README).
+📄 **Slide overview**: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — pitch deck ngắn về project (xem [Origin](#origin) cuối README cho hackathon context).
 
 ---
 
@@ -249,7 +249,7 @@ python backend/scripts/eval_fraud_banksim.py
 - [`docs/admin-auth.md`](docs/admin-auth.md) — admin route auth model
 - [`docs/deploy-tunnel.md`](docs/deploy-tunnel.md) — expose local demo via Cloudflare tunnel
 - [`docs/eval-contest-dataset.md`](docs/eval-contest-dataset.md) — original suggester writeup trên contest dataset
-- [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — slide dùng ở vòng chung kết hackathon (project overview, không phải doc kỹ thuật)
+- [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — slide project overview (không phải doc kỹ thuật)
 
 ---
 
@@ -266,9 +266,9 @@ python backend/scripts/eval_fraud_banksim.py
 
 ## Origin
 
-Toàn bộ code + demo + slide được viết trong **36 giờ** ở hackathon **HACK<CX>TOGETHER 2026** (ĐH Bách khoa Hà Nội đồng tổ chức với SPRIX Inc., đối tác ngân hàng SHB). Team mình vào **vòng chung kết, top 24 trong 86 team**.
+Toàn bộ code + demo + slide được viết trong **36 giờ** ở hackathon **HACK<CX>TOGETHER 2026** (ĐH Bách khoa Hà Nội đồng tổ chức với SPRIX Inc., đối tác ngân hàng SHB).
 
-Slide pitch chung kết: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf).
+Slide pitch: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf).
 
 ---
 
