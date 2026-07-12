@@ -7,6 +7,8 @@ bằng ngôn ngữ tự nhiên. Người dùng gõ (hoặc nói) một câu như
 tháng trước, chạy đầy đủ kiểm tra an toàn, rồi trình 1 thẻ **Xác nhận** duy
 nhất. Rút gọn 7 bước Smart Banking cổ điển xuống còn **Chat → Confirm → Done**.
 
+📄 **Slide overview**: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — pitch deck ở vòng chung kết HACK<CX>TOGETHER 2026 (top 24 trong 86 team; xem [Origin](#origin) cuối README).
+
 ---
 
 ## Kiến trúc
@@ -264,7 +266,9 @@ python backend/scripts/eval_fraud_banksim.py
 
 ## Origin
 
-Bắt đầu như MVP submission tại **HACK<CX>TOGETHER 2026** (hackathon do Techcombank + FPT đồng tổ chức) — vào **vòng chung kết, top 24 trong ~100 team**. Sau contest tiếp tục phát triển như personal project: các phần eval trên public dataset (BankSim, Czech PKDD'99), safety layer race-safe, provider-agnostic LLM chain, và ~90% test hiện tại được viết post-contest.
+Toàn bộ code + demo + slide được viết trong **36 giờ** ở hackathon **HACK<CX>TOGETHER 2026** (ĐH Bách khoa Hà Nội đồng tổ chức với SPRIX Inc., đối tác ngân hàng SHB). Team mình vào **vòng chung kết, top 24 trong 86 team**.
+
+Slide pitch chung kết: [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf).
 
 ---
 
