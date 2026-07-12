@@ -235,15 +235,18 @@ python backend/scripts/eval_fraud_banksim.py
 
 ## Docs
 
-- [`docs/architecture.md`](docs/architecture.md) — trace end-to-end 1 giao dịch
-- [`docs/eval-real-data.md`](docs/eval-real-data.md) — báo cáo eval chi tiết
-- [`docs/eval-protocol.md`](docs/eval-protocol.md) — pre-registered eval protocol
-- [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md) — khi nào dùng cái nào
+- [`docs/architecture.md`](docs/architecture.md) — trace end-to-end 1 giao dịch qua 5 tầng
+- [`docs/eval-real-data.md`](docs/eval-real-data.md) — eval chi tiết trên public dataset + pre-registered protocol (appendix)
 - [`docs/perf.md`](docs/perf.md) — latency budget + chain fast-fail
+- [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md) — biên giới quyết định LLM vs rule
+- [`docs/privacy.md`](docs/privacy.md) — privacy mode + LLM payload audit
 - [`docs/persistence.md`](docs/persistence.md) — session store, Redis, SQLite
-- [`docs/offline-demo.md`](docs/offline-demo.md) — chế độ không cần mạng
 - [`docs/error-handling.md`](docs/error-handling.md) — error taxonomy + retry
 - [`docs/a11y-audit.md`](docs/a11y-audit.md) — WCAG 2.1 AA audit
+- [`docs/offline-demo.md`](docs/offline-demo.md) — chế độ không cần mạng
+- [`docs/admin-auth.md`](docs/admin-auth.md) — admin route auth model
+- [`docs/deploy-tunnel.md`](docs/deploy-tunnel.md) — expose local demo via Cloudflare tunnel
+- [`docs/eval-contest-dataset.md`](docs/eval-contest-dataset.md) — original suggester writeup trên contest dataset
 
 ---
 

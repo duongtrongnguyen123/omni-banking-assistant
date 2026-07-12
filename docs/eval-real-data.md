@@ -203,7 +203,7 @@ Runtime: 43 s across all 50 users × 8 ablation weights.
 
 Source: `backend/scripts/gen_synthetic_users.py` +
 `backend/scripts/eval_suggester_holdout.py`. Full protocol pinned in
-`docs/eval-protocol.md` (seed = 42, n_users = 20, months = 6, noise = 0.10,
+the appendix below (seed = 42, n_users = 20, months = 6, noise = 0.10,
 pattern = mixed). We **pre-registered** the seed and hyperparameters
 before running anything — there is no search over seeds.
 
@@ -263,3 +263,75 @@ numbers as proof of user-specific learning. We CAN claim:
 Runtime: ~10 s total. Generator output is deterministic on
 `--seed 42` — anyone who clones this repo gets the same DB and the
 same Hit@K to three decimals.
+
+---
+
+## Appendix — pre-registered evaluation protocol
+
+To make the synthetic-hold-out numbers above defensible against
+"you cherry-picked", the following knobs were **pinned before any
+result was reported** and never tuned. Same command line, run by
+anyone with this repo, produces the same numbers.
+
+### Hyperparameters (pinned)
+
+| Knob | Value | Why |
+|------|-------|-----|
+| `--seed` | `42` | Fixed, never tuned. |
+| `--n-users` | `20` | Sample-size analysis below. |
+| `--months` | `6` | Matches contest dataset window (Jan-Jun 2026). |
+| `--noise` | `0.10` | ±10 % amount jitter; mid-range, not cherry-picked. |
+| `--pattern` | `mixed` | Per-user roll of `tight` / `loose` / `mixed`. |
+| Train/test split | first 80 % / last 20 % by `created_at` | Time-ordered hold-out; no future leakage. |
+| Min train hits per contact | `3` | Rules out cold-start contacts — measures generalisation. |
+| Model | `RandomForestClassifier(n_estimators=50, max_depth=5, min_samples_leaf=1, class_weight="balanced", random_state=42)` | Production suggester defaults for `n_tx < 10 000`. |
+| Headline weights | `(tree=0.60, freq=0.40, rule=0.00)` | Best on BankSim per §3. Rule scorer is Vietnamese-locale-tuned and gated off. |
+
+### Metric
+
+**Hit@K** — fraction of test transactions whose true recipient sits in the top-K of `suggest()` when ranked by `tree_weight * predict_proba + freq_weight * frequency_prior + rule_weight * rule_score`.
+
+Reported for K ∈ {1, 3, 5}. Micro-averaged across the union of test rows so a sparsely-active user doesn't dominate.
+
+### Hold-out strategy
+
+For each generated user (`u_synth_000` … `u_synth_019`):
+
+1. Sort transactions by `created_at`.
+2. Cut at `floor(len * 0.8)`: head → train, tail → test.
+3. Filter test to rows whose `contact_id` appears ≥ 3 times in train.
+4. Train one Random Forest per user on the train slice.
+5. Score every test row with the headline weights.
+
+Cross-user has two flavours:
+
+- **Raw (no mapping)** — feed B's tx into A's model directly. Contact ids are namespaced by user id, so A's label set never contains B's contact ids → Hit@K must be 0 (sanity check on data isolation).
+- **Archetype-mapped** — translate B's `..._mom` → A's `..._mom` by the shared archetype suffix. The gap between in-distribution and archetype-mapped is the **user-specific lift**.
+
+### Sample-size analysis
+
+Goal: ±2 pp absolute confidence on Hit@K at the micro-averaged level. For binomial `p ≈ 0.5` the 95 % half-width is `1.96 * sqrt(p(1-p)/n)` → n ≥ ~2 401. For `p ≈ 0.8` (observed Hit@5) the bound relaxes to n ≥ ~1 537.
+
+With **20 users × ~30 test rows ≈ 600 test rows** we're under-sized for ±2 pp on Hit@1 — actual uncertainty is closer to ±4 pp. Reported honestly rather than pretending to higher precision.
+
+Cross-user pairs capped at 30 (deterministic stride sample) → ≈ 870 test rows, ±3 pp band. To tighten to ±2 pp: re-run with `--n-users 50`, no other knobs change.
+
+### What this protocol does NOT prove
+
+- Real-world banking data → those numbers live in §1 (Czech PKDD'99) and §2 (BankSim) above.
+- Rule scorer validity — locale-gated by §3, turned off here.
+- Alias resolution, NLU, safety rules — separate tests.
+
+### Reproducing
+
+```bash
+cd backend
+.venv/bin/python scripts/gen_synthetic_users.py \
+    --n-users 20 --months 6 --seed 42 --pattern mixed --noise 0.10
+
+OMNI_DB_PATH=app/data/omni_synth_v2.db \
+EVAL_WRITE_JSON=../docs/eval-results/omni_synth_v2_eval.json \
+    .venv/bin/python scripts/eval_suggester_holdout.py
+```
+
+Expected runtime: ~10 s total on a 2025-era MacBook M-series.
