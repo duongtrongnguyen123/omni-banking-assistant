@@ -1,8 +1,9 @@
 # Omni — architecture deep dive
 
-A more concrete companion to the layer table in `CLAUDE.md` and the boundary
-table in `llm-vs-rule.md`. This walks one realistic message — `Chuyển cho mẹ
-5 triệu như tháng trước` — through every layer, with file:line pointers.
+A more concrete companion to the layer table in the top-level `README.md`
+and the boundary table in `llm-vs-rule.md`. This walks one realistic
+message — `Chuyển cho mẹ 5 triệu như tháng trước` — through every layer,
+with file:line pointers.
 
 ## The 5 layers (recap)
 

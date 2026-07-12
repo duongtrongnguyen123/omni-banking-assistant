@@ -86,7 +86,7 @@ tests/
 - **Vector embeddings stay local.** fastembed runs an ONNX model in-process;
   no cloud round-trip on the embedding path.
 - **Rule + ML hybrid for the suggester** — auto-weighted by data size:
-  tiny → freq dominant, rich → tree dominant. See `docs/eval.md`.
+  tiny → freq dominant, rich → tree dominant. See `docs/eval-contest-dataset.md`.
 
 ## Environment variables
 
@@ -107,5 +107,5 @@ tests/
 | "Why did Omni pick that recipient?" | `context/alias.py` (5-step resolver) |
 | "Why did Omni flag this transfer?" | `safety/rules.py` |
 | "Where does LLM stop and rules start?" | `docs/llm-vs-rule.md` |
-| "How honest are the Hit@K numbers?" | `docs/eval.md` + `docs/honest-pitch.md` |
+| "How honest are the Hit@K numbers?" | `docs/eval-contest-dataset.md` + `docs/honest-pitch.md` |
 | "What does the brain actually do?" | `services/orchestrator.py:handle_message` |
