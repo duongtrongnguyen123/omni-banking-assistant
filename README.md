@@ -88,6 +88,59 @@ Chi tiết: [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md), [`docs/perf.md`](docs/
 
 ---
 
+## Điểm kỹ thuật đáng chú ý
+
+Không phải cái user thấy trực tiếp trên UI — mà là mấy chỗ engineering đằng sau mà nếu làm sai thì demo sập ngay. Liệt kê ra vì đây là phần đầu tư thời gian nhiều nhất.
+
+### 1. State machine cho multi-turn conversation
+
+User gõ tuần tự: `chuyển mẹ 1tr` → `đổi sang bố` → `à 500k thôi` → `chuyển đi`. Model phải giữ slot đã điền, không leak slot từ conversation cũ, không wipe khi user chỉ edit 1 slot.
+
+- **Fresh-vs-modify heuristic** — chỉ wipe draft cũ khi user cung cấp cả 2 slot mới (`amount + recipient_text`) HOẶC draft cũ đã incomplete. Single-slot edit đi thẳng vào modify path, giữ slot còn lại.
+- **Session-per-conversation clearing** — orchestrator session keyed by `user_id`, nhưng mỗi chat conversation là session riêng. Track `X-Chat-Session-Id` để `clear_draft()` khi user switch chat.
+- **Bare-recipient slot fill** — regex reject `500k`, `huỷ`, `ok`, digit-only strings khỏi surface slot; chấp nhận `Nam`, `bạn cấp 3` như tên hợp lệ.
+
+Xem: `backend/app/services/orchestrator.py` (`_handle_message_inner`, `_modify_transfer_draft`, `_looks_like_fresh_transfer_command`).
+
+### 2. Alias resolver 5-tầng cho danh bạ tiếng Việt
+
+User gõ `mẹ` / `quán bún quen gần nhà` / `anh Nam phòng kế toán` → phải resolve về contact ID chính xác, phân biệt **ambiguous** (nhiều match — hiện disambiguation card) vs **missing** (không match — hỏi lại "chuyển cho ai?").
+
+- **5 tầng short-circuit**: exact display-name → alias table lookup → token match → tail-strip prefix (`em Nam` → `Nam`) → embedding RAG (`fastembed` MiniLM 384-d)
+- **Tone-sensitive** — `bà` ≠ `ba` ≠ `bố`. Fold diacritic sai → nhầm người trong danh bạ.
+- **Diacritic-fold accept path** — user gõ không dấu (`me`, `minh`, `nhu thang truoc`) vẫn resolve đúng.
+
+Xem: `backend/app/context/alias.py` (`resolve_recipient`).
+
+### 3. LLM chain reliability
+
+3-tier failover với circuit breaker, wall-time deadline, và rule-based fallback đảm bảo chat turn không bao giờ chờ >5s dù mọi upstream đều chết.
+
+- **Circuit breaker per-provider** — 401/403/429 → mark provider dead 60min, chuyển xuống cuối chain. Next request skip nó ở fast path.
+- **Round-robin trên key pool** — nhiều Groq key được rotate mỗi call, không hammer key #1 rồi burn nó trước.
+- **Wall-time deadline** — chain walk vượt 5s → abandon LLM, giao rule.
+- **Rule extractor bên dưới** — phủ ~85% intent. App hoạt động khi mọi LLM chết (offline mode / air-gapped).
+
+Xem: `backend/app/nlp/llm.py` (`_enabled_providers`, `_walk_providers`, `_call_llm`).
+
+### 4. Race-safe confirm/cancel
+
+Bug user báo trong khi test: gõ OTP → bấm Huỷ → tiền vẫn chuyển. Nguyên nhân: 2 request đến backend gần đồng thời, cancel clear session trong lúc confirm còn đang thực thi. Cần khoá cả 2 layer.
+
+- **Backend `_INFLIGHT_CONFIRMS` set** — cancel refuse với thông báo "đang xử lý" khi confirm mid-execute; replay cached response nếu confirm đã xong (idempotent).
+- **Frontend `inFlightDraftIds` lock** — khoá button Huỷ + Sửa ngay khi user bấm Xác nhận, không đợi backend response.
+- **Idempotency cache trên confirm** — double-click confirm không double-debit.
+
+### 5. Rule extractors cho tiếng Việt banking
+
+Amount span parsing cho 12+ cách gõ (`5 triệu`, `1tr5`, `500k`, `hai mươi lăm nghìn`, `một củ`, `5 chai`, `1tr rưỡi`), temporal cluster (`hôm qua`, `tuần này`, `năm ngoái` mỗi cụm map period riêng — không được default all → `recent_30d`), colloquial intent routing (`còn bao nhiêu tiền`, `cạn ví chưa`, `lương về chưa` → intent `balance`, không leak sang `history`).
+
+Đây là **thay thế LLM** khi provider chain chết — rule phải cover thật, không phải fallback tối thiểu.
+
+Xem: `backend/app/nlp/entities.py`, `backend/app/nlp/amount.py`, `backend/app/nlp/intent.py`.
+
+---
+
 ## Kết quả benchmark
 
 Các thành phần ML/NLU ở trên được eval trên **3 dataset công khai** (không dùng seed tự tạo) để tránh circular scoring. Method chi tiết: [`docs/eval-real-data.md`](docs/eval-real-data.md).
