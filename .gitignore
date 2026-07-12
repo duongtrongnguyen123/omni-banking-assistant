@@ -14,8 +14,10 @@ frontend/dist/
 *.log
 .tmp_pdf_text/
 
-# Slide deck — kept locally, not pushed
+# PDFs kept out of git by default (regenerated / private), except the
+# intentional project deck committed under docs/.
 *.pdf
+!docs/omni-project-deck.pdf
 
 # Large source-derived dataset — regenerate locally with data/transform_banking_dataset.py
 /data/generated/
