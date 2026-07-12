@@ -53,9 +53,7 @@ Chi tiết trace end-to-end 1 giao dịch: [`docs/architecture.md`](docs/archite
 
 ### LLM chain — provider-agnostic với automatic failover
 
-Ngân hàng không thể để chat visible-fail khi 1 vendor down. Chain được thiết kế
-theo pattern **circuit breaker + graceful degradation**, không bị khoá vào một
-provider duy nhất:
+Trong bối cảnh ngân hàng, một vendor LLM ngừng hoạt động không được phép làm hỏng luồng chat của người dùng. Chain được thiết kế theo pattern **circuit breaker + graceful degradation**, không phụ thuộc vào một provider duy nhất:
 
 ```
 Groq pool (N keys, round-robin)  →  Gemini pool  →  OpenRouter pool  →  Rule extractor
@@ -66,13 +64,13 @@ Groq pool (N keys, round-robin)  →  Gemini pool  →  OpenRouter pool  →  Ru
 
 **Reliability primitives:**
 
-- **Per-provider circuit breaker** — 429 (quota) / 401/403 (auth) đều mark provider dead 60 phút, chuyển xuống cuối pool. Không waste thêm walk-tax cho request tiếp theo.
-- **Round-robin trong pool** — nhiều key cùng provider được rotate mỗi call, load spread đều thay vì hammer key #1 rồi sập.
-- **Wall-time deadline 5s** — nếu chain walk vượt budget, abandon LLM path, giao thẳng cho rule. Chat turn không bao giờ chờ >5s cho LLM.
-- **Rule-based fallback** — khi mọi LLM provider chết, rule extractor phủ **~85% intent** (transfer / balance / history / schedule / atm / smalltalk / help). App vẫn hoạt động, không hiện error.
-- **Offline mode** — env `OMNI_OFFLINE_DEMO=1` skip toàn bộ outbound call. Rule engine take over. Dành cho on-prem / air-gapped scenario.
+- **Per-provider circuit breaker** — 429 (quota) / 401/403 (auth) đều đánh dấu provider ngừng hoạt động trong 60 phút và chuyển xuống cuối pool, tránh chi phí trace lại các provider đã hỏng ở request tiếp theo.
+- **Round-robin trong pool** — nhiều key cùng provider được rotate mỗi call, phân tán tải đều thay vì luôn dùng key #1 đến hết quota trước.
+- **Wall-time deadline 5s** — nếu chain walk vượt ngân sách, bỏ nhánh LLM và chuyển sang rule. Chat turn không bao giờ chờ >5s cho LLM.
+- **Rule-based fallback** — khi mọi LLM provider không khả dụng, rule extractor xử lý được **~85% intent** (transfer / balance / history / schedule / atm / smalltalk / help). Ứng dụng vẫn phục vụ được yêu cầu người dùng, không trả về error.
+- **Offline mode** — env `OMNI_OFFLINE_DEMO=1` bỏ qua toàn bộ outbound call, rule engine tiếp quản. Dùng cho môi trường on-prem hoặc air-gapped.
 
-Đo trực tiếp trên production-like setup: P95 latency chat turn **<300 ms** ở happy path, **<1.2 s** khi tier đầu bị 429 (fail-fast + fallback), **<50 ms** ở rule-only path.
+Đo trực tiếp trên môi trường production-like: P95 latency chat turn **<300 ms** ở happy path, **<1.2 s** khi tier đầu bị 429 (fail-fast + fallback), **<50 ms** ở rule-only path.
 
 Chi tiết: [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md), [`docs/perf.md`](docs/perf.md).
 
@@ -90,7 +88,7 @@ Chi tiết: [`docs/llm-vs-rule.md`](docs/llm-vs-rule.md), [`docs/perf.md`](docs/
 
 ## Điểm kỹ thuật đáng chú ý
 
-Không phải cái user thấy trực tiếp trên UI — mà là mấy chỗ engineering đằng sau mà nếu làm sai thì demo sập ngay. Liệt kê ra vì đây là phần đầu tư thời gian nhiều nhất.
+Phần engineering nằm dưới các feature ở trên. Không hiển thị trực tiếp trên UI nhưng chi phối phần lớn behaviour đúng/sai của hệ thống — dưới đây là 5 hạng mục có độ khó cao nhất trong repo.
 
 ### 1. State machine cho multi-turn conversation
 
@@ -114,18 +112,18 @@ Xem: `backend/app/context/alias.py` (`resolve_recipient`).
 
 ### 3. LLM chain reliability
 
-3-tier failover với circuit breaker, wall-time deadline, và rule-based fallback đảm bảo chat turn không bao giờ chờ >5s dù mọi upstream đều chết.
+3-tier failover với circuit breaker, wall-time deadline, và rule-based fallback đảm bảo chat turn không bao giờ chờ quá 5s ngay cả khi toàn bộ upstream provider ngừng hoạt động.
 
 - **Circuit breaker per-provider** — 401/403/429 → mark provider dead 60min, chuyển xuống cuối chain. Next request skip nó ở fast path.
-- **Round-robin trên key pool** — nhiều Groq key được rotate mỗi call, không hammer key #1 rồi burn nó trước.
+- **Round-robin trên key pool** — nhiều Groq key được rotate mỗi call thay vì luôn bắt đầu ở key #1, phân tán tải đều để tránh cạn quota một key trong khi các key còn lại nhàn rỗi.
 - **Wall-time deadline** — chain walk vượt 5s → abandon LLM, giao rule.
-- **Rule extractor bên dưới** — phủ ~85% intent. App hoạt động khi mọi LLM chết (offline mode / air-gapped).
+- **Rule extractor bên dưới** — xử lý ~85% intent. Ứng dụng vẫn hoạt động khi toàn bộ LLM provider không khả dụng (offline mode / air-gapped).
 
 Xem: `backend/app/nlp/llm.py` (`_enabled_providers`, `_walk_providers`, `_call_llm`).
 
 ### 4. Race-safe confirm/cancel
 
-Bug user báo trong khi test: gõ OTP → bấm Huỷ → tiền vẫn chuyển. Nguyên nhân: 2 request đến backend gần đồng thời, cancel clear session trong lúc confirm còn đang thực thi. Cần khoá cả 2 layer.
+Sequence xảy ra khi user nhập OTP rồi bấm Huỷ trước khi backend response về: cả 2 request `confirm` và `cancel` đến backend gần như đồng thời. Cancel clear session trong khi `confirm_draft` vẫn đang thực thi → transaction được ghi nhưng UI hiển thị "đã huỷ". Fix ở cả 2 layer:
 
 - **Backend `_INFLIGHT_CONFIRMS` set** — cancel refuse với thông báo "đang xử lý" khi confirm mid-execute; replay cached response nếu confirm đã xong (idempotent).
 - **Frontend `inFlightDraftIds` lock** — khoá button Huỷ + Sửa ngay khi user bấm Xác nhận, không đợi backend response.
@@ -135,7 +133,7 @@ Bug user báo trong khi test: gõ OTP → bấm Huỷ → tiền vẫn chuyển.
 
 Amount span parsing cho 12+ cách gõ (`5 triệu`, `1tr5`, `500k`, `hai mươi lăm nghìn`, `một củ`, `5 chai`, `1tr rưỡi`), temporal cluster (`hôm qua`, `tuần này`, `năm ngoái` mỗi cụm map period riêng — không được default all → `recent_30d`), colloquial intent routing (`còn bao nhiêu tiền`, `cạn ví chưa`, `lương về chưa` → intent `balance`, không leak sang `history`).
 
-Đây là **thay thế LLM** khi provider chain chết — rule phải cover thật, không phải fallback tối thiểu.
+Rule extractor được thiết kế đủ mạnh để đảm nhận vai trò xử lý chính khi toàn bộ LLM chain không khả dụng, không chỉ là fallback tối thiểu.
 
 Xem: `backend/app/nlp/entities.py`, `backend/app/nlp/amount.py`, `backend/app/nlp/intent.py`.
 
