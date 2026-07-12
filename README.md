@@ -247,6 +247,7 @@ python backend/scripts/eval_fraud_banksim.py
 - [`docs/admin-auth.md`](docs/admin-auth.md) — admin route auth model
 - [`docs/deploy-tunnel.md`](docs/deploy-tunnel.md) — expose local demo via Cloudflare tunnel
 - [`docs/eval-contest-dataset.md`](docs/eval-contest-dataset.md) — original suggester writeup trên contest dataset
+- [`docs/omni-project-deck.pdf`](docs/omni-project-deck.pdf) — slide dùng ở vòng chung kết hackathon (project overview, không phải doc kỹ thuật)
 
 ---
 
@@ -258,6 +259,12 @@ python backend/scripts/eval_fraud_banksim.py
 - **Vietnamese NFC**. Regex target codepoint dựng sẵn (`ử` = U+1EED); alias path chấp nhận cả không dấu ("me", "minh", "nhu thang truoc").
 - **Race-safe confirm**. `_INFLIGHT_CONFIRMS` set + frontend `inFlightDraftIds` khoá đường race giữa OTP-submit và cancel.
 - **Chat history persisted**. SQLite `chat_sessions` + `chat_messages` archived tất cả conversation. UI có left drawer list/reopen/delete.
+
+---
+
+## Origin
+
+Bắt đầu như MVP submission tại **HACK<CX>TOGETHER 2026** (hackathon do Techcombank + FPT đồng tổ chức) — vào **vòng chung kết, top 24 trong ~100 team**. Sau contest tiếp tục phát triển như personal project: các phần eval trên public dataset (BankSim, Czech PKDD'99), safety layer race-safe, provider-agnostic LLM chain, và ~90% test hiện tại được viết post-contest.
 
 ---
 
