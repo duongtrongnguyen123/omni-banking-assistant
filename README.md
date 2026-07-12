@@ -51,6 +51,10 @@ Chi tiết trace end-to-end 1 giao dịch: [`docs/architecture.md`](docs/archite
 - **Chống race điều khiển**: người dùng bấm Xác nhận rồi lỡ tay bấm Huỷ ngay sau đó không thể phá vỡ trạng thái. Cả frontend lẫn backend đều khoá luồng: khi confirm đang xử lý thì cancel bị từ chối lịch sự. Loại bỏ tình huống *"tiền vẫn chuyển mà UI báo đã huỷ"*.
 - **Xác thực khuôn mặt**: các giao dịch nguy cơ cao (số tiền lớn, người nhận mới) yêu cầu quét khuôn mặt 8 hướng trực tiếp trên máy. Ảnh khuôn mặt **không rời khỏi máy người dùng** — chỉ signature (vector đặc trưng đã mã hoá) được gửi lên server để đối chiếu.
 
+### Lưu trữ lịch sử chat
+
+Mỗi conversation được lưu bền vững vào SQLite (`chat_sessions` + `chat_messages`). Giao diện có drawer trái liệt kê các cuộc trò chuyện cũ, mở lại, đổi tên, xoá. Mỗi tin nhắn Omni lưu cả text lẫn full `OmniResponse` (JSON), nên khi mở lại chat cũ, card giao dịch / balance / history vẫn render đầy đủ, không mất context.
+
 ### LLM chain — provider-agnostic với automatic failover
 
 Trong bối cảnh ngân hàng, một vendor LLM ngừng hoạt động không được phép làm hỏng luồng chat của người dùng. Chain được thiết kế theo pattern **circuit breaker + graceful degradation**, không phụ thuộc vào một provider duy nhất:
@@ -138,7 +142,7 @@ Best ablation: `tree + freq` (RandomForest + frequency prior). Rule scorer chỉ
 |---|---|---|---|
 | **Czech PKDD'99** (dataset ngân hàng thật, có ground-truth `permanent_orders`) | **0.69** | **0.80** | **0.74** |
 
-20/25 lệnh chuyển định kỳ được phát hiện chỉ từ luồng giao dịch, không cần bất cứ metadata nào. 9 "false positive" thực chất là các khoản khách hàng chuyển định kỳ nhưng chưa đăng ký hệ thống — hữu ích, không phải lỗi.
+20/25 lệnh chuyển định kỳ được phát hiện chỉ từ luồng giao dịch, không cần bất cứ metadata nào. 9 false positive còn lại phần lớn là giao dịch định kỳ khách hàng chưa đăng ký chính thức — signal hữu ích cho use case gợi ý, không phải sai sót.
 
 ### Fraud Isolation Forest
 
@@ -227,7 +231,7 @@ Có sẵn `render.yaml` blueprint — click Deploy tại <https://dashboard.rend
 │   │   ├── services/orchestrator.py  ◀ Brain — handle_message dispatch
 │   │   ├── routes/                ◀ REST endpoints
 │   │   └── db/                    ◀ SQLite schema + chat history archive
-│   ├── tests/                     ◀ 570+ test, 3 pre-existing failure documented
+│   ├── tests/                     ◀ 1100+ test, 3 pre-existing failure documented
 │   └── scripts/                   ◀ smoke, eval_*, load_*, seed generators
 ├── frontend/
 │   └── src/
@@ -256,7 +260,7 @@ Có sẵn `render.yaml` blueprint — click Deploy tại <https://dashboard.rend
 
 ```bash
 make check         # 19 assertion pre-pitch smoke test
-make test          # Full pytest suite (500+ test)
+make test          # Full pytest suite (1100+ test)
 make test-nlu      # NLU-focused subset
 
 # Eval trên public dataset:
@@ -287,12 +291,9 @@ python backend/scripts/eval_fraud_banksim.py
 
 ## Ghi chú kỹ thuật
 
-- **Không cần Postgres/Redis** cho demo. Store là JSON in-memory → SQLite. Có sẵn adapter Postgres khi swap.
-- **LLM không phải bắt buộc**. Rule extractor phủ ~85% intent (transfer / balance / history / schedule / atm / smalltalk / help). LLM giúp hiểu câu tự nhiên hơn — không có key vẫn demo được.
-- **Embedding local**. `fastembed` + MiniLM 384-d ONNX. Không phụ thuộc cloud embedding — quan trọng cho on-prem banking.
-- **Vietnamese NFC**. Regex target codepoint dựng sẵn (`ử` = U+1EED); alias path chấp nhận cả không dấu ("me", "minh", "nhu thang truoc").
-- **Race-safe confirm**. `_INFLIGHT_CONFIRMS` set + frontend `inFlightDraftIds` khoá đường race giữa OTP-submit và cancel.
-- **Chat history persisted**. SQLite `chat_sessions` + `chat_messages` archived tất cả conversation. UI có left drawer list/reopen/delete.
+- **Không cần Postgres/Redis** cho demo. Store là JSON in-memory rồi SQLite. Có sẵn adapter Postgres để chuyển sang RDS khi cần data thật.
+- **Embedding chạy on-device**. `fastembed` + multilingual MiniLM 384-d ONNX, không cần cloud embedding API — phù hợp cho môi trường on-prem của ngân hàng.
+- **Vietnamese NFC**. Regex target codepoint dựng sẵn (`ử` = U+1EED); alias path chấp nhận cả không dấu (`me`, `minh`, `nhu thang truoc`).
 
 ---
 
